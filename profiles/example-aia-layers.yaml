@@ -1,0 +1,162 @@
+# C2B layer profile. Edit 'geometry' / 'text' roles per layer.
+# Roles: BOUNDARY, ORIGIN, GRID, COLUMN, BEAM, SLAB, FOOTING, OPENING, WALL, STAIR, SCHEDULE, NOTE, TITLE, DIMENSION, HATCH_GENERIC, IGNORE, UNKNOWN (text roles add _TAG, e.g. COLUMN_TAG)
+# Modifiers: hidden, stop, start, stub, fold, sunk, drop, projection, non_structural, podium, hatch
+name: example-aia-layers
+description: Auto-suggested by c2b 0.1.0 from Test10.dxf. Review every 'low'/'none'
+  confidence entry.
+layers:
+  '0':
+    geometry: UNKNOWN
+    modifiers: []
+    confidence: none
+  A-ANNO-DIMS:
+    geometry: DIMENSION
+    modifiers: []
+    confidence: high
+  A-CUTOUT:
+    geometry: OPENING
+    modifiers: []
+    confidence: high
+  A-FLOR:
+    geometry: SLAB
+    modifiers: []
+    confidence: high
+  A-FLOR-IDEN:
+    geometry: SLAB
+    modifiers: []
+    confidence: high
+  Boundary:
+    geometry: BOUNDARY
+    modifiers: []
+    confidence: high
+  G-ANNO-TEXT:
+    geometry: NOTE
+    modifiers: []
+    confidence: medium
+  Origin:
+    geometry: ORIGIN
+    modifiers: []
+    confidence: high
+  S-BEAM:
+    geometry: BEAM
+    modifiers: []
+    confidence: high
+  S-BEAM-HDLN:
+    geometry: BEAM
+    modifiers:
+    - hidden
+    confidence: high
+    note: hidden-line content skipped
+  S-BEAM-IDEN:
+    geometry: BEAM
+    modifiers: []
+    confidence: high
+  S-COLS:
+    geometry: COLUMN
+    modifiers: []
+    confidence: high
+  S-COLS-HDLN:
+    geometry: COLUMN
+    modifiers:
+    - hidden
+    confidence: high
+    note: hidden-line content skipped
+  S-COLS-IDEN:
+    geometry: COLUMN
+    modifiers: []
+    confidence: high
+  S-FND:
+    geometry: FOOTING
+    modifiers: []
+    confidence: high
+  S-FND-FOLD:
+    geometry: FOOTING
+    modifiers:
+    - fold
+    confidence: high
+  S-FND-IDEN:
+    geometry: FOOTING
+    modifiers: []
+    confidence: high
+  S-FND-SUNK:
+    geometry: FOOTING
+    modifiers:
+    - sunk
+    confidence: high
+  S-GRID:
+    geometry: GRID
+    modifiers: []
+    confidence: high
+  S-GRID-IDEN:
+    geometry: GRID
+    modifiers: []
+    confidence: high
+  S-STRS:
+    geometry: STAIR
+    modifiers: []
+    confidence: medium
+  S-STRS-ANNO:
+    geometry: STAIR
+    modifiers: []
+    confidence: medium
+  S-STRS-IDEN:
+    geometry: STAIR
+    modifiers:
+    - tag_layer
+    confidence: medium
+floor:
+  boundary_layer: Boundary
+  origin_layer: Origin
+  label_keywords:
+  - level
+  - lvl
+  - floor
+  - plan
+  - terrace
+  - foundation
+  - basement
+  - podium
+  - roof
+  - typical
+  - ground
+  - plinth
+  - layout
+  - storey
+  - story
+  - refuge
+  - stilt
+  - parking
+  min_boundary_area_m2: 25.0
+tolerances:
+  snap_mm: 1.0
+  duplicate_round_mm: 0.1
+  ring_close_tol_mm: 50.0
+  column_min_side_mm: 100.0
+  column_max_side_mm: 20000.0
+  column_min_area_mm2: 10000.0
+  column_max_area_mm2: 60000000.0
+  column_iou_dedupe: 0.6
+  column_tag_radius_factor: 1.5
+  column_tag_radius_min_mm: 600.0
+  wall_like_min_side_ratio: 4.0
+  wall_like_min_length_mm: 1000.0
+  beam_min_width_mm: 100.0
+  beam_max_width_mm: 1500.0
+  beam_min_length_mm: 500.0
+  beam_min_overlap_mm: 300.0
+  beam_merge_gap_mm: 800.0
+  beam_merge_offset_mm: 2.0
+  beam_tag_buffer_factor: 3.5
+  beam_angle_tol_deg: 1.0
+  grid_min_length_mm: 1500.0
+  grid_label_radius_mm: 2500.0
+  grid_ref_tol_mm: 600.0
+  slab_min_area_mm2: 1000000.0
+  footing_min_side_mm: 300.0
+  opening_min_area_mm2: 40000.0
+  size_mismatch_tol_mm: 26.0
+  schedule_row_tol_factor: 0.6
+  z_tol_mm: 0.5
+  large_coord_mm: 500000.0
+explode_blocks: true
+max_block_depth: 4
