@@ -173,7 +173,11 @@ def polygonize_lines(lines: list[LineString], grid_size: float = 1.0) -> list[Po
     lines = [l for l in lines if not l.is_empty]
     if not lines:
         return []
-    merged = unary_union(snap_endpoints(lines, grid_size))
+    # 1. end points within the tolerance become one point (closes corner gaps),
+    # 2. all coordinates are rounded to the grid so nearly-collinear overlaps become exactly collinear,
+    # 3. the union nodes every crossing and polygonize collects the faces.
+    snapped = [shapely.set_precision(l, grid_size) for l in snap_endpoints(lines, grid_size)]
+    merged = unary_union([l for l in snapped if not l.is_empty])
     return [p for p in polygonize(merged) if p.area > 0]
 
 

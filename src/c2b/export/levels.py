@@ -60,3 +60,33 @@ def apply_levels(project: Project, path: str | Path) -> list[str]:
                 problems.append(f"{fid}: order '{row[idx['order']]}' is not an integer")
     project.floors.sort(key=lambda f: f.index)
     return problems
+
+
+def read_levels(path: str | Path) -> list:
+    """Read the level schedule as rows (a plan floor may own several levels, e.g. a typical floor)."""
+    from ..normalize.pipeline import LevelRow
+
+    wb = load_workbook(str(path), data_only=True)
+    ws = wb["Levels"] if "Levels" in wb.sheetnames else wb.active
+    header = [str(c.value).strip() if c.value is not None else "" for c in ws[1]]
+    idx = {h: i for i, h in enumerate(header)}
+    rows = []
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if not row or all(v is None for v in row):
+            continue
+
+        def val(key):
+            i = idx.get(key)
+            return row[i] if i is not None and i < len(row) else None
+
+        def num(key):
+            v = val(key)
+            try:
+                return float(v) if v is not None and str(v).strip() != "" else None
+            except (TypeError, ValueError):
+                return None
+
+        fid = str(val("floor_id")).strip() if val("floor_id") not in (None, "") else None
+        rows.append(LevelRow(fid, str(val("floor_name") or "").strip() or None, int(num("order") or 0) if num("order") is not None else None,
+                             num("elevation_mm"), num("floor_to_floor_mm"), str(val("revit_level_name") or "").strip() or None))
+    return rows

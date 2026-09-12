@@ -12,7 +12,7 @@ from .extract.columns import extract_columns
 from .extract.context import FloorContext
 from .extract.footings import extract_footings
 from .extract.grids import extract_grids
-from .extract.openings import extract_openings, extract_walls
+from .extract.openings import extract_openings, extract_stairs, extract_walls
 from .extract.slabs import extract_slabs
 from .floors import FloorFrame, detect_floors, localise
 from .profile import STRUCTURAL_ROLES, LayerRule, Profile, merge_profiles, suggest_profile
@@ -168,6 +168,7 @@ def extract(path: str | Path, user_profile: Profile | None = None, units_overrid
         project.footings.extend(extract_footings(ctx))
         project.openings.extend(extract_openings(ctx))
         project.walls.extend(extract_walls(ctx))
+        project.stairs.extend(extract_stairs(ctx))
         ctx.flush_missing_marks()
 
         # unassigned structural tags

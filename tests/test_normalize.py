@@ -1,0 +1,113 @@
+"""Utility 3 on the synthetic drawing: stacks, spans, panels, marks, template DXF."""
+from pathlib import Path
+
+import ezdxf
+import pytest
+
+from c2b.export.template_dxf import write_template_dxf
+from c2b.normalize.geometry import complement, lattice_panels, merge_intervals
+from c2b.normalize.naming import normalise_floor_name, title_from_level_name
+from c2b.normalize.pipeline import LevelRow, normalize
+from c2b.normalize.spec import TemplateSpec
+
+
+@pytest.fixture(scope="module")
+def normalized(synthetic_result):
+    levels = [LevelRow("L01", "FOUNDATION LEVEL", 0, -1500.0, None, "FOUNDATION LVL."), LevelRow("L02", "GROUND FLOOR LEVEL", 1, 0.0, None, "GROUND FLOOR LVL.")]
+    return normalize(synthetic_result.project, TemplateSpec(), levels, source_file="synthetic.dxf")
+
+
+def test_intervals():
+    assert merge_intervals([(0, 10), (5, 20), (30, 40)]) == [(0, 20), (30, 40)]
+    assert complement([(10, 20), (50, 60)], 100) == [(0, 10), (20, 50), (60, 100)]
+    assert complement([], 100) == [(0, 100)]
+
+
+def test_lattice_panels():
+    from shapely.geometry import Polygon
+    beams = [Polygon([(0, 0), (6000, 0), (6000, 230), (0, 230)]), Polygon([(0, 5000), (6000, 5000), (6000, 5230), (0, 5230)]),
+             Polygon([(0, 0), (230, 0), (230, 5230), (0, 5230)]), Polygon([(5770, 0), (6000, 0), (6000, 5230), (5770, 5230)])]
+    panels, oversized = lattice_panels(beams, 1e5, 1e9)
+    assert len(panels) == 1 and abs(panels[0].area - (6000 - 460) * (5000 - 230)) < 1
+    assert not oversized
+
+
+def test_names():
+    assert normalise_floor_name("LAYOUT AT 1ST FLOOR LVL. (T1)") == "1ST FLOOR LVL."
+    assert normalise_floor_name("Ground Floor Level") == "GROUND FLOOR LVL."
+    assert normalise_floor_name("(TOWER 1)- 3RD  FLOOR ROOF SLAB") == "3RD FLOOR ROOF SLAB"
+    assert title_from_level_name("GROUND FLOOR LVL.") == "GROUND FLOOR LEVEL"
+
+
+def test_levels_and_floors(normalized):
+    assert [l.name for l in normalized.levels] == ["00 FOUNDATION LVL.", "01 GROUND FLOOR LVL."]
+    assert normalized.levels[0].floor_to_floor_mm == 1500.0
+    f = {f.id: f for f in normalized.floors}
+    assert f["L02"].title == "LAYOUT PLAN - GROUND FLOOR LEVEL" and f["L02"].elevation_mm == 0.0
+    assert min(p.y for p in f["L02"].frame) == f["L02"].plan_bottom_y - TemplateSpec().frame.bottom_band_mm
+
+
+def test_stacks_and_column_marks(normalized):
+    assert len(normalized.stacks) == 12
+    # every stack exists on both floors, numbered x-then-y starting at grid 1/A
+    assert all(s.floors == ["L01", "L02"] for s in normalized.stacks)
+    first = normalized.stacks[0]
+    assert first.mark_base == "C1" and first.grid_ref == "1/A"
+    cols = [c for c in normalized.columns if c.floor_id == "L02"]
+    assert len(cols) == 12
+    marks = {c.mark for c in cols}
+    assert "C1-300X450" in marks and any(m.startswith("C12-600DIA") or m.endswith("600DIA") for m in marks)
+    c1 = next(c for c in cols if c.mark == "C1-300X450")
+    assert c1.mark_position.y > c1.center.y   # placed above the column (template convention)
+    assert not any(c.stops_here for c in cols) and not any(c.starts_here for c in cols)
+
+
+def test_spans(normalized):
+    spans = [b for b in normalized.beams if b.floor_id == "L02"]
+    # 3 horizontal runs x 3 bays + 4 vertical runs x 2 bays + 1 untagged beam between grids 2 and 4 (2 pieces cut by the vertical beams? no: it ends at them)
+    assert len(spans) >= 17
+    assert all(s.length_mm < 6000 for s in spans)          # nothing spans across a column
+    assert all(s.width_mm == 230 for s in spans)
+    supported = [s for s in spans if s.support_start and s.support_end]
+    assert len(supported) >= 15
+    assert any(s.mark.startswith("B1-230X") for s in spans)
+    assert all(s.depth_mm in (450, 600) for s in spans)
+
+
+def test_panels(normalized):
+    panels = [p for p in normalized.panels if p.floor_id == "L02" and p.kind == "slab"]
+    # 3 x 2 bays, one split by the extra beam at y=2500 -> 7 panels (the opening at 13000..15000 x 6000..8500 sits inside a bay)
+    assert len(panels) == 7, [p.area_m2 for p in panels]
+    tagged = [p for p in panels if p.thickness_mm == 150]
+    assert len(tagged) >= 4
+    assert all(p.mark.startswith("S") for p in panels)
+    assert any(p.opening_ids for p in panels)
+
+
+def test_footings_and_grids(normalized):
+    ftg = [x for x in normalized.footings if x.floor_id == "L01"]
+    assert len(ftg) == 12 and all(x.kind == "footing" and x.thickness_mm == 500 for x in ftg)
+    assert all(len(x.stack_ids) == 1 for x in ftg)
+    assert ftg[0].mark == "F1-500THK"
+    grids = [g for g in normalized.grids if g.floor_id == "L02"]
+    assert len(grids) == 7 and all(g.bubble_centres for g in grids)
+
+
+def test_template_dxf(normalized, tmp_path):
+    spec = TemplateSpec()
+    out = write_template_dxf(normalized, tmp_path / "t.dxf", spec)
+    doc = ezdxf.readfile(str(out))
+    msp = doc.modelspace()
+    layers = {e.dxf.layer for e in msp}
+    for key in ("column", "column_mark", "beam", "beam_mark", "slab", "slab_mark", "footing", "grid", "grid_mark", "level", "boundary", "origin", "text"):
+        assert spec.layer(key) in layers, key
+    cols = list(msp.query(f'LWPOLYLINE[layer=="{spec.layer("column")}"]')) + list(msp.query(f'CIRCLE[layer=="{spec.layer("column")}"]'))
+    assert len(cols) == normalized.summary.columns
+    assert all(e.closed for e in msp.query(f'LWPOLYLINE[layer=="{spec.layer("beam")}"]'))
+    # XDATA round trip
+    c = list(msp.query(f'LWPOLYLINE[layer=="{spec.layer("column")}"]'))[0]
+    xd = {t[1].split("=", 1)[0]: t[1].split("=", 1)[1] for t in c.get_xdata(spec.xdata_appid)}
+    assert xd["id"].startswith("L0") and xd["mark"].startswith("C")
+    assert len(list(msp.query(f'LINE[layer=="{spec.layer("level")}"]'))) == 2
+    assert len(list(msp.query("DIMENSION"))) == 1
+    assert spec.text.style in doc.styles

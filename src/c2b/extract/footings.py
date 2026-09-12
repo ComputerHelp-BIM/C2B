@@ -10,7 +10,7 @@ from .outlines import collect_outlines
 
 def extract_footings(ctx: FloorContext) -> list[Footing]:
     tol = ctx.tol
-    outlines = collect_outlines(ctx, "FOOTING", tol.footing_min_side_mm, tol.footing_min_side_mm ** 2, 1e10, 1e6)
+    outlines = collect_outlines(ctx, "FOOTING", tol.footing_min_side_mm, tol.footing_min_side_mm ** 2, 1e10, 1e6, drop_containers=False)
     if not outlines:
         return []
     polys = [o.poly for o in outlines]

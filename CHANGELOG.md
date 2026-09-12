@@ -8,6 +8,29 @@ The canonical JSON schema carries its own version (`schema_version` in every out
 A MAJOR bump of the schema means downstream utilities (DXF writer, Revit importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes values.
 
+## [0.2.0] - 2026-09-12
+
+### Added
+- Utility 3 (`c2b normalize`): normalises an extraction JSON to the firm's template.
+  Column stacks across floors with one C-number per stack, beams split into spans at
+  column faces and beam faces (shallower beam split at X crossings), slab panels as the
+  holes of the beam/column lattice with thickness from the tags inside, footings and
+  rafts with folds/sunk areas, grids with bubbles, cut-outs with X crosses, stairs carried
+  through, level frame with dimensions, titles, notes and the legend copied from the seed.
+- Template DXF writer that reuses the seed template's layers, styles, dimension style and
+  legend; every entity carries XDATA `C2B` (`id=`, `mark=`, `client=`) for the round trip.
+- `TemplateSpec` YAML with every template convention (layer names, mark formats, mark
+  placement, numbering order, split rules, hatch legend, frame layout).
+- Normalised schema 0.2.0 (`<stem>.normalized.json`) and schedules workbook.
+- `tools/compare_with_template.py`: frame-by-frame IoU comparison against the reference
+  template; `tools/render_dxf.py`.
+- Extraction: cut-outs drawn as X crosses, stair geometry (`stairs` in the schema),
+  polygonisation rounds coordinates to the snap grid (rafts drawn from open polylines).
+
+### Changed
+- Extraction schema 0.1.0 -> 0.2.0 (added `stairs`; backward compatible).
+- Levels workbook may hold several level rows per plan floor (typical floors).
+
 ## [0.1.0] - 2026-09-12
 
 ### Added

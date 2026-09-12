@@ -50,6 +50,25 @@ CODES: dict[str, str] = {
     "ELEMENT_OUTSIDE_FLOORS": "Structural entities lie outside every floor boundary",
     "BLOCK_EXPLODED": "Block reference exploded to read its content",
     "DEFAULT_APPLIED": "A default value from a note was applied",
+    # --- normaliser (utility 3) ---
+    "LEVELS_MISSING": "No level elevations supplied; elevation frame not drawn",
+    "LEVEL_ROW_UNMATCHED": "Level schedule row does not match a plan floor",
+    "STACK_JUMP": "Column matched to the stack below with an offset",
+    "STACK_ORPHAN": "Column starts above a floor without a column under it",
+    "STACK_SIZE_CHANGE": "Column size changes between floors",
+    "SPAN_DROPPED": "Beam span shorter than the minimum was dropped",
+    "SPAN_FREE_END": "Beam span ends without a support (cantilever or missing column)",
+    "BEAM_OVERLAP": "Two beams overlap along their length",
+    "PANEL_NO_TAG": "Slab panel without a thickness tag inside it",
+    "PANEL_MULTI_TAG": "Slab panel contains tags with different thicknesses",
+    "PANEL_LARGE": "Slab panel larger than expected; a beam may be missing",
+    "PANEL_TAG_OUTSIDE": "Slab tag lies in no panel",
+    "PANEL_NO_LATTICE": "Floor has beams but no closed panels could be formed",
+    "FOOTING_NO_COLUMN": "Footing has no column stack over it",
+    "COLUMN_NO_FOOTING": "Column stack on the foundation floor has no footing",
+    "MARK_FIT": "Mark does not fit inside the element; placed outside",
+    "SEED_MISSING": "Seed template DXF not found; layers created from the spec instead",
+    "NAME_NORMALISED": "Floor name normalised for the template",
 }
 
 

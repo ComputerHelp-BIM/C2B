@@ -1,19 +1,20 @@
 # C2B — CAD to BIM
 
 Automates the path from a client's 2D structural AutoCAD drawing to a native Revit model.
-This repository currently contains **step 1 of the pipeline**: reading a client DXF,
+This repository contains **steps 1 and 2 of the pipeline**: reading a client DXF,
 classifying what is on it, extracting the structural elements into a canonical JSON
-schema, and reporting everything that could not be understood.
+schema with diagnostics, and normalising them into the firm's template drawing
+(`CH-` layers, `C12-300X900` marks, spans between supports, slab panels, level frame).
 
-Version `0.1.0` (tool) — schema `0.1.0`. See [CHANGELOG.md](CHANGELOG.md).
+Version `0.2.0` (tool) — extraction schema `0.2.0`, normalised schema `0.2.0`. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Pipeline
 
 | Step | Utility | Status |
 |---|---|---|
-| 1 | **Extract + check**: client DXF → canonical JSON, Excel review workbook, review DXF, diagnostics | this repo, v0.1.0 |
-| 2 | Normalise: JSON → template DXF (closed polylines, one column per floor, centred tags on template layers) | next |
-| 3 | Verify the template DXF against the JSON (round trip) | later |
+| 1 | **Extract + check**: client DXF → canonical JSON, Excel review workbook, review DXF, diagnostics | `c2b extract`, v0.1.0 |
+| 2 | **Normalise**: column stacks, beam spans at supports, slab panels, template marks → template DXF + schedules | `c2b normalize`, v0.2.0 |
+| 3 | Verify the template DXF against the JSON (round trip via XDATA) | next |
 | 4 | Revit importer: JSON → native columns, beams, floors, foundations | later |
 | 5 | Cross-check: quantities, supports, continuity | later |
 
@@ -74,7 +75,16 @@ c2b extract client.dxf -o out/client        # add -p profiles/client-x.yaml, -u 
 
 # 4. optional: quick PNG per floor for a visual check
 c2b render out/client/client.c2b.json
+
+# 5. utility 3: fill out/client/client.levels.xlsx (elevations), then normalise to the template
+c2b normalize out/client/client.c2b.json --seed templates/CH-TEMPLATE.dxf --levels out/client/client.levels.xlsx -o out/client
+#    -> client.template.dxf, client.normalized.json, client.schedules.xlsx, client.template-spec.yaml
+#    compare with the reference template:
+python tools/compare_with_template.py out/client/client.template.dxf templates/CH-TEMPLATE.dxf
 ```
+
+See `docs/template-spec.md` for what the normaliser does and how every template
+convention is configured.
 
 `c2b extract` writes, for `client.dxf`:
 
@@ -125,19 +135,24 @@ src/c2b/
   schedules.py     text-grid schedule tables
   extract/         grids, columns, beams, slabs, footings, openings/walls, tag association
   pipeline.py      orchestration
-  export/          JSON, Excel, review DXF, report, level schedule
+  normalize/       utility 3: spec, stacks, spans, panels, naming, pipeline   docs/template-spec.md
+  export/          JSON, Excel, review DXF, report, level schedule, template DXF, schedules workbook
   cli.py           typer CLI
+tools/             compare_with_template.py (IoU check against the reference), render_dxf.py
 tests/             unit tests + synthetic end-to-end drawing + sample integration
 profiles/          client profiles (YAML)
 samples/           client drawings (git-ignored)
 ```
 
-## Known limits of v0.1.0
+## Known limits of v0.2.0
 
-- Beams are extracted as continuous runs between drawn breaks, not split at supports.
-  Splitting at columns and beam intersections belongs to step 2.
-- Slab panels are not derived from the beam network yet; slabs are thickness tags plus
-  any drawn outlines.
+- Slab panels are the closed holes of the beam-and-column lattice. Cantilever slabs and
+  edge strips with a free edge are not derived (they need the client's slab edge lines).
+- Sunk slabs are hatched only when a client tag says "SUNK"; drafter knowledge such as
+  "toilets are sunk" is not inferred.
+- Column stacks are matched by plan overlap; a column that shifts more than 300 mm
+  between floors starts a new stack (reported as `STACK_ORPHAN`).
+- Arcs at circular columns are written as flattened polyline segments, not bulges.
 - Beams drawn as single centrelines (no edges) are not paired; they show up as
   `BEAM_UNPAIRED_LINES`.
 - Rotated floor plans (true north) are read as drawn; no per-floor rotation yet.

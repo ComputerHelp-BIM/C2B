@@ -197,6 +197,20 @@ class Opening(BaseModel):
     source_handles: list[str] = Field(default_factory=list)
 
 
+class Stair(BaseModel):
+    """Stair geometry carried through as drawn (outline polygons and raw lines)."""
+
+    id: str
+    floor_id: str
+    label: str | None = None
+    center: Point2
+    outline: list[Point2] = Field(default_factory=list)
+    lines: list[list[Point2]] = Field(default_factory=list)
+    area_mm2: float = 0.0
+    source_layer: str
+    source_handles: list[str] = Field(default_factory=list)
+
+
 class Wall(BaseModel):
     id: str
     floor_id: str
@@ -247,6 +261,7 @@ class Summary(BaseModel):
     footings: int = 0
     openings: int = 0
     walls: int = 0
+    stairs: int = 0
     schedules: int = 0
     tags_unassigned: int = 0
     errors: int = 0
@@ -270,6 +285,7 @@ class Project(BaseModel):
     footings: list[Footing] = Field(default_factory=list)
     openings: list[Opening] = Field(default_factory=list)
     walls: list[Wall] = Field(default_factory=list)
+    stairs: list[Stair] = Field(default_factory=list)
     schedules: list[Schedule] = Field(default_factory=list)
     tags_unassigned: list[UnassignedTag] = Field(default_factory=list)
     diagnostics: list[Diagnostic] = Field(default_factory=list)
@@ -279,7 +295,7 @@ class Project(BaseModel):
         self.summary = Summary(
             floors=len(self.floors), grids=len(self.grids), columns=len(self.columns), beams=len(self.beams),
             slabs=len(self.slabs), footings=len(self.footings), openings=len(self.openings), walls=len(self.walls),
-            schedules=len(self.schedules), tags_unassigned=len(self.tags_unassigned),
+            stairs=len(self.stairs), schedules=len(self.schedules), tags_unassigned=len(self.tags_unassigned),
             errors=sum(1 for d in self.diagnostics if d.severity == "ERROR"),
             warnings=sum(1 for d in self.diagnostics if d.severity == "WARNING"),
             infos=sum(1 for d in self.diagnostics if d.severity == "INFO"),

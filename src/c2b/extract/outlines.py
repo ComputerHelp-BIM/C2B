@@ -39,7 +39,7 @@ def _block_size(prim: Prim) -> tuple[float, float] | None:
 
 
 def collect_outlines(ctx: FloorContext, role: str, min_side: float, min_area: float, max_area: float, max_side: float,
-                     include_generic_hatch: bool = False, close_tol: float | None = None) -> list[Outline]:
+                     include_generic_hatch: bool = False, close_tol: float | None = None, drop_containers: bool = True) -> list[Outline]:
     tol = ctx.tol
     close_tol = tol.ring_close_tol_mm if close_tol is None else close_tol
     cands: list[Outline] = []
@@ -120,8 +120,9 @@ def collect_outlines(ctx: FloorContext, role: str, min_side: float, min_area: fl
         accepted.append(c)
         acc_polys.append(c.poly)
 
-    # containers: a face that holds two or more accepted outlines is an enclosure, not a member
-    if len(accepted) > 2:
+    # containers: a face that holds two or more accepted outlines is an enclosure, not a member (columns only;
+    # a raft legitimately contains fold and sunk outlines)
+    if drop_containers and len(accepted) > 2:
         tree = STRtree(acc_polys)
         result = []
         for i, c in enumerate(accepted):

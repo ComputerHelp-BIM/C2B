@@ -23,11 +23,11 @@ ROLES = [
     "SCHEDULE", "NOTE", "TITLE", "DIMENSION", "HATCH_GENERIC",
     "IGNORE", "UNKNOWN",
 ]
-STRUCTURAL_ROLES = {"GRID", "COLUMN", "BEAM", "SLAB", "FOOTING", "OPENING", "WALL"}
+STRUCTURAL_ROLES = {"GRID", "COLUMN", "BEAM", "SLAB", "FOOTING", "OPENING", "WALL", "STAIR"}
 
 # Text on a structural layer is that element's tag.
 TEXT_ROLE_FOR = {r: f"{r}_TAG" for r in STRUCTURAL_ROLES}
-TEXT_ROLE_FOR.update({"SCHEDULE": "SCHEDULE", "NOTE": "NOTE", "TITLE": "TITLE", "STAIR": "STAIR_TAG",
+TEXT_ROLE_FOR.update({"SCHEDULE": "SCHEDULE", "NOTE": "NOTE", "TITLE": "TITLE",
                       "DIMENSION": "IGNORE", "BOUNDARY": "NOTE", "ORIGIN": "IGNORE", "HATCH_GENERIC": "NOTE",
                       "IGNORE": "IGNORE", "UNKNOWN": "NOTE"})
 

@@ -1,0 +1,395 @@
+"""Normalisation pipeline: extraction Project -> NormalizedProject."""
+from __future__ import annotations
+
+import math
+from collections import Counter
+from pathlib import Path
+
+from shapely.geometry import Point, Polygon
+from shapely.strtree import STRtree
+
+from ..diagnostics import DiagnosticsCollector
+from ..geometry import classify_polygon, rectangle_polygon
+from ..schema import Point2, Project
+from .geometry import lattice_panels, poly_from_points, representative_point, ring_points, text_fits
+from .model import (MarkMap, NBeam, NColumn, NFloor, NFooting, NGrid, NLevel, NOpening, NPanel, NStair, NWall, NormalizedProject)
+from .naming import normalise_floor_name, title_from_level_name
+from .spans import runs_for_floor, split_runs
+from .spec import TemplateSpec
+from .stacks import build_stacks
+
+
+def _pt(p) -> Point2:
+    return Point2(x=round(p[0], 2), y=round(p[1], 2))
+
+
+def _pts(ring) -> list[Point2]:
+    return [Point2(x=x, y=y) for x, y in ring]
+
+
+def _fmt(fmt: str, **kw) -> str:
+    class _Safe(dict):
+        def __missing__(self, k):
+            return "?"
+    try:
+        return fmt.format_map(_Safe(**kw))
+    except (ValueError, TypeError):
+        return fmt
+
+
+class LevelRow:
+    def __init__(self, floor_id, name, order, elevation, f2f, revit_name):
+        self.floor_id, self.name, self.order, self.elevation, self.f2f, self.revit_name = floor_id, name, order, elevation, f2f, revit_name
+
+
+def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | None = None, source_file: str = "") -> NormalizedProject:
+    diag = DiagnosticsCollector()
+    np_ = NormalizedProject(source_file=source_file or project.drawing.file, source_schema_version=project.schema_version, spec_name=spec.name)
+
+    floors_sorted = sorted(project.floors, key=lambda f: f.index)
+    floor_ids = [f.id for f in floors_sorted]
+
+    # ---- levels -------------------------------------------------------------
+    level_rows = levels or []
+    plan_levels: dict[str, list[str]] = {fid: [] for fid in floor_ids}
+    if level_rows:
+        rows = sorted(level_rows, key=lambda r: (r.elevation if r.elevation is not None else 0.0, r.order or 0))
+        # derive missing elevations from floor-to-floor heights where possible
+        elev = None
+        for r in rows:
+            if r.elevation is None and elev is not None and r.f2f is not None:
+                r.elevation = elev + r.f2f
+            if r.elevation is not None:
+                elev = r.elevation
+        rows = [r for r in rows if r.elevation is not None]
+        rows.sort(key=lambda r: r.elevation)
+        for i, r in enumerate(rows):
+            nxt = rows[i + 1].elevation - r.elevation if i + 1 < len(rows) else None
+            base = r.revit_name or r.name or (next((f.name for f in floors_sorted if f.id == r.floor_id), "") if r.floor_id else "")
+            name = _fmt(spec.marks.level, n=i, name=normalise_floor_name(base) if base else f"LEVEL {i}")
+            lid = f"LV{i:02d}"
+            np_.levels.append(NLevel(id=lid, index=i, name=name, elevation_mm=float(r.elevation), floor_to_floor_mm=nxt, plan_floor_id=r.floor_id, revit_level_name=r.revit_name))
+            if r.floor_id in plan_levels:
+                plan_levels[r.floor_id].append(lid)
+            elif r.floor_id:
+                diag.warning("LEVEL_ROW_UNMATCHED", f"Level row '{r.name or r.floor_id}' references unknown plan floor '{r.floor_id}'")
+    else:
+        diag.warning("LEVELS_MISSING", "No level elevations supplied (levels.xlsx); the elevation frame is not drawn and floors have no elevation")
+
+    # ---- floors and frames --------------------------------------------------
+    fr = spec.frame
+    for f in floors_sorted:
+        if f.boundary and fr.keep_client_frames:
+            xs = [p.x for p in f.boundary]
+            ys = [p.y for p in f.boundary]
+            left, right, bottom, top = min(xs), max(xs), min(ys), max(ys)
+        else:
+            pts = [(c.center.x + f.origin.x, c.center.y + f.origin.y) for c in project.columns if c.floor_id == f.id]
+            pts += [(b.start.x + f.origin.x, b.start.y + f.origin.y) for b in project.beams if b.floor_id == f.id]
+            pts += [(b.end.x + f.origin.x, b.end.y + f.origin.y) for b in project.beams if b.floor_id == f.id]
+            pts += [(x.center.x + f.origin.x, x.center.y + f.origin.y) for x in project.footings if x.floor_id == f.id]
+            if not pts:
+                pts = [(f.origin.x, f.origin.y)]
+            left, right = min(p[0] for p in pts) - fr.margin_mm, max(p[0] for p in pts) + fr.margin_mm
+            bottom, top = min(p[1] for p in pts) - fr.margin_mm, max(p[1] for p in pts) + fr.margin_mm
+        plan_bottom = bottom
+        frame_bottom = bottom - fr.bottom_band_mm
+        level_name = normalise_floor_name(f.name)
+        if plan_levels.get(f.id):
+            first = next(l for l in np_.levels if l.id == plan_levels[f.id][0])
+            level_name = first.name.split(" ", 1)[1] if " " in first.name else first.name
+        title = _fmt(spec.marks.plan_title, name=title_from_level_name(level_name))
+        if level_name != f.name.strip().upper():
+            diag.info("NAME_NORMALISED", f"Floor '{f.name}' written as '{level_name}'", floor_id=f.id)
+        elevation = next((l.elevation_mm for l in np_.levels if l.id in plan_levels.get(f.id, [])), None)
+        np_.floors.append(NFloor(id=f.id, index=f.index, name=level_name, title=title, source_name=f.name, origin=f.origin,
+                                 frame=[_pt((left, frame_bottom)), _pt((right, frame_bottom)), _pt((right, top)), _pt((left, top))],
+                                 plan_bottom_y=plan_bottom, elevation_mm=elevation, levels=plan_levels.get(f.id, []),
+                                 default_beam_depth_mm=f.default_beam_depth_mm, default_slab_thickness_mm=f.default_slab_thickness_mm))
+
+    # ---- column stacks ------------------------------------------------------
+    stacks, col_to_stack = build_stacks(project, floor_ids, spec.numbering.columns, spec.stack_match_tol_mm, spec.stack_match_min_iou, diag)
+    np_.stacks = stacks
+    stack_by_id = {s.id: s for s in stacks}
+    col_ids_by_floor: dict[str, dict[str, str]] = {}
+    text = spec.text
+    for f in floors_sorted:
+        fidx = floor_ids.index(f.id)
+        for c in sorted((c for c in project.columns if c.floor_id == f.id), key=lambda c: stack_by_id[col_to_stack[c.id]].number):
+            stack = stack_by_id[col_to_stack[c.id]]
+            n = stack.number
+            outline = poly_from_points(c.outline)
+            if outline is None:
+                continue
+            if c.shape == "circle":
+                dia = c.diameter_mm or c.drawn_width_mm or 0
+                mark = stack.client_marks[0] if spec.numbering.keep_client_marks and c.mark else _fmt(spec.marks.column_circle, n=n, dia=dia)
+            else:
+                w, d = c.width_mm or c.drawn_width_mm or 0, c.depth_mm or c.drawn_depth_mm or 0
+                mark = (c.mark if spec.numbering.keep_client_marks and c.mark else None) or _fmt(spec.marks.column, n=n, w=w, d=d)
+            # placement
+            place = spec.placement.column_mark
+            fits = text_fits(mark, text.mark_height, text.width_factor, outline, c.rotation_deg)
+            if place == "centre" or (place == "auto" and fits):
+                mp = representative_point(outline)
+            else:
+                minx, miny, maxx, maxy = outline.bounds
+                mp = ((minx + maxx) / 2, maxy + spec.placement.column_mark_gap_mm)
+                if place == "auto":
+                    diag.info("MARK_FIT", f"Mark '{mark}' does not fit inside column {c.id}; placed above", floor_id=f.id, element_id=c.id, location=mp)
+            above = floor_ids[fidx + 1] if fidx + 1 < len(floor_ids) else None
+            below = floor_ids[fidx - 1] if fidx > 0 else None
+            stops = above is not None and above not in stack.floors
+            starts = below is not None and below not in stack.floors
+            cid = f"{f.id}-C{n:03d}"
+            col_ids_by_floor.setdefault(f.id, {})[c.id] = cid
+            stack.column_ids[f.id] = cid
+            np_.columns.append(NColumn(id=cid, floor_id=f.id, stack_id=stack.id, mark=mark, shape=c.shape, center=c.center,
+                                       width_mm=c.width_mm, depth_mm=c.depth_mm, rotation_deg=c.rotation_deg, diameter_mm=c.diameter_mm,
+                                       outline=_pts(ring_points(outline)), stops_here=stops, starts_here=starts, wall_like=c.wall_like,
+                                       size_source=c.size_source, mark_position=_pt(mp), client_mark=c.mark, source_ids=[c.id], source_handles=c.source_handles))
+            np_.mark_map.append(MarkMap(element_id=cid, floor_id=f.id, kind="column", mark=mark, client_mark=c.mark, client_tags=c.tags))
+
+    # ---- walls (kept as drawn) ---------------------------------------------
+    for w in project.walls:
+        outline = poly_from_points(w.outline)
+        if outline is None:
+            continue
+        np_.walls.append(NWall(id=f"{w.floor_id}-W{len([x for x in np_.walls if x.floor_id == w.floor_id]) + 1:03d}", floor_id=w.floor_id, mark=w.mark,
+                               outline=_pts(ring_points(outline)), center=w.center, thickness_mm=w.thickness_mm, length_mm=w.length_mm, source_id=w.id))
+
+    # ---- beams: split into spans -------------------------------------------
+    for f in floors_sorted:
+        runs = runs_for_floor(project, f.id)
+        supports: list[tuple[str, Polygon]] = []
+        col_lookup = {c.id: c for c in np_.columns if c.floor_id == f.id}
+        for c in col_lookup.values():
+            poly = poly_from_points(c.outline)
+            if poly is not None and (spec.split.at_columns or (c.wall_like and spec.split.at_walls)):
+                supports.append((c.stack_id, poly))
+        if spec.split.at_walls:
+            for w in np_.walls:
+                if w.floor_id == f.id:
+                    poly = poly_from_points(w.outline)
+                    if poly is not None:
+                        supports.append((w.id, poly))
+        spans = split_runs(runs, supports, spec, diag, f.id)
+        # numbering: horizontal runs first (by y descending), then vertical (by x ascending), along the run
+        def span_key(s):
+            r = s["run"]
+            horizontal = abs(r.axis.angle) < 45 or abs(r.axis.angle - 180) < 45
+            off = -r.axis.start[1] if horizontal else r.axis.start[0]
+            return (0 if horizontal else 1, round(off / 50.0), round(r.axis.t_of(r.axis.start) / 50.0), s["t1"])
+        spans.sort(key=span_key)
+        for i, s in enumerate(spans, start=1):
+            r = s["run"]
+            b = r.payload
+            w = r.width
+            d = r.depth
+            mark = (b.mark if spec.numbering.keep_client_marks and b.mark else None) or (_fmt(spec.marks.beam, n=i, w=w, d=d) if d else _fmt(spec.marks.beam_no_depth, n=i, w=w))
+            outline = s["outline"]
+            p1, p2 = r.axis.point_at(s["t1"]), r.axis.point_at(s["t2"])
+            mp = representative_point(outline)
+            rot = 0.0
+            if spec.placement.beam_mark_rotate:
+                rot = r.axis.angle if r.axis.angle <= 90 else r.axis.angle - 180
+            bid = f"{f.id}-B{i:03d}"
+            if s["support_start"] is None or s["support_end"] is None:
+                diag.info("SPAN_FREE_END", f"Beam {mark} ({bid}) has a free end", floor_id=f.id, element_id=bid, location=p1 if s["support_start"] is None else p2)
+            np_.beams.append(NBeam(id=bid, floor_id=f.id, run_id=r.id, span_index=i, mark=mark, start=_pt(p1), end=_pt(p2), length_mm=round(s["t2"] - s["t1"], 1),
+                                   width_mm=w, depth_mm=d, depth_alt_mm=b.depth_alt_mm, angle_deg=round(r.axis.angle, 3), outline=_pts(ring_points(outline)),
+                                   inverted=b.inverted, support_start=s["support_start"], support_end=s["support_end"], size_source=b.size_source,
+                                   depth_source=b.depth_source, mark_position=_pt(mp), mark_rotation_deg=rot, client_mark=b.mark, source_handles=b.source_handles))
+            np_.mark_map.append(MarkMap(element_id=bid, floor_id=f.id, kind="beam", mark=mark, client_mark=b.mark, client_tags=b.tags))
+
+    # ---- openings -----------------------------------------------------------
+    for o in project.openings:
+        outline = poly_from_points(o.outline)
+        if outline is None:
+            continue
+        n = len([x for x in np_.openings if x.floor_id == o.floor_id]) + 1
+        np_.openings.append(NOpening(id=f"{o.floor_id}-O{n:03d}", floor_id=o.floor_id, label=o.label, outline=_pts(ring_points(outline)), center=o.center, source_id=o.id))
+
+    # ---- stairs (as drawn) ----------------------------------------------------
+    for st in project.stairs:
+        outline = poly_from_points(st.outline) if st.outline else None
+        n = len([x for x in np_.stairs if x.floor_id == st.floor_id]) + 1
+        np_.stairs.append(NStair(id=f"{st.floor_id}-ST{n:03d}", floor_id=st.floor_id, mark=st.label, outline=_pts(ring_points(outline)) if outline else [],
+                                 lines=st.lines, center=st.center, source_id=st.id))
+
+    # ---- slab panels --------------------------------------------------------
+    for f in floors_sorted:
+        beams_f = [b for b in np_.beams if b.floor_id == f.id]
+        cols_f = [c for c in np_.columns if c.floor_id == f.id]
+        walls_f = [w for w in np_.walls if w.floor_id == f.id]
+        if not beams_f:
+            continue
+        ext = spec.panels.span_extend_mm
+        polys = []
+        for b in beams_f:
+            ang = math.radians(b.angle_deg)
+            ux, uy = math.cos(ang), math.sin(ang)
+            cx, cy = (b.start.x + b.end.x) / 2, (b.start.y + b.end.y) / 2
+            polys.append(rectangle_polygon((cx, cy), b.length_mm + 2 * ext, b.width_mm, b.angle_deg))
+        polys += [poly_from_points(c.outline) for c in cols_f] + [poly_from_points(w.outline) for w in walls_f]
+        polys = [p for p in polys if p is not None]
+        panels, oversized = lattice_panels(polys, spec.panels.min_area_m2 * 1e6, spec.panels.max_area_m2 * 1e6)
+        if not panels:
+            diag.warning("PANEL_NO_LATTICE", "Beams exist but form no closed panels; check for missing beams or wrong widths", floor_id=f.id)
+            continue
+        tags = [s for s in project.slabs if s.floor_id == f.id and s.source_kind == "tag"]
+        tag_pts = [Point(s.position.x, s.position.y) for s in tags]
+        openings_f = [(o, poly_from_points(o.outline)) for o in np_.openings if o.floor_id == f.id]
+        stairs_f = [poly_from_points(st.outline) for st in np_.stairs if st.floor_id == f.id and st.outline]
+        stairs_f = [x for x in stairs_f if x is not None]
+        used_tags: set[str] = set()
+        n_slab = 0
+        # numbering: top-left to bottom-right by panel representative point
+        panels.sort(key=lambda p: (-round(p.bounds[3] / 500.0), p.bounds[0]))
+        for poly in panels:
+            # lattice holes that are really cut-outs or stairs
+            open_cover = sum(poly.intersection(op).area for _, op in openings_f if op is not None and op.intersects(poly)) / poly.area
+            stair_cover = sum(poly.intersection(sp).area for sp in stairs_f if sp.intersects(poly)) / poly.area
+            if open_cover >= spec.opening_panel_cover:
+                pid = f"{f.id}-X{len([x for x in np_.panels if x.floor_id == f.id and x.kind != 'slab']) + 1:03d}"
+                c = poly.centroid
+                np_.panels.append(NPanel(id=pid, floor_id=f.id, kind="opening", mark="", outline=_pts(ring_points(poly)), area_m2=round(poly.area / 1e6, 3),
+                                         centroid=_pt((c.x, c.y)), mark_position=_pt((c.x, c.y)), opening_ids=[o.id for o, op in openings_f if op is not None and op.intersects(poly)]))
+                continue
+            if stair_cover >= spec.stair_panel_cover:
+                pid = f"{f.id}-X{len([x for x in np_.panels if x.floor_id == f.id and x.kind != 'slab']) + 1:03d}"
+                c = poly.centroid
+                np_.panels.append(NPanel(id=pid, floor_id=f.id, kind="stair", mark="", outline=_pts(ring_points(poly)), area_m2=round(poly.area / 1e6, 3),
+                                         centroid=_pt((c.x, c.y)), mark_position=_pt((c.x, c.y))))
+                continue
+            n_slab += 1
+            i = n_slab
+            pid = f"{f.id}-S{i:03d}"
+            inside = [s for s, pt in zip(tags, tag_pts) if poly.contains(pt)]
+            used_tags.update(s.id for s in inside)
+            thicknesses = [s.thickness_mm for s in inside if s.thickness_mm is not None]
+            thickness, source = None, "unknown"
+            if thicknesses:
+                common = Counter(thicknesses).most_common()
+                thickness = common[0][0]
+                source = inside[0].thickness_source if len(common) == 1 else "tag"
+                if len(common) > 1:
+                    diag.warning("PANEL_MULTI_TAG", f"Panel {pid} contains tags with different thicknesses {sorted(set(thicknesses))}; {thickness:.0f} used", floor_id=f.id, element_id=pid, location=representative_point(poly))
+            elif f.default_slab_thickness_mm:
+                thickness, source = f.default_slab_thickness_mm, "default"
+            else:
+                diag.warning("PANEL_NO_TAG", f"Panel {pid} ({poly.area / 1e6:.1f} m2) has no thickness tag inside it", floor_id=f.id, element_id=pid, location=representative_point(poly))
+            sunk = next((s.sunk_mm for s in inside if s.sunk_mm), None)
+            op_ids = []
+            out_poly = poly
+            for o, opoly in openings_f:
+                if opoly is not None and poly.contains(opoly.centroid):
+                    op_ids.append(o.id)
+                    o.panel_id = pid
+                    if spec.panels.subtract_openings and opoly.intersects(poly.exterior):
+                        cut = out_poly.difference(opoly)
+                        if cut.geom_type == "Polygon" and not cut.is_empty:
+                            out_poly = cut
+            if poly in oversized:
+                diag.warning("PANEL_LARGE", f"Panel {pid} is {poly.area / 1e6:.0f} m2; a beam may be missing", floor_id=f.id, element_id=pid, location=representative_point(poly))
+            mark = _fmt(spec.marks.slab, n=i, thk=thickness) if thickness is not None else _fmt(spec.marks.slab_no_thickness, n=i)
+            c = poly.centroid
+            mp = representative_point(poly) if spec.placement.slab_mark == "representative" else (c.x, c.y)
+            np_.panels.append(NPanel(id=pid, floor_id=f.id, mark=mark, thickness_mm=thickness, thickness_source=source, outline=_pts(ring_points(out_poly)),
+                                     area_m2=round(poly.area / 1e6, 3), centroid=_pt((c.x, c.y)), mark_position=_pt(mp), sunk_mm=sunk, opening_ids=op_ids,
+                                     tag_ids=[s.id for s in inside]))
+            np_.mark_map.append(MarkMap(element_id=pid, floor_id=f.id, kind="slab", mark=mark, client_mark=inside[0].mark if inside else None, client_tags=[t for s in inside for t in s.tags]))
+        stray = [s for s in tags if s.id not in used_tags]
+        if stray:
+            diag.info("PANEL_TAG_OUTSIDE", f"{len(stray)} slab tag(s) lie in no panel (edge strips, cantilevers or stairs), e.g. {', '.join(s.tags[0].text for s in stray[:4] if s.tags)}", floor_id=f.id)
+
+    # ---- footings -----------------------------------------------------------
+    for f in floors_sorted:
+        fts = [x for x in project.footings if x.floor_id == f.id]
+        if not fts:
+            continue
+        stacks_on_floor = [(s, Point(s.centre.x, s.centre.y)) for s in np_.stacks if f.id in s.floors]
+        n_f = n_r = 0
+        for x in sorted(fts, key=lambda x: (1 if x.modifier in ('fold', 'sunk') else 0, -round(x.center.y / 500.0), x.center.x)):
+            outline = poly_from_points(x.outline)
+            if outline is None:
+                continue
+            over = [s.id for s, pt in stacks_on_floor if outline.contains(pt)]
+            modifier = x.modifier
+            is_raft = outline.area >= spec.raft_min_area_m2 * 1e6 or (spec.raft_min_columns > 0 and len(over) >= spec.raft_min_columns)
+            if modifier in ("fold", "sunk"):
+                kind = modifier
+                mark = ""
+                n = 0
+            elif is_raft:
+                n_r += 1
+                n, kind = n_r, "raft"
+                mark = _fmt(spec.marks.raft, n=n, thk=x.thickness_mm) if x.thickness_mm else _fmt(spec.marks.footing_no_thickness, n=n).replace("F", "RF", 1)
+            else:
+                n_f += 1
+                n, kind = n_f, "footing"
+                mark = _fmt(spec.marks.footing, n=n, thk=x.thickness_mm) if x.thickness_mm else _fmt(spec.marks.footing_no_thickness, n=n)
+            lines = [mark] if mark else []
+            if x.fold_mm:
+                lines.append(_fmt(spec.marks.footing_fold_line, fold=x.fold_mm))
+            if kind == "footing" and not over:
+                diag.warning("FOOTING_NO_COLUMN", f"Footing {mark} has no column stack over it", floor_id=f.id, location=(x.center.x, x.center.y))
+            fid_ = f"{f.id}-{'RF' if kind == 'raft' else 'F'}{n:03d}" if kind in ("footing", "raft") else f"{f.id}-FX{len(np_.footings) + 1:03d}"
+            if kind in ("fold", "sunk"):
+                # a fold/sunk inside a raft belongs to the raft layers and carries the raft mark, otherwise the footing layers
+                rafts = [r for r in np_.footings if r.floor_id == f.id and r.kind == "raft"]
+                parent = next((r for r in rafts if poly_from_points(r.outline) is not None and poly_from_points(r.outline).contains(outline.centroid)), None)
+                over = ["raft"] if parent is not None else []
+                if parent is not None and parent.mark:
+                    lines = [parent.mark] + lines
+            np_.footings.append(NFooting(id=fid_, floor_id=f.id, kind=kind, mark=mark, mark_lines=lines, shape=x.shape, center=x.center, width_mm=x.width_mm, depth_mm=x.depth_mm,
+                                         rotation_deg=x.rotation_deg, thickness_mm=x.thickness_mm, fold_mm=x.fold_mm, outline=_pts(ring_points(outline)), stack_ids=over,
+                                         client_mark=x.mark, source_ids=[x.id]))
+            if mark:
+                np_.mark_map.append(MarkMap(element_id=fid_, floor_id=f.id, kind=kind, mark=mark, client_mark=x.mark, client_tags=x.tags))
+        covered = {sid for ft in np_.footings if ft.floor_id == f.id for sid in ft.stack_ids}
+        for s, pt in stacks_on_floor:
+            if s.id not in covered and f.index == min(fl.index for fl in floors_sorted):
+                diag.warning("COLUMN_NO_FOOTING", f"Column stack {s.mark_base} on {f.id} has no footing under it", floor_id=f.id, element_id=s.id, location=(pt.x, pt.y))
+
+    # ---- grids --------------------------------------------------------------
+    for f in floors_sorted:
+        members = [poly_from_points(c.outline) for c in np_.columns if c.floor_id == f.id] + [poly_from_points(b.outline) for b in np_.beams if b.floor_id == f.id]
+        members += [poly_from_points(x.outline) for x in np_.footings if x.floor_id == f.id]
+        members = [m for m in members if m is not None]
+        if members:
+            bounds = [m.bounds for m in members]
+            minx, miny = min(b[0] for b in bounds), min(b[1] for b in bounds)
+            maxx, maxy = max(b[2] for b in bounds), max(b[3] for b in bounds)
+        else:
+            minx = miny = -1.0
+            maxx = maxy = 1.0
+        ext = spec.placement.grid_extension_mm
+        r = spec.placement.grid_bubble_radius_mm
+        seen: set[tuple[str, str]] = set()
+        for g in sorted((g for g in project.grids if g.floor_id == f.id and g.label), key=lambda g: (g.axis, g.offset_mm)):
+            if (g.axis, g.label) in seen:
+                continue
+            seen.add((g.axis, g.label))
+            if g.axis == "X":
+                start, end = (g.offset_mm, miny - ext), (g.offset_mm, maxy + ext)
+                bubbles = [(g.offset_mm, miny - ext - r)]
+                if spec.placement.grid_bubble_end == "both":
+                    bubbles.append((g.offset_mm, maxy + ext + r))
+            elif g.axis == "Y":
+                start, end = (minx - ext, g.offset_mm), (maxx + ext, g.offset_mm)
+                bubbles = [(minx - ext - r, g.offset_mm)]
+                if spec.placement.grid_bubble_end == "both":
+                    bubbles.append((maxx + ext + r, g.offset_mm))
+            else:
+                start, end = (g.start.x, g.start.y), (g.end.x, g.end.y)
+                bubbles = [start]
+            np_.grids.append(NGrid(id=f"{f.id}-G{len([x for x in np_.grids if x.floor_id == f.id]) + 1:03d}", floor_id=f.id, label=g.label, axis=g.axis,
+                                   offset_mm=g.offset_mm, start=_pt(start), end=_pt(end), bubble_centres=[_pt(b) for b in bubbles], source_id=g.id))
+
+    if spec.write_generator_note:
+        np_.notes.append(f"GENERATED BY C2B {np_.generator.split()[-1]} FROM {np_.source_file} | NORMALISED SCHEMA {np_.schema_version}")
+    np_.notes.extend(spec.notes)
+    np_.diagnostics = diag.items
+    np_.recompute_summary()
+    return np_

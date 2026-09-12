@@ -103,6 +103,48 @@ def extract(
 
 
 @app.command()
+def normalize(
+    json_file: Path = typer.Argument(..., exists=True, help="<stem>.c2b.json produced by extract"),
+    out: Path = typer.Option(None, "--out", "-o", help="Output folder (default: next to the JSON)"),
+    spec: Optional[Path] = typer.Option(None, "--spec", "-s", exists=True, help="Template spec YAML (default: built-in CH template spec)"),
+    seed: Optional[Path] = typer.Option(None, "--seed", exists=True, help="Seed template DXF whose layers/styles/legend are reused"),
+    levels: Optional[Path] = typer.Option(None, "--levels", "-l", exists=True, help="Level schedule xlsx (elevations)"),
+) -> None:
+    """Utility 3: normalise to the template (stacks, spans, panels, marks) and write the template DXF."""
+    from .export.jsonout import read_json
+    from .export.levels import read_levels
+    from .export.normalized_excel import write_normalized_workbook
+    from .export.template_dxf import write_template_dxf
+    from .normalize.pipeline import normalize as run_normalize
+    from .normalize.spec import TemplateSpec
+
+    project = read_json(json_file)
+    tspec = TemplateSpec.load(spec) if spec else TemplateSpec()
+    level_rows = read_levels(levels) if levels else None
+    out = out or json_file.parent
+    out.mkdir(parents=True, exist_ok=True)
+    stem = json_file.name.replace(".c2b.json", "")
+    typer.echo(f"Normalising {json_file.name} ...")
+    np_ = run_normalize(project, tspec, level_rows, source_file=project.drawing.file)
+    from .diagnostics import DiagnosticsCollector
+    diag = DiagnosticsCollector()
+    dxf_path = write_template_dxf(np_, out / f"{stem}.template.dxf", tspec, seed, diag)
+    np_.diagnostics.extend(diag.items)
+    np_.recompute_summary()
+    (out / f"{stem}.normalized.json").write_text(np_.model_dump_json(indent=2), encoding="utf-8")
+    write_normalized_workbook(np_, out / f"{stem}.schedules.xlsx")
+    tspec.save(out / f"{stem}.template-spec.yaml")
+    s = np_.summary
+    typer.echo(f"Floors {s.floors} | levels {s.levels} | stacks {s.stacks} | columns {s.columns} | beam spans {s.beams} | panels {s.panels} | footings {s.footings} | grids {s.grids} | openings {s.openings}")
+    color = typer.colors.RED if s.errors else typer.colors.YELLOW if s.warnings else typer.colors.GREEN
+    typer.secho(f"Diagnostics: {s.errors} errors, {s.warnings} warnings, {s.infos} infos", fg=color)
+    for f in np_.floors:
+        c = f.counts
+        typer.echo(f"  {f.id} {f.name[:36]:36s} cols {c.get('columns', 0):4d} spans {c.get('beams', 0):4d} panels {c.get('panels', 0):4d} ftg {c.get('footings', 0):3d} grids {c.get('grids', 0):3d}")
+    typer.echo(f"Template DXF: {dxf_path}")
+
+
+@app.command()
 def render(json_file: Path = typer.Argument(..., exists=True, help="<stem>.c2b.json produced by extract"),
            out: Path = typer.Option(None, "--out", "-o", help="PNG path"), floor: Optional[str] = typer.Option(None, "--floor", help="Floor id, e.g. L01"),
            dpi: int = typer.Option(150, "--dpi")) -> None:
