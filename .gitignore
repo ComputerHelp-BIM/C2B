@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+
+# Client drawings and generated outputs never go into git
+samples/*.dxf
+samples/*.dwg
+samples/**/out/
+out/
+*.xlsx
+!docs/**/*.xlsx
