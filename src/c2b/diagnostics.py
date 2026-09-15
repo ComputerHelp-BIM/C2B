@@ -73,6 +73,13 @@ CODES: dict[str, str] = {
     "BEAM_ALT_DEPTH": "Beam tag carries a second depth without a free end",
     "PIT_DEPTH_UNKNOWN": "Lift pit without a depth text or level",
     "STAIR_ESTIMATED": "Stair risers and landing level estimated from the plan; verify against a section",
+    "FOLD_THICKNESS_UNKNOWN": "Fold has no vertical slab thickness on its tag",
+    "PILE_NO_DIAMETER": "Pile drawn without a diameter",
+    # --- round trip (utility 4) ---
+    "RT_FLOOR_NO_ORIGIN": "Plan frame in the template DXF has no Origin point",
+    "RT_LEVELS_RELATIVE": "Level lines carry no elevation data; elevations measured from the lowest line",
+    "RT_NO_ID": "Entity on a C2B layer without a C2B id (added or copied by hand)",
+    "RT_ORPHAN_MARK": "Mark text in the drawing belongs to no element",
 }
 
 

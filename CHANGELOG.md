@@ -8,6 +8,27 @@ The canonical JSON schema carries its own version (`schema_version` in every out
 A MAJOR bump of the schema means downstream utilities (DXF writer, Revit importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes values.
 
+## [0.6.0] - 2026-09-15
+
+### Added
+- Utility 4 (`c2b verify`): reads a template DXF back into the normalised model and verifies the
+  round trip. Geometry and mark text are read from the drawing itself, so a drafter's edits are
+  detected; the `C2B` XDATA supplies identity and the values a drawing cannot carry.
+  Outputs `<stem>.reread.json`, `<stem>.reread.xlsx`, `<stem>.verify.xlsx` and `<stem>.verify.md`,
+  and exits non-zero when differences are found.
+- Round-trip findings: `RT_MISSING`, `RT_ADDED`, `RT_MOVED`, `RT_RESIZED`, `RT_MARK_CHANGED`,
+  `RT_MARK_MISSING`, `RT_MARK_MISMATCH` (mark versus drawn geometry), `RT_DUP_MARK` (one mark
+  naming two sections), `RT_COUNT`, `RT_LEVEL_CHANGED`, plus `RT_NO_ID` and `RT_ORPHAN_MARK`
+  raised while reading.
+- The floor origin is carried on the frame's XDATA, so a drawing whose origin falls outside its
+  frame still reads back exactly.
+
+### Changed
+- Fold vertical slab thickness is taken only from the client's fold tag; nothing is assumed
+  (`FOLD_THICKNESS_UNKNOWN` otherwise).
+- Piles are never invented: only the ones the client drew, with the diameter they drew.
+- Lift pit depth is measured from the floor's structural slab level.
+
 ## [0.5.0] - 2026-09-15
 
 Third round of template answers (special elements):

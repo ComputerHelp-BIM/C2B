@@ -1,12 +1,12 @@
 # C2B — CAD to BIM
 
 Automates the path from a client's 2D structural AutoCAD drawing to a native Revit model.
-This repository contains **steps 1 and 2 of the pipeline**: reading a client DXF,
+This repository contains **steps 1 to 3 of the pipeline**: reading a client DXF,
 classifying what is on it, extracting the structural elements into a canonical JSON
 schema with diagnostics, and normalising them into the firm's template drawing
 (`CH-` layers, `C12-300X900` marks, spans between supports, slab panels, level frame).
 
-Version `0.5.0` (tool) — extraction schema `0.5.0`, normalised schema `0.5.0`. See [CHANGELOG.md](CHANGELOG.md).
+Version `0.6.0` (tool) — extraction schema `0.5.0`, normalised schema `0.5.0`. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Pipeline
 
@@ -14,8 +14,8 @@ Version `0.5.0` (tool) — extraction schema `0.5.0`, normalised schema `0.5.0`.
 |---|---|---|
 | 1 | **Extract + check**: client DXF → canonical JSON, Excel review workbook, review DXF, diagnostics | `c2b extract`, v0.1.0 |
 | 2 | **Normalise**: column stacks, beam spans at supports, slab panels, template marks → template DXF + schedules | `c2b normalize`, v0.5.0 |
-| 3 | Verify the template DXF against the JSON (round trip via XDATA) | next |
-| 4 | Revit importer: JSON → native columns, beams, floors, foundations | later |
+| 3 | **Round trip**: template DXF → JSON + Excel again, verified against the normalised model | `c2b verify`, v0.6.0 |
+| 4 | Revit importer: JSON → native columns, beams, floors, foundations | next |
 | 5 | Cross-check: quantities, supports, continuity | later |
 
 The original plan had a separate "drawing checker" before conversion. Checking a drawing
@@ -83,8 +83,15 @@ c2b normalize out/client/client.c2b.json --seed templates/CH-TEMPLATE.dxf --leve
 python tools/compare_with_template.py out/client/client.template.dxf templates/CH-TEMPLATE.dxf
 ```
 
+```bash
+# 6. utility 4: read the template DXF back and verify it against the model
+#    (run it again after the drafter has edited the DXF: every change is listed)
+c2b verify out/client/client.template.dxf
+#    -> client.reread.json, client.reread.xlsx, client.verify.xlsx, client.verify.md
+```
+
 See `docs/template-spec.md` for what the normaliser does and how every template
-convention is configured.
+convention is configured, and `docs/round-trip.md` for the verification.
 
 `c2b extract` writes, for `client.dxf`:
 

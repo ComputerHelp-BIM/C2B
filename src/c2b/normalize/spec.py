@@ -44,12 +44,12 @@ class MarkFormats(BaseModel):
     footing_combined: str = "CF{n}-{thk:.0f}THK"        # answer 16A: under two or more column stacks
     pilecap: str = "PC{n}-{thk:.0f}THK"                  # answer 16B: client calls it a pile cap
     pit: str = "LP{n}-{thk:.0f}THK"                      # lift pit slab (answer 10A)
-    pit_depth_line: str = "{depth:.0f} DEEP"
+    pit_depth_line: str = "{depth:.0f} DEEP"             # answer 4A: measured down from this floor's SSL
     pcc_line: str = "PCC {thk:.0f}THK"
     ramp: str = "RP{n}-{thk:.0f}THK {slope}"
     ramp_no_thickness: str = "RP{n}-?THK {slope}"
     pile: str = "P{n}-{dia:.0f}DIA"
-    pilecap_piles_line: str = "{n} PILES {dia:.0f}DIA"
+    pilecap_piles_line: str = "{n} PILES {dia:.0f}DIA"      # only when the client drew the piles
     fold_line: str = "{fold:.0f} FOLD"
     beam_inverted_suffix: str = "-INV"                   # answer 15C
     beam_taper: str = "{base}-{w:.0f}X{d:.0f}/{tip:.0f}"  # answer 2A: depth at support / at the tip
@@ -202,7 +202,7 @@ class TemplateSpec(BaseModel):
     combined_by_client: bool = True          # answer 8B: CF only when the client says combined
     pcc_default_thickness_mm: float = 100.0  # PCC under footings when the client mentions PCC without a thickness
     pcc_default_projection_mm: float = 100.0
-    pcc_always: bool = False                 # draw PCC under every foundation even without a client note
+    pcc_always: bool = False                 # answer 2A: PCC only where the client mentions it
     stair_estimate: bool = True              # answer 5: treads counted, mid landing at half height, flagged
     raft_min_area_m2: float = 0.0            # optional size rule (0 = off)
     raft_min_columns: int = 0                # optional stack-count rule (0 = off)

@@ -526,9 +526,13 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
                 if fp.geom_type != "Polygon" or fp.area < 1e5:
                     continue
                 fold_val = next((parse_tag(t.text).fold_mm for s_ in fold_tags for t in s_.tags if parse_tag(t.text).fold_mm), None) or r.value_mm
+                # answer 5A: a thickness on the fold tag belongs to the vertical piece only; without one nothing is assumed
+                vert = next((parse_tag(t.text).thickness_mm for s_ in fold_tags for t in s_.tags if "FOLD" in (t.text or "").upper() and parse_tag(t.text).thickness_mm), None)
                 fid_ = f"{f.id}-FD{len([x for x in np_.folds if x.floor_id == f.id]) + 1:03d}"
                 fc = fp.centroid
-                np_.folds.append(NFold(id=fid_, floor_id=f.id, panel_id=pid, outline=_pts(ring_points(fp)), fold_mm=fold_val, vertical_thickness_mm=thickness,
+                if vert is None:
+                    diag.warning("FOLD_THICKNESS_UNKNOWN", f"Fold {fid_} has no vertical slab thickness on its tag; the engineer sets it in Revit", floor_id=f.id, element_id=fid_, location=(fc.x, fc.y))
+                np_.folds.append(NFold(id=fid_, floor_id=f.id, panel_id=pid, outline=_pts(ring_points(fp)), fold_mm=fold_val, vertical_thickness_mm=vert,
                                        mark=_fmt(spec.marks.fold_line, fold=fold_val) if fold_val else "FOLD", mark_position=_pt((fc.x, fc.y)), source_ids=r.source_handles))
                 np_.panels[-1].fold_ids.append(fid_)
             np_.mark_map.append(MarkMap(element_id=pid, floor_id=f.id, kind="slab", mark=mark, client_mark=inside[0].mark if inside else None, client_tags=[t for s in inside for t in s.tags]))
@@ -590,9 +594,12 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
                 n, kind = n_f, "pit"
                 mark = _fmt(spec.marks.pit, n=n, thk=x.thickness_mm) if x.thickness_mm else _fmt(spec.marks.footing_no_thickness, n=n).replace("F", "LP", 1)
             elif modifier == "pile" and x.shape == "circle":
-                # a pile: modelled as a round column in Revit (answer 16B)
-                np_.piles.append(NPile(id=f"{f.id}-P{len([q for q in np_.piles if q.floor_id == f.id]) + 1:03d}", floor_id=f.id, center=x.center,
-                                       diameter_mm=x.diameter_mm or x.drawn_width_mm, source_id=x.id))
+                # a pile the client drew; modelled as a round column in Revit (answer 16B). Piles are never invented.
+                pid_ = f"{f.id}-P{len([q for q in np_.piles if q.floor_id == f.id]) + 1:03d}"
+                dia = x.diameter_mm or x.drawn_width_mm
+                if not dia:
+                    diag.warning("PILE_NO_DIAMETER", f"Pile {pid_} has no diameter from the client drawing", floor_id=f.id, element_id=pid_, location=(x.center.x, x.center.y))
+                np_.piles.append(NPile(id=pid_, floor_id=f.id, center=x.center, diameter_mm=dia, source_id=x.id))
                 continue
             elif client_says_pilecap or modifier == "pilecap":
                 n_f += 1
@@ -613,9 +620,8 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
             if kind == "pit":
                 pit_depth = next((parse_depth(t.text) for t in x.tags if parse_depth(t.text)), None)
                 if pit_depth is None:
-                    # a level text inside the pit outline gives the depth relative to the floor (answer 4B)
+                    # answer 4A: the depth is measured from this floor's structural slab level (SSL)
                     fl = next((q for q in np_.floors if q.id == f.id), None)
-                    inside_hints = [h for h in project.level_hints if h.floor_id == f.id and outline.contains(Point(h.elevation_mm * 0 + 0, 0)) is False]
                     if fl and fl.elevation_mm is not None:
                         for h in project.level_hints:
                             if h.floor_id == f.id and h.elevation_mm < fl.elevation_mm:

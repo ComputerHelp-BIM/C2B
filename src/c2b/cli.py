@@ -146,6 +146,52 @@ def normalize(
 
 
 @app.command()
+def verify(
+    template: Path = typer.Argument(..., exists=True, readable=True, help="<stem>.template.dxf written by normalize"),
+    against: Optional[Path] = typer.Option(None, "--against", "-a", exists=True, help="<stem>.normalized.json to compare with (default: next to the DXF)"),
+    spec: Optional[Path] = typer.Option(None, "--spec", "-s", exists=True, help="Template spec YAML (default: <stem>.template-spec.yaml next to the DXF, else built-in)"),
+    out: Path = typer.Option(None, "--out", "-o", help="Output folder (default: next to the DXF)"),
+) -> None:
+    """Utility 4: read the template DXF back to JSON + Excel and verify it against the normalised model."""
+    from .diagnostics import DiagnosticsCollector
+    from .export.normalized_excel import write_normalized_workbook
+    from .export.verify import write_verify_report, write_verify_workbook
+    from .normalize.model import NormalizedProject
+    from .normalize.spec import TemplateSpec
+    from .roundtrip.diff import compare
+    from .roundtrip.reader import read_template
+
+    stem = template.name.replace(".template.dxf", "").replace(".dxf", "")
+    out = out or template.parent
+    out.mkdir(parents=True, exist_ok=True)
+    spec_path = spec or (template.parent / f"{stem}.template-spec.yaml")
+    tspec = TemplateSpec.load(spec_path) if spec_path.exists() else TemplateSpec()
+    typer.echo(f"Reading {template.name} with spec '{tspec.name}' ...")
+    diag = DiagnosticsCollector()
+    drawing = read_template(template, tspec, diag)
+    (out / f"{stem}.reread.json").write_text(drawing.model_dump_json(indent=2), encoding="utf-8")
+    write_normalized_workbook(drawing, out / f"{stem}.reread.xlsx")
+    s = drawing.summary
+    typer.echo(f"Floors {s.floors} | levels {s.levels} | columns {s.columns} | beam spans {s.beams} | panels {s.panels} | footings {s.footings} | grids {s.grids} | openings {s.openings}")
+
+    model_path = against or (template.parent / f"{stem}.normalized.json")
+    if not model_path.exists():
+        typer.secho(f"No normalised model at {model_path}; wrote the re-read JSON and workbook only.", fg=typer.colors.YELLOW)
+        raise typer.Exit(0)
+    model = NormalizedProject.model_validate_json(model_path.read_text(encoding="utf-8"))
+    res = compare(model, drawing)
+    write_verify_workbook(res, model, drawing, out / f"{stem}.verify.xlsx")
+    write_verify_report(res, model, drawing, out / f"{stem}.verify.md")
+    color = typer.colors.GREEN if res.ok() else (typer.colors.RED if res.errors else typer.colors.YELLOW)
+    typer.secho(f"{'PASS' if res.ok() else 'DIFFERENCES FOUND'}: {res.errors} errors, {res.warnings} warnings, {res.infos} infos", fg=color)
+    from collections import Counter as _C
+    for code, n in _C(d.code for d in res.findings).most_common(8):
+        typer.echo(f"  {code:20s} {n}")
+    typer.echo(f"Outputs in {out}")
+    raise typer.Exit(0 if res.ok() else 1)
+
+
+@app.command()
 def render(json_file: Path = typer.Argument(..., exists=True, help="<stem>.c2b.json produced by extract"),
            out: Path = typer.Option(None, "--out", "-o", help="PNG path"), floor: Optional[str] = typer.Option(None, "--floor", help="Floor id, e.g. L01"),
            dpi: int = typer.Option(150, "--dpi")) -> None:

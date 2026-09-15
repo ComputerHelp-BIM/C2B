@@ -147,8 +147,11 @@ class TemplateWriter:
             return (p.x + ox, p.y + oy)
 
         for f in np_.floors:
-            self._poly("boundary", f.frame, xd_id=None, floor=f.id)
-            self.msp.add_point((f.origin.x, f.origin.y), dxfattribs={"layer": spec.layer("origin")})
+            # the origin is carried on the frame as well as drawn, so a floor whose origin falls
+            # outside its frame (a drawing without client Boundary rectangles) still reads back exactly
+            self._poly("boundary", f.frame, floor=f.id, origin=f"{f.origin.x:.3f},{f.origin.y:.3f}", name=f.name)
+            pnt = self.msp.add_point((f.origin.x, f.origin.y), dxfattribs={"layer": spec.layer("origin")})
+            self._xdata(pnt, floor=f.id)
             left, right = min(p.x for p in f.frame), max(p.x for p in f.frame)
             cx = (left + right) / 2
             fr = spec.frame
@@ -239,7 +242,9 @@ class TemplateWriter:
                 mk = "raft_mark" if (x.kind == "raft" or in_raft) else ("pilecap_mark" if x.kind == "pilecap" else "footing_mark")
                 self._mtext(mk, "\\P".join(x.mark_lines), g(x.floor_id, x.center), spec.text.mark_height, 5, id=x.id)
         for pl in np_.piles:
-            c = self.msp.add_circle(g(pl.floor_id, pl.center), (pl.diameter_mm or 300) / 2, dxfattribs={"layer": spec.layer("pile")})
+            if not pl.diameter_mm:
+                continue   # piles are drawn only as the client drew them; no assumed diameter
+            c = self.msp.add_circle(g(pl.floor_id, pl.center), pl.diameter_mm / 2, dxfattribs={"layer": spec.layer("pile")})
             self._xdata(c, id=pl.id, cap=pl.pilecap_id, dia=pl.diameter_mm)
 
         for o in np_.openings:
