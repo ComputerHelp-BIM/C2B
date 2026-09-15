@@ -88,7 +88,27 @@ def test_panels(normalized):
     tagged = [p for p in panels if p.thickness_mm == 150]
     assert len(tagged) >= 4
     assert all(p.mark.startswith("S") for p in panels)
-    assert any(p.opening_ids for p in panels)
+    with_opening = [p for p in panels if p.opening_ids]
+    assert with_opening and with_opening[0].holes, "interior cut-out must become a hole of the panel"
+    # legend region: the bay hatched with the sunk pattern is sunk by 75
+    sunk = [p for p in panels if p.sunk_mm == 75]
+    assert len(sunk) == 1 and sunk[0].sunk_source == "legend"
+
+
+def test_cantilever_panel(normalized):
+    cs = [p for p in normalized.panels if p.floor_id == "L02" and p.kind == "cantilever"]
+    assert len(cs) == 1, [(p.kind, p.area_m2) for p in normalized.panels if p.floor_id == "L02"]
+    chajja = cs[0]
+    assert chajja.mark == "CS1-100THK" and chajja.thickness_mm == 100
+    assert abs(chajja.area_m2 - 6.0 * 0.9) < 0.3
+    # bottom aligned with the 450 deep supporting beam: top offset = -(450 - 100)
+    assert chajja.top_offset_mm == -350 and chajja.top_offset_rule == "cantilever_bottom_align"
+
+
+def test_inverted_beam(normalized):
+    inv = [b for b in normalized.beams if b.floor_id == "L02" and b.inverted]
+    assert inv and all(b.mark.endswith("-INV") for b in inv)
+    assert all(b.top_offset_mm > 0 for b in inv)
 
 
 def test_footings_and_grids(normalized):

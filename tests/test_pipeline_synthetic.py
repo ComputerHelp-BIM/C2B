@@ -58,7 +58,10 @@ def test_footings_slabs_openings(synthetic_result):
     ftg = [f for f in p.footings if f.floor_id == "L01"]
     assert len(ftg) == 12 and all(f.mark == "F1" and f.thickness_mm == 500 for f in ftg)
     slabs = [s for s in p.slabs if s.floor_id == "L02"]
-    assert len(slabs) == 6 and all(s.thickness_mm == 150 for s in slabs)
+    assert len(slabs) == 7 and sorted(s.thickness_mm for s in slabs) == [100, 150, 150, 150, 150, 150, 150]
+    assert len([e for e in p.slab_edges if e.floor_id == "L02"]) == 3          # the chajja edge lines
+    assert [(l.pattern, l.meaning, l.value_mm) for l in p.legend] == [("ANSI37", "sunk", 75.0)]
+    assert len([r for r in p.regions if r.floor_id == "L02"]) == 1
     ops = [o for o in p.openings if o.floor_id == "L02"]
     assert len(ops) == 1 and ops[0].label == "LIFT"
 

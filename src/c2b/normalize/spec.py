@@ -41,6 +41,11 @@ class MarkFormats(BaseModel):
     slab_cantilever: str = "CS{n}-{thk:.0f}THK"
     footing: str = "F{n}-{thk:.0f}THK"
     footing_no_thickness: str = "F{n}-?THK"
+    footing_combined: str = "CF{n}-{thk:.0f}THK"        # answer 16A: under two or more column stacks
+    pilecap: str = "PC{n}-{thk:.0f}THK"                  # answer 16B: client calls it a pile cap
+    pit: str = "LP{n}-{thk:.0f}THK"                      # lift pit slab (answer 10A)
+    beam_inverted_suffix: str = "-INV"                   # answer 15C
+    beam_taper: str = "{base}-{w:.0f}X{d:.0f}/{tip:.0f}"  # answer 2A: depth at support / at the tip
     footing_fold_line: str = "{fold:.0f} FOLD"
     footing_sunk_line: str = "{sunk:.0f} SUNK"
     raft: str = "RF{n}-{thk:.0f}THK"
@@ -84,6 +89,9 @@ class SplitRules(BaseModel):
 
 
 class PanelRules(BaseModel):
+    use_slab_edges: bool = True             # answer 3B: client slab edge lines close cantilever / chajja panels
+    cantilever_bottom_align: bool = True    # answer 4 / 14A: slab bottom flush with the deepest supporting beam
+    region_cover: float = 0.5               # a panel covered this much by a legend region takes its meaning
     arc_fit_tol_mm: float = 2.5             # vertices this close to a circular column are replaced by a true arc (bulge)
     span_extend_mm: float = 150.0           # spans are lengthened this much at each end for the lattice only, so beam corners reach into round/odd supports
     min_area_m2: float = 0.25
@@ -163,6 +171,7 @@ class TemplateSpec(BaseModel):
         "text": LayerDef(name="CH-TEXT", color=7, lineweight=9),
         "wall": LayerDef(name="CH-S-WALL", color=30, lineweight=18),
         "wall_mark": LayerDef(name="CH-S-WALL-MARK", color=30, lineweight=9),
+        "joint": LayerDef(name="CH-JOINT", color=6, lineweight=18, linetype="Dash"),
     })
     text: TextSpec = Field(default_factory=TextSpec)
     marks: MarkFormats = Field(default_factory=MarkFormats)
@@ -179,6 +188,8 @@ class TemplateSpec(BaseModel):
     raft_min_columns: int = 0                # optional stack-count rule (0 = off)
     beam_centreline: bool = True             # answer 6B: centreline on CH-S-BEAM-CL in addition to the outline
     client_notes: bool = True                # answer 18C: client general notes verbatim under each plan
+    level_reference: Literal["SSL", "FFL"] = "SSL"   # answer 20A: workbook elevations are top of structural slab
+    finish_thickness_mm: float = 0.0         # used only when level_reference is FFL
     opening_panel_cover: float = 0.6         # a lattice hole covered this much by openings is a cut-out, not a slab
     stair_panel_cover: float = 0.5           # ... or by stair geometry, a stair
     notes: list[str] = Field(default_factory=list)   # extra note lines written under every plan

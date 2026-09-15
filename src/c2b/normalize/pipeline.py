@@ -6,14 +6,14 @@ import re
 from collections import Counter
 from pathlib import Path
 
-from shapely.geometry import Point, Polygon
+from shapely.geometry import LineString, Point, Polygon
 from shapely.strtree import STRtree
 
 from ..diagnostics import DiagnosticsCollector
 from ..geometry import classify_polygon, rectangle_polygon
 from ..schema import Point2, Project
 from .geometry import Support, fit_arcs, lattice_panels, poly_from_points, representative_point, ring_points, text_fits
-from .model import (MarkMap, NBeam, NColumn, NFloor, NFooting, NGrid, NLevel, NOpening, NPanel, NStair, NWall, NormalizedProject)
+from .model import (MarkMap, NBeam, NColumn, NFloor, NFooting, NGrid, NJoint, NLevel, NOpening, NPanel, NStair, NWall, NormalizedProject)
 from .naming import normalise_floor_name, title_from_level_name
 from .spans import runs_for_floor, split_runs
 from .spec import TemplateSpec
@@ -251,8 +251,17 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
                 base = f"B{nxt_b}"
                 used_b.add(nxt_b)
                 nxt_b += 1
-            fmt = (spec.marks.beam if d else spec.marks.beam_no_depth).replace("B{n}", "{base}")
-            mark = _fmt(fmt, base=base, n=i, w=w, d=d)
+            free_end = s["support_start"] is None or s["support_end"] is None
+            tip = b.depth_alt_mm if (free_end and b.depth_alt_mm and d) else None
+            if tip:
+                mark = _fmt(spec.marks.beam_taper, base=base, n=i, w=w, d=d, tip=tip)      # answer 2A: depth at support / tip
+            else:
+                fmt = (spec.marks.beam if d else spec.marks.beam_no_depth).replace("B{n}", "{base}")
+                mark = _fmt(fmt, base=base, n=i, w=w, d=d)
+            if b.inverted:
+                mark += spec.marks.beam_inverted_suffix
+            if b.depth_alt_mm and not free_end and d:
+                diag.info("BEAM_ALT_DEPTH", f"Beam {mark} carries a second depth {b.depth_alt_mm:.0f} but has no free end; treated as a note", floor_id=f.id, element_id=f"{f.id}-B{i:03d}")
             outline = s["outline"]
             p1, p2 = r.axis.point_at(s["t1"]), r.axis.point_at(s["t2"])
             mp = representative_point(outline)
@@ -263,7 +272,7 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
             if s["support_start"] is None or s["support_end"] is None:
                 diag.info("SPAN_FREE_END", f"Beam {mark} ({bid}) has a free end", floor_id=f.id, element_id=bid, location=p1 if s["support_start"] is None else p2)
             np_.beams.append(NBeam(id=bid, floor_id=f.id, run_id=r.id, span_index=i, mark=mark, start=_pt(p1), end=_pt(p2), length_mm=round(s["t2"] - s["t1"], 1),
-                                   width_mm=w, depth_mm=d, depth_alt_mm=b.depth_alt_mm, angle_deg=round(r.axis.angle, 3), outline=_pts(ring_points(outline)),
+                                   width_mm=w, depth_mm=d, depth_alt_mm=b.depth_alt_mm, depth_tip_mm=tip, cantilever=free_end, angle_deg=round(r.axis.angle, 3), outline=_pts(ring_points(outline)),
                                    inverted=b.inverted, support_start=s["support_start"], support_end=s["support_end"], size_source=b.size_source,
                                    depth_source=b.depth_source, mark_position=_pt(mp), mark_rotation_deg=rot, client_mark=b.mark, source_handles=b.source_handles))
             np_.mark_map.append(MarkMap(element_id=bid, floor_id=f.id, kind="beam", mark=mark, client_mark=b.mark, client_tags=b.tags))
@@ -279,9 +288,22 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
     # ---- stairs (as drawn) ----------------------------------------------------
     for st in project.stairs:
         outline = poly_from_points(st.outline) if st.outline else None
-        n = len([x for x in np_.stairs if x.floor_id == st.floor_id]) + 1
-        np_.stairs.append(NStair(id=f"{st.floor_id}-ST{n:03d}", floor_id=st.floor_id, mark=st.label, outline=_pts(ring_points(outline)) if outline else [],
-                                 lines=st.lines, center=st.center, source_id=st.id))
+        n = len([x for x in np_.stairs if x.floor_id == st.floor_id and x.outline]) + 1
+        waist = None
+        mark = None
+        if st.label:
+            from ..tags import parse_tag as _parse_tag
+            pt_ = _parse_tag(st.label)
+            waist = pt_.thickness_mm
+            base = pt_.mark or f"ST{n}"
+            mark = _fmt(spec.marks.stair.replace("ST{n}", "{base}"), base=base, n=n, thk=waist) if waist else base
+        np_.stairs.append(NStair(id=f"{st.floor_id}-ST{len([x for x in np_.stairs if x.floor_id == st.floor_id]) + 1:03d}", floor_id=st.floor_id, mark=mark, waist_mm=waist,
+                                 outline=_pts(ring_points(outline)) if outline else [], lines=st.lines, center=st.center, source_id=st.id))
+
+    # ---- joints (as drawn) ----------------------------------------------------
+    for j in project.joints:
+        n = len([x for x in np_.joints if x.floor_id == j.floor_id]) + 1
+        np_.joints.append(NJoint(id=f"{j.floor_id}-J{n:03d}", floor_id=j.floor_id, start=j.start, end=j.end, source_id=j.id))
 
     # ---- slab panels --------------------------------------------------------
     for f in floors_sorted:
@@ -292,14 +314,42 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
             continue
         ext = spec.panels.span_extend_mm
         polys = []
+        beam_polys: list[tuple[NBeam, Polygon]] = []
         for b in beams_f:
             ang = math.radians(b.angle_deg)
             ux, uy = math.cos(ang), math.sin(ang)
             cx, cy = (b.start.x + b.end.x) / 2, (b.start.y + b.end.y) / 2
-            polys.append(rectangle_polygon((cx, cy), b.length_mm + 2 * ext, b.width_mm, b.angle_deg))
+            bp = rectangle_polygon((cx, cy), b.length_mm + 2 * ext, b.width_mm, b.angle_deg)
+            polys.append(bp)
+            beam_polys.append((b, bp))
         polys += [poly_from_points(c.outline) for c in cols_f] + [poly_from_points(w.outline) for w in walls_f]
         polys = [p for p in polys if p is not None]
+        # client slab edge lines close cantilever / chajja / balcony panels (answer 3B)
+        edge_geom = None
+        if spec.panels.use_slab_edges:
+            edges = [LineString([(e.start.x, e.start.y), (e.end.x, e.end.y)]) for e in project.slab_edges if e.floor_id == f.id]
+            if edges:
+                from shapely.ops import unary_union as _uu
+                edge_geom = _uu(edges)
+                polys.append(edge_geom.buffer(1.0, cap_style=2))
         panels, oversized = lattice_panels(polys, spec.panels.min_area_m2 * 1e6, spec.panels.max_area_m2 * 1e6)
+        regions_f = [(r, poly_from_points(r.outline)) for r in project.regions if r.floor_id == f.id]
+        regions_f = [(r, rp) for r, rp in regions_f if rp is not None]
+
+        def region_cover(poly, meaning):
+            tot = 0.0
+            val = None
+            for r, rp in regions_f:
+                if r.meaning == meaning and rp.intersects(poly):
+                    a = rp.intersection(poly).area
+                    if a > 0:
+                        tot += a
+                        val = r.value_mm if val is None else val
+            return tot / poly.area, val
+
+        def adjacent_beams(poly):
+            ring = poly.exterior.buffer(5.0)
+            return [b for b, bp in beam_polys if bp.intersects(ring)]
         if not panels:
             diag.warning("PANEL_NO_LATTICE", "Beams exist but form no closed panels; check for missing beams or wrong widths", floor_id=f.id)
             continue
@@ -318,11 +368,13 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
                         circles.append(((cp.centroid.x, cp.centroid.y), ((maxx - minx) + (maxy - miny)) / 4.0))
         used_tags: set[str] = set()
         n_slab = 0
+        n_cs = 0
         # numbering: top-left to bottom-right by panel representative point
         panels.sort(key=lambda p: (-round(p.bounds[3] / 500.0), p.bounds[0]))
         for poly in panels:
-            # lattice holes that are really cut-outs or stairs
+            # lattice holes that are really cut-outs or stairs (answer 9C: no slab where the whole area is a cut-out)
             open_cover = sum(poly.intersection(op).area for _, op in openings_f if op is not None and op.intersects(poly)) / poly.area
+            open_cover = max(open_cover, region_cover(poly, "cutout")[0])
             stair_cover = sum(poly.intersection(sp).area for sp in stairs_f if sp.intersects(poly)) / poly.area
             if open_cover >= spec.opening_panel_cover:
                 pid = f"{f.id}-X{len([x for x in np_.panels if x.floor_id == f.id and x.kind != 'slab']) + 1:03d}"
@@ -336,9 +388,19 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
                 np_.panels.append(NPanel(id=pid, floor_id=f.id, kind="stair", mark="", outline=_pts(ring_points(poly)), area_m2=round(poly.area / 1e6, 3),
                                          centroid=_pt((c.x, c.y)), mark_position=_pt((c.x, c.y))))
                 continue
-            n_slab += 1
-            i = n_slab
-            pid = f"{f.id}-S{i:03d}"
+            # cantilever / chajja: a hole whose boundary runs along a client slab edge, not a beam
+            is_cant = False
+            if edge_geom is not None and edge_geom.intersects(poly.exterior.buffer(3.0)):
+                on_edge = edge_geom.intersection(poly.exterior.buffer(3.0)).length
+                on_beams = sum(bp.exterior.intersection(poly.exterior.buffer(3.0)).length for _, bp in beam_polys if bp.intersects(poly.exterior.buffer(3.0)))
+                is_cant = on_edge > 0.15 * poly.exterior.length and on_edge > 0.0 and (on_edge >= 0.5 * max(on_beams, 1.0) or on_beams == 0.0)
+            if is_cant:
+                n_cs += 1
+                i = n_cs
+            else:
+                n_slab += 1
+                i = n_slab
+            pid = f"{f.id}-{'CS' if is_cant else 'S'}{i:03d}"
             inside = [s for s, pt in zip(tags, tag_pts) if poly.contains(pt)]
             used_tags.update(s.id for s in inside)
             thicknesses = [s.thickness_mm for s in inside if s.thickness_mm is not None]
@@ -354,7 +416,13 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
             else:
                 diag.warning("PANEL_NO_TAG", f"Panel {pid} ({poly.area / 1e6:.1f} m2) has no thickness tag inside it", floor_id=f.id, element_id=pid, location=representative_point(poly))
             sunk = next((s.sunk_mm for s in inside if s.sunk_mm), None)
+            sunk_source = "tag" if sunk else None
+            if sunk is None:
+                cover, val = region_cover(poly, "sunk")
+                if cover >= spec.panels.region_cover and val:
+                    sunk, sunk_source = val, "legend"
             op_ids = []
+            holes: list[list] = []
             out_poly = poly
             for o, opoly in openings_f:
                 if opoly is not None and poly.contains(opoly.centroid):
@@ -364,22 +432,54 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
                         cut = out_poly.difference(opoly)
                         if cut.geom_type == "Polygon" and not cut.is_empty:
                             out_poly = cut
+                    elif spec.panels.subtract_openings:
+                        holes.append(_pts(ring_points(opoly)))     # inner loop of the slab sketch (answer 9C)
             if poly in oversized:
                 diag.warning("PANEL_LARGE", f"Panel {pid} is {poly.area / 1e6:.0f} m2; a beam may be missing", floor_id=f.id, element_id=pid, location=representative_point(poly))
-            mark = _fmt(spec.marks.slab, n=i, thk=thickness) if thickness is not None else _fmt(spec.marks.slab_no_thickness, n=i)
+            if is_cant:
+                mark = _fmt(spec.marks.slab_cantilever, n=i, thk=thickness) if thickness is not None else _fmt(spec.marks.slab_no_thickness.replace("S{n}", "CS{n}"), n=i)
+            else:
+                mark = _fmt(spec.marks.slab, n=i, thk=thickness) if thickness is not None else _fmt(spec.marks.slab_no_thickness, n=i)
+            # level rule (answers 4 / 14A / 20A): slab top at SSL; cantilever slabs and "slab at beam bottom" panels sit
+            # with their bottom flush with the deepest adjacent beam; sunk panels drop by the sunk depth
+            adj = adjacent_beams(poly)
+            support_depth = max((b.depth_mm or 0.0) for b in adj) if adj else None
+            top_offset, rule = 0.0, None
+            bb_cover, _ = region_cover(poly, "beam_bottom")
+            if (is_cant and spec.panels.cantilever_bottom_align) or bb_cover >= spec.panels.region_cover:
+                if support_depth and thickness:
+                    top_offset = -(support_depth - thickness)
+                    rule = "cantilever_bottom_align" if is_cant else "beam_bottom"
+                else:
+                    rule = "cantilever_bottom_align" if is_cant else "beam_bottom"
+                    diag.warning("PANEL_OFFSET_UNKNOWN", f"Panel {pid} should sit at beam bottom but beam depth or slab thickness is unknown", floor_id=f.id, element_id=pid, location=representative_point(poly))
+            elif sunk:
+                top_offset, rule = -sunk, "sunk"
             c = poly.centroid
             mp = representative_point(poly) if spec.placement.slab_mark == "representative" else (c.x, c.y)
             ring = ring_points(out_poly)
             bulges = [0.0] * len(ring)
             if circles:
                 ring, bulges = fit_arcs(ring, circles, spec.panels.arc_fit_tol_mm)
-            np_.panels.append(NPanel(id=pid, floor_id=f.id, mark=mark, thickness_mm=thickness, thickness_source=source, outline=_pts(ring), bulges=bulges,
-                                     area_m2=round(poly.area / 1e6, 3), centroid=_pt((c.x, c.y)), mark_position=_pt(mp), sunk_mm=sunk, opening_ids=op_ids,
-                                     tag_ids=[s.id for s in inside]))
+            np_.panels.append(NPanel(id=pid, floor_id=f.id, kind="cantilever" if is_cant else "slab", mark=mark, thickness_mm=thickness, thickness_source=source,
+                                     outline=_pts(ring), bulges=bulges, holes=holes, area_m2=round(poly.area / 1e6, 3), centroid=_pt((c.x, c.y)), mark_position=_pt(mp),
+                                     sunk_mm=sunk, sunk_source=sunk_source, top_offset_mm=round(top_offset, 1), top_offset_rule=rule, support_depth_mm=support_depth,
+                                     cantilever=is_cant, opening_ids=op_ids, tag_ids=[s.id for s in inside]))
             np_.mark_map.append(MarkMap(element_id=pid, floor_id=f.id, kind="slab", mark=mark, client_mark=inside[0].mark if inside else None, client_tags=[t for s in inside for t in s.tags]))
         stray = [s for s in tags if s.id not in used_tags]
         if stray:
             diag.info("PANEL_TAG_OUTSIDE", f"{len(stray)} slab tag(s) lie in no panel (edge strips, cantilevers or stairs), e.g. {', '.join(s.tags[0].text for s in stray[:4] if s.tags)}", floor_id=f.id)
+
+    # ---- beam level offsets (answer 15C): inverted beams sit above the slab -------------
+    for f in floors_sorted:
+        panels_f = [(p, poly_from_points(p.outline)) for p in np_.panels if p.floor_id == f.id and p.kind in ("slab", "cantilever")]
+        for b in np_.beams:
+            if b.floor_id != f.id or not b.inverted or not b.depth_mm:
+                continue
+            bp = poly_from_points(b.outline)
+            t_adj = [p.thickness_mm for p, pp in panels_f if pp is not None and bp is not None and pp.buffer(5.0).intersects(bp) and p.thickness_mm]
+            t_slab = max(t_adj) if t_adj else (f.default_slab_thickness_mm or 0.0)
+            b.top_offset_mm = round(b.depth_mm - t_slab, 1)
 
     # ---- footings -----------------------------------------------------------
     for f in floors_sorted:
@@ -394,7 +494,10 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
                 continue
             over = [s.id for s, pt in stacks_on_floor if outline.contains(pt)]
             modifier = x.modifier
-            client_says_raft = (modifier == "raft") or bool(x.mark and x.mark.upper().startswith(("RF", "RAFT", "MAT"))) or any("RAFT" in (t.text or "").upper() for t in x.tags)
+            tag_text = " ".join((t.text or "") for t in x.tags).upper() + " " + (x.mark or "").upper()
+            client_says_raft = (modifier == "raft") or bool(x.mark and x.mark.upper().startswith(("RF", "RAFT", "MAT"))) or "RAFT" in tag_text
+            client_says_pilecap = bool(x.mark and x.mark.upper().startswith("PC")) or "PILE" in tag_text or "PILE" in (x.source_layer or "").upper()
+            client_says_pit = "PIT" in tag_text
             is_raft = (spec.raft_by_client and client_says_raft) or (spec.raft_min_area_m2 > 0 and outline.area >= spec.raft_min_area_m2 * 1e6) or (spec.raft_min_columns > 0 and len(over) >= spec.raft_min_columns)
             if modifier in ("fold", "sunk"):
                 kind = modifier
@@ -404,6 +507,18 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
                 n_r += 1
                 n, kind = n_r, "raft"
                 mark = _fmt(spec.marks.raft, n=n, thk=x.thickness_mm) if x.thickness_mm else _fmt(spec.marks.footing_no_thickness, n=n).replace("F", "RF", 1)
+            elif client_says_pit:
+                n_f += 1
+                n, kind = n_f, "pit"
+                mark = _fmt(spec.marks.pit, n=n, thk=x.thickness_mm) if x.thickness_mm else _fmt(spec.marks.footing_no_thickness, n=n).replace("F", "LP", 1)
+            elif client_says_pilecap:
+                n_f += 1
+                n, kind = n_f, "pilecap"
+                mark = _fmt(spec.marks.pilecap, n=n, thk=x.thickness_mm) if x.thickness_mm else _fmt(spec.marks.footing_no_thickness, n=n).replace("F", "PC", 1)
+            elif len(over) >= 2:
+                n_f += 1
+                n, kind = n_f, "combined"      # answer 16A
+                mark = _fmt(spec.marks.footing_combined, n=n, thk=x.thickness_mm) if x.thickness_mm else _fmt(spec.marks.footing_no_thickness, n=n).replace("F", "CF", 1)
             else:
                 n_f += 1
                 n, kind = n_f, "footing"
@@ -411,9 +526,10 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
             lines = [mark] if mark else []
             if x.fold_mm:
                 lines.append(_fmt(spec.marks.footing_fold_line, fold=x.fold_mm))
-            if kind == "footing" and not over:
+            if kind in ("footing", "combined", "pilecap") and not over:
                 diag.warning("FOOTING_NO_COLUMN", f"Footing {mark} has no column stack over it", floor_id=f.id, location=(x.center.x, x.center.y))
-            fid_ = f"{f.id}-{'RF' if kind == 'raft' else 'F'}{n:03d}" if kind in ("footing", "raft") else f"{f.id}-FX{len(np_.footings) + 1:03d}"
+            prefix = {"raft": "RF", "combined": "CF", "pilecap": "PC", "pit": "LP"}.get(kind, "F")
+            fid_ = f"{f.id}-{prefix}{n:03d}" if kind not in ("fold", "sunk") else f"{f.id}-FX{len(np_.footings) + 1:03d}"
             if kind in ("fold", "sunk"):
                 # a fold/sunk inside a raft belongs to the raft layers and carries the raft mark, otherwise the footing layers
                 rafts = [r for r in np_.footings if r.floor_id == f.id and r.kind == "raft"]

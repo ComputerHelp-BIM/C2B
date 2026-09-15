@@ -39,7 +39,7 @@ def build_synthetic_drawing(path: Path) -> Path:
     doc.header["$INSUNITS"] = 4
     msp = doc.modelspace()
     for name in ("Boundary", "Origin", "S-GRID", "S-GRID-IDEN", "S-COLS", "S-COLS-IDEN", "S-BEAM", "S-BEAM-IDEN", "S-FND", "S-FND-IDEN",
-                 "A-FLOR-IDEN", "A-CUTOUT", "G-ANNO-TEXT", "G-ANNO-SCHD", "BEAM NO", "BEAM SIZES"):
+                 "A-FLOR", "A-FLOR-IDEN", "A-CUTOUT", "G-ANNO-TEXT", "G-ANNO-SCHD", "BEAM NO", "BEAM SIZES", "HAT"):
         doc.layers.add(name)
 
     def floor(ox: float, name: str, with_beams: bool, with_footings: bool):
@@ -80,10 +80,23 @@ def build_synthetic_drawing(path: Path) -> Path:
             for gx in xs:
                 _beam(msp, "S-BEAM", ox + gx, 0, ox + gx, 10000, 230)
                 # mark on one layer, size on another, stacked
-                msp.add_text("MB", dxfattribs={"layer": "BEAM NO", "height": 125, "rotation": 90}).set_placement((ox + gx - 250, 2000))
+                msp.add_text("MB" if gx != 18000 else "MB (INV.)", dxfattribs={"layer": "BEAM NO", "height": 125, "rotation": 90}).set_placement((ox + gx - 250, 2000))
                 msp.add_text("230X600", dxfattribs={"layer": "BEAM SIZES", "height": 125, "rotation": 90}).set_placement((ox + gx - 450, 2000))
             # one beam without any tag -> depth from note
             _beam(msp, "S-BEAM", ox + 6000, 2500, ox + 12000, 2500, 230)
+            # chajja: slab edge lines 900 beyond the bottom beam between grids 1 and 2, with its own thickness tag
+            msp.add_line((ox + 0, -115), (ox + 0, -1015), dxfattribs={"layer": "A-FLOR"})
+            msp.add_line((ox + 0, -1015), (ox + 6000, -1015), dxfattribs={"layer": "A-FLOR"})
+            msp.add_line((ox + 6000, -1015), (ox + 6000, -115), dxfattribs={"layer": "A-FLOR"})
+            msp.add_text("CHAJJA 100 THK.", dxfattribs={"layer": "A-FLOR-IDEN", "height": 125}).set_placement((ox + 2500, -600))
+            # legend: swatch + text, and one bay hatched with the same pattern (sunk by 75)
+            sw = msp.add_hatch(dxfattribs={"layer": "G-ANNO-TEXT"})
+            sw.set_pattern_fill("ANSI37", scale=20)
+            sw.paths.add_polyline_path([(ox + 20000, 14000), (ox + 20700, 14000), (ox + 20700, 14300), (ox + 20000, 14300)], is_closed=True)
+            msp.add_text("INDICATES SLAB SUNK BY 75MM.", dxfattribs={"layer": "G-ANNO-TEXT", "height": 125}).set_placement((ox + 20900, 14050))
+            sk = msp.add_hatch(dxfattribs={"layer": "HAT"})
+            sk.set_pattern_fill("ANSI37", scale=20)
+            sk.paths.add_polyline_path([(ox + 12200, 5200), (ox + 17800, 5200), (ox + 17800, 9800), (ox + 12200, 9800)], is_closed=True)
             for gx in (3000, 9000, 15000):
                 for gy in (2500, 7500):
                     msp.add_text("150 THK.", dxfattribs={"layer": "A-FLOR-IDEN", "height": 125}).set_placement((ox + gx, gy))

@@ -209,6 +209,51 @@ class Opening(BaseModel):
     source_handles: list[str] = Field(default_factory=list)
 
 
+class SlabEdge(BaseModel):
+    """A slab edge line drawn by the client (free edges of cantilevers, chajjas, balconies)."""
+
+    floor_id: str
+    start: Point2
+    end: Point2
+    source_layer: str
+    source_handle: str
+
+
+class LegendItem(BaseModel):
+    """One line of the client's legend: a hatch pattern and what it means."""
+
+    pattern: str
+    meaning: str                 # sunk | beam_bottom | column_stop | cutout | fold | upstand | drop | projection | other
+    value_mm: float | None = None
+    text: str
+    handle: str
+
+
+class Region(BaseModel):
+    """A hatched area whose meaning comes from the legend (e.g. slab sunk by 75)."""
+
+    id: str
+    floor_id: str
+    meaning: str
+    value_mm: float | None = None
+    pattern: str
+    outline: list[Point2]
+    area_mm2: float
+    source_layer: str
+    source_handles: list[str] = Field(default_factory=list)
+
+
+class Joint(BaseModel):
+    """Expansion / construction joint line carried through as drawn."""
+
+    id: str
+    floor_id: str
+    start: Point2
+    end: Point2
+    source_layer: str
+    source_handle: str
+
+
 class Stair(BaseModel):
     """Stair geometry carried through as drawn (outline polygons and raw lines)."""
 
@@ -298,6 +343,10 @@ class Project(BaseModel):
     openings: list[Opening] = Field(default_factory=list)
     walls: list[Wall] = Field(default_factory=list)
     stairs: list[Stair] = Field(default_factory=list)
+    slab_edges: list[SlabEdge] = Field(default_factory=list)
+    legend: list[LegendItem] = Field(default_factory=list)
+    regions: list[Region] = Field(default_factory=list)
+    joints: list[Joint] = Field(default_factory=list)
     level_hints: list[LevelHint] = Field(default_factory=list)
     schedules: list[Schedule] = Field(default_factory=list)
     tags_unassigned: list[UnassignedTag] = Field(default_factory=list)

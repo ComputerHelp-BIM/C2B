@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from .. import __version__
 from ..schema import Diagnostic, Point2, TagRef
 
-NORMALIZED_SCHEMA_VERSION = "0.3.0"
+NORMALIZED_SCHEMA_VERSION = "0.4.0"
 
 
 class NFloor(BaseModel):
@@ -90,9 +90,12 @@ class NBeam(BaseModel):
     width_mm: float
     depth_mm: float | None = None
     depth_alt_mm: float | None = None
+    depth_tip_mm: float | None = None      # tapered cantilever: depth at the free end
+    cantilever: bool = False               # one end free
     angle_deg: float
     outline: list[Point2]
     inverted: bool = False
+    top_offset_mm: float = 0.0             # beam top relative to the level (SSL); inverted beams sit above
     support_start: str | None = None   # stack id, beam id or None (free end)
     support_end: str | None = None
     size_source: str = "unknown"
@@ -106,16 +109,21 @@ class NBeam(BaseModel):
 class NPanel(BaseModel):
     id: str
     floor_id: str
-    kind: Literal["slab", "opening", "stair"] = "slab"   # openings and stairs are lattice holes that are not slabs
-    mark: str                      # "S16-200THK"
+    kind: Literal["slab", "cantilever", "opening", "stair"] = "slab"   # cantilever = chajja / balcony with a free edge
+    mark: str                      # "S16-200THK" / "CS3-100THK"
     thickness_mm: float | None = None
     thickness_source: str = "unknown"
     outline: list[Point2]
     bulges: list[float] = Field(default_factory=list)    # per outline vertex: DXF bulge of the segment to the next vertex (0 = straight)
+    holes: list[list[Point2]] = Field(default_factory=list)   # interior cut-outs (inner loops of the Revit sketch)
     area_m2: float
     centroid: Point2
     mark_position: Point2
     sunk_mm: float | None = None
+    sunk_source: str | None = None         # tag | legend
+    top_offset_mm: float = 0.0             # slab top relative to the level (SSL); negative = below
+    top_offset_rule: str | None = None     # beam_bottom | cantilever_bottom_align | sunk
+    support_depth_mm: float | None = None  # deepest adjacent beam
     cantilever: bool = False
     opening_ids: list[str] = Field(default_factory=list)
     tag_ids: list[str] = Field(default_factory=list)       # extraction slab ids used
@@ -125,7 +133,7 @@ class NPanel(BaseModel):
 class NFooting(BaseModel):
     id: str
     floor_id: str
-    kind: Literal["footing", "raft", "fold", "sunk"]
+    kind: Literal["footing", "combined", "raft", "pilecap", "pit", "fold", "sunk"]
     mark: str
     mark_lines: list[str] = Field(default_factory=list)
     shape: Literal["rect", "circle", "polygon"]
@@ -175,10 +183,19 @@ class NWall(BaseModel):
     source_id: str | None = None
 
 
+class NJoint(BaseModel):
+    id: str
+    floor_id: str
+    start: Point2
+    end: Point2
+    source_id: str | None = None
+
+
 class NStair(BaseModel):
     id: str
     floor_id: str
     mark: str | None = None
+    waist_mm: float | None = None
     outline: list[Point2] = Field(default_factory=list)
     lines: list[list[Point2]] = Field(default_factory=list)
     center: Point2
@@ -230,6 +247,7 @@ class NormalizedProject(BaseModel):
     openings: list[NOpening] = Field(default_factory=list)
     walls: list[NWall] = Field(default_factory=list)
     stairs: list[NStair] = Field(default_factory=list)
+    joints: list[NJoint] = Field(default_factory=list)
     mark_map: list[MarkMap] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     diagnostics: list[Diagnostic] = Field(default_factory=list)

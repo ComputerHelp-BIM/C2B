@@ -194,7 +194,7 @@ class TemplateWriter:
             self._mtext("beam_mark", b.mark, g(b.floor_id, b.mark_position), spec.text.mark_height, 5, rotation=b.mark_rotation_deg, id=b.id)
 
         for s in np_.panels:
-            if s.kind != "slab":
+            if s.kind not in ("slab", "cantilever"):
                 continue   # cut-outs and stairs are drawn from their own records
             if s.bulges and any(abs(bv) > 1e-9 for bv in s.bulges):
                 pts_b = [(*g(s.floor_id, p), bv) for p, bv in zip(s.outline, s.bulges)]
@@ -209,7 +209,8 @@ class TemplateWriter:
 
         for x in np_.footings:
             in_raft = "raft" in x.stack_ids
-            layer_key = {"footing": "footing", "raft": "raft", "fold": "raft_fold" if in_raft else "footing_fold", "sunk": "raft_sunk" if in_raft else "footing_sunk"}[x.kind]
+            layer_key = {"footing": "footing", "combined": "footing", "pilecap": "footing", "pit": "footing", "raft": "raft",
+                         "fold": "raft_fold" if in_raft else "footing_fold", "sunk": "raft_sunk" if in_raft else "footing_sunk"}[x.kind]
             pts = [g(x.floor_id, p) for p in x.outline]
             self._poly(layer_key, pts, id=x.id, mark=x.mark, client=x.client_mark)
             if x.kind in ("fold", "sunk"):
@@ -228,8 +229,11 @@ class TemplateWriter:
         for st in np_.stairs:
             if st.outline:
                 self._poly("stairs", [g(st.floor_id, p) for p in st.outline], id=st.id, src=st.source_id)
-                if st.mark:
-                    self._mtext("stairs_mark", st.mark, g(st.floor_id, st.center), spec.text.mark_height, 5, id=st.id)
+            if st.mark and (st.outline or not any(x.outline for x in np_.stairs if x.floor_id == st.floor_id)):
+                self._mtext("stairs_mark", st.mark, g(st.floor_id, st.center), spec.text.mark_height, 5, id=st.id)
+        for j in np_.joints:
+            ln = self.msp.add_line(g(j.floor_id, j.start), g(j.floor_id, j.end), dxfattribs={"layer": spec.layer("joint")})
+            self._xdata(ln, id=j.id)
             for a, b in st.lines:
                 ln = self.msp.add_line(g(st.floor_id, a), g(st.floor_id, b), dxfattribs={"layer": spec.layer("stairs")})
                 self._xdata(ln, id=st.id)

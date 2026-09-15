@@ -14,12 +14,13 @@ from .extract.columns import extract_columns
 from .extract.context import FloorContext
 from .extract.footings import extract_footings
 from .extract.grids import extract_grids
+from .extract.legend import parse_legend, regions_from_hatches
 from .extract.openings import extract_openings, extract_stairs, extract_walls
 from .extract.slabs import extract_slabs
 from .floors import FloorFrame, detect_floors, localise
 from .profile import STRUCTURAL_ROLES, LayerRule, Profile, merge_profiles, suggest_profile
 from .schedules import ScheduleIndex, parse_schedules
-from .schema import DrawingInfo, Floor, LayerMapEntry, LevelHint, Point2, Project, Schedule, ScheduleRow, UnassignedTag
+from .schema import DrawingInfo, Floor, Joint, LayerMapEntry, LevelHint, Point2, Project, Schedule, ScheduleRow, SlabEdge, UnassignedTag
 from .tags import clean_text, looks_like_note, parse_level_hint, parse_tag, strip_note_number
 from .units import resolve_units
 
@@ -117,6 +118,10 @@ def extract(path: str | Path, user_profile: Profile | None = None, units_overrid
     tables = parse_schedules(sched_texts, diag, tol.schedule_row_tol_factor)
     sched_index = ScheduleIndex(tables)
 
+    # client legend: hatch pattern -> meaning (before floors are localised; positions are only compared relatively)
+    legend_items, swatches = parse_legend(prims)
+    project_legend = legend_items
+
     global_defaults: dict[str, float] = {}
     for p in prims:
         if p.kind != "text" or not p.text:
@@ -153,7 +158,7 @@ def extract(path: str | Path, user_profile: Profile | None = None, units_overrid
             extents_max=Point2(x=meta.extmax[0] * scale, y=meta.extmax[1] * scale) if meta.extmax else None,
             entity_count=meta.entity_count,
         ),
-        profile_name=profile.name, layer_map=layer_map,
+        profile_name=profile.name, layer_map=layer_map, legend=project_legend,
     )
     for t in tables:
         project.schedules.append(Schedule(id=t.id, title=t.title, category=t.category, columns=t.columns,
@@ -171,6 +176,35 @@ def extract(path: str | Path, user_profile: Profile | None = None, units_overrid
         project.openings.extend(extract_openings(ctx))
         project.walls.extend(extract_walls(ctx))
         project.stairs.extend(extract_stairs(ctx))
+        # legend-driven regions (sunk, slab at beam bottom, column stop, cut-out ...)
+        regions = regions_from_hatches(frame.prims, legend_items, swatches, frame.id, ctx.ids)
+        project.regions.extend(regions)
+        stop_regions = [r for r in regions if r.meaning == "column_stop"]
+        if stop_regions:
+            from shapely.geometry import Polygon as _Poly
+            stop_polys = [_Poly([(q.x, q.y) for q in r.outline]) for r in stop_regions]
+            for c in project.columns:
+                if c.floor_id != frame.id or len(c.outline) < 3:
+                    continue
+                cp = _Poly([(q.x, q.y) for q in c.outline])
+                if any(sp.intersection(cp).area >= 0.5 * cp.area for sp in stop_polys if sp.intersects(cp)):
+                    c.modifier = "stop"
+        # slab edge lines (free edges of cantilevers / chajjas) and slab outline rings
+        for p_ in ctx.geoms("SLAB", "line", "polyline"):
+            coords = list(p_.geom.coords)
+            for a, b in zip(coords[:-1], coords[1:]):
+                if ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5 >= 50.0:
+                    project.slab_edges.append(SlabEdge(floor_id=frame.id, start=Point2(x=a[0], y=a[1]), end=Point2(x=b[0], y=b[1]), source_layer=p_.layer, source_handle=p_.handle))
+        for p_ in ctx.geoms("SLAB", "polygon"):
+            if p_.geom.area < 1e5:
+                continue   # text boxes and hatch swatches
+            coords = list(p_.geom.exterior.coords)
+            for a, b in zip(coords[:-1], coords[1:]):
+                project.slab_edges.append(SlabEdge(floor_id=frame.id, start=Point2(x=a[0], y=a[1]), end=Point2(x=b[0], y=b[1]), source_layer=p_.layer, source_handle=p_.handle))
+        for p_ in ctx.geoms("JOINT", "line", "polyline"):
+            coords = list(p_.geom.coords)
+            for a, b in zip(coords[:-1], coords[1:]):
+                project.joints.append(Joint(id=ctx.ids.next("J"), floor_id=frame.id, start=Point2(x=a[0], y=a[1]), end=Point2(x=b[0], y=b[1]), source_layer=p_.layer, source_handle=p_.handle))
         ctx.flush_missing_marks()
 
         # unassigned structural tags
