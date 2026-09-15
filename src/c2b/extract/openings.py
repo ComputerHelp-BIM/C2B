@@ -96,8 +96,9 @@ def extract_stairs(ctx: FloorContext) -> list:
     out = []
     for o in outlines:
         c = o.poly.centroid
-        labels = [t.text.strip() for t in ctx.texts("STAIR_TAG") if o.poly.buffer(1000).contains(Point(t.rep_point()))]
-        out.append(Stair(id=ctx.ids.next("ST"), floor_id=ctx.floor_id, label=labels[0] if labels else None, center=Point2(x=c.x, y=c.y),
+        near = [t.text.strip() for t in ctx.texts("STAIR_TAG") + ctx.texts("NOTE") if o.poly.buffer(1000).contains(Point(t.rep_point()))]
+        labels = [x for x in near if x.upper().startswith("ST") or "THK" in x.upper()]
+        out.append(Stair(id=ctx.ids.next("ST"), floor_id=ctx.floor_id, label=labels[0] if labels else None, labels=near, center=Point2(x=c.x, y=c.y),
                          outline=outline_points(o.poly), area_mm2=round(o.poly.area, 1), source_layer=o.layer, source_handles=o.handles + o.merged_handles))
     lines = []
     for p in ctx.geoms("STAIR", "line", "polyline"):

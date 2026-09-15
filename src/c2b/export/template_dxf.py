@@ -182,7 +182,9 @@ class TemplateWriter:
             self._hatch("column_hatch", rings, spec.hatch.column_stop, floor=fid, meaning="column_stop")
 
         for w in np_.walls:
-            e = self._poly("wall", [g(w.floor_id, p) for p in w.outline], id=w.id, src=w.source_id)
+            if not w.structural:
+                continue   # answer 6B: masonry / non-structural walls are not drawn
+            e = self._poly("wall", [g(w.floor_id, p) for p in w.outline], id=w.id, src=w.source_id, top_offset=w.top_offset_mm)
             if w.mark:
                 self._mtext("wall_mark", w.mark, g(w.floor_id, w.center), spec.text.mark_height, 5, id=w.id)
 
@@ -194,29 +196,51 @@ class TemplateWriter:
             self._mtext("beam_mark", b.mark, g(b.floor_id, b.mark_position), spec.text.mark_height, 5, rotation=b.mark_rotation_deg, id=b.id)
 
         for s in np_.panels:
-            if s.kind not in ("slab", "cantilever"):
+            if s.kind not in ("slab", "cantilever", "ramp"):
                 continue   # cut-outs and stairs are drawn from their own records
+            layer_key, mark_key = ("ramp", "ramp_mark") if s.kind == "ramp" else ("slab", "slab_mark")
             if s.bulges and any(abs(bv) > 1e-9 for bv in s.bulges):
                 pts_b = [(*g(s.floor_id, p), bv) for p, bv in zip(s.outline, s.bulges)]
-                e = self.msp.add_lwpolyline(pts_b, format="xyb", close=True, dxfattribs={"layer": spec.layer("slab")})
-                self._xdata(e, id=s.id, mark=s.mark, thk=s.thickness_mm, src=",".join(s.tag_ids))
+                e = self.msp.add_lwpolyline(pts_b, format="xyb", close=True, dxfattribs={"layer": spec.layer(layer_key)})
+                self._xdata(e, id=s.id, mark=s.mark, thk=s.thickness_mm, kind=s.kind, top_offset=s.top_offset_mm, src=",".join(s.tag_ids))
             else:
-                self._poly("slab", [g(s.floor_id, p) for p in s.outline], id=s.id, mark=s.mark, thk=s.thickness_mm, src=",".join(s.tag_ids))
-            self._mtext("slab_mark", s.mark, g(s.floor_id, s.mark_position), spec.text.mark_height, 5, id=s.id)
+                self._poly(layer_key, [g(s.floor_id, p) for p in s.outline], id=s.id, mark=s.mark, thk=s.thickness_mm, kind=s.kind, top_offset=s.top_offset_mm, src=",".join(s.tag_ids))
+            self._mtext(mark_key, s.mark, g(s.floor_id, s.mark_position), spec.text.mark_height, 5, id=s.id)
+            if s.kind == "ramp" and len(s.arrow) == 2:
+                a, b = g(s.floor_id, s.arrow[0]), g(s.floor_id, s.arrow[1])
+                ln = self.msp.add_line(a, b, dxfattribs={"layer": spec.layer("ramp")})
+                self._xdata(ln, id=s.id, kind="arrow", direction=s.direction)
+                # arrow head at the end
+                import math as _m
+                ang = _m.atan2(b[1] - a[1], b[0] - a[0])
+                L = spec.text.mark_height * 1.5
+                for da in (2.6, -2.6):
+                    self.msp.add_line(b, (b[0] + L * _m.cos(ang + da), b[1] + L * _m.sin(ang + da)), dxfattribs={"layer": spec.layer("ramp")})
+        for fd in np_.folds:
+            pts = [g(fd.floor_id, p) for p in fd.outline]
+            self._poly("slab_fold", pts, id=fd.id, panel=fd.panel_id, fold=fd.fold_mm)
+            self._hatch("slab_fold", [pts], spec.hatch.raft_fold_sunk, id=fd.id, meaning="fold")
+            self._mtext("slab_mark", fd.mark, g(fd.floor_id, fd.mark_position), spec.text.mark_height, 5, id=fd.id)
             if s.sunk_mm:
                 pattern = spec.hatch.slab_sunk_150 if s.sunk_mm >= 150 else spec.hatch.slab_sunk_75
                 self._hatch("slab_sunk", [[g(s.floor_id, p) for p in s.outline]], pattern, id=s.id, sunk=s.sunk_mm)
 
         for x in np_.footings:
             in_raft = "raft" in x.stack_ids
-            layer_key = {"footing": "footing", "combined": "footing", "pilecap": "footing", "pit": "footing", "raft": "raft",
+            layer_key = {"footing": "footing", "combined": "footing", "pilecap": "pilecap", "pit": "footing", "raft": "raft",
                          "fold": "raft_fold" if in_raft else "footing_fold", "sunk": "raft_sunk" if in_raft else "footing_sunk"}[x.kind]
             pts = [g(x.floor_id, p) for p in x.outline]
-            self._poly(layer_key, pts, id=x.id, mark=x.mark, client=x.client_mark)
+            self._poly(layer_key, pts, id=x.id, mark=x.mark, client=x.client_mark, kind=x.kind, pit_depth=x.pit_depth_mm)
+            if x.pcc_outline:
+                self._poly("pcc", [g(x.floor_id, p) for p in x.pcc_outline], id=x.id, kind="pcc", thk=x.pcc_thickness_mm, proj=x.pcc_projection_mm)
             if x.kind in ("fold", "sunk"):
                 self._hatch(layer_key, [pts], spec.hatch.raft_fold_sunk, id=x.id, meaning=x.kind)
             if x.mark_lines:
-                self._mtext("raft_mark" if (x.kind == "raft" or in_raft) else "footing_mark", "\\P".join(x.mark_lines), g(x.floor_id, x.center), spec.text.mark_height, 5, id=x.id)
+                mk = "raft_mark" if (x.kind == "raft" or in_raft) else ("pilecap_mark" if x.kind == "pilecap" else "footing_mark")
+                self._mtext(mk, "\\P".join(x.mark_lines), g(x.floor_id, x.center), spec.text.mark_height, 5, id=x.id)
+        for pl in np_.piles:
+            c = self.msp.add_circle(g(pl.floor_id, pl.center), (pl.diameter_mm or 300) / 2, dxfattribs={"layer": spec.layer("pile")})
+            self._xdata(c, id=pl.id, cap=pl.pilecap_id, dia=pl.diameter_mm)
 
         for o in np_.openings:
             pts = [g(o.floor_id, p) for p in o.outline]

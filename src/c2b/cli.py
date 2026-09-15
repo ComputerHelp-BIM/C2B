@@ -112,7 +112,7 @@ def normalize(
 ) -> None:
     """Utility 3: normalise to the template (stacks, spans, panels, marks) and write the template DXF."""
     from .export.jsonout import read_json
-    from .export.levels import read_levels
+    from .export.levels import read_level_settings, read_levels
     from .export.normalized_excel import write_normalized_workbook
     from .export.template_dxf import write_template_dxf
     from .normalize.pipeline import normalize as run_normalize
@@ -121,11 +121,12 @@ def normalize(
     project = read_json(json_file)
     tspec = TemplateSpec.load(spec) if spec else TemplateSpec()
     level_rows = read_levels(levels) if levels else None
+    level_ref = read_level_settings(levels).get("level_reference") if levels else None
     out = out or json_file.parent
     out.mkdir(parents=True, exist_ok=True)
     stem = json_file.name.replace(".c2b.json", "")
     typer.echo(f"Normalising {json_file.name} ...")
-    np_ = run_normalize(project, tspec, level_rows, source_file=project.drawing.file)
+    np_ = run_normalize(project, tspec, level_rows, source_file=project.drawing.file, level_reference=level_ref)
     from .diagnostics import DiagnosticsCollector
     diag = DiagnosticsCollector()
     dxf_path = write_template_dxf(np_, out / f"{stem}.template.dxf", tspec, seed, diag)

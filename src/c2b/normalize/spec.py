@@ -44,6 +44,13 @@ class MarkFormats(BaseModel):
     footing_combined: str = "CF{n}-{thk:.0f}THK"        # answer 16A: under two or more column stacks
     pilecap: str = "PC{n}-{thk:.0f}THK"                  # answer 16B: client calls it a pile cap
     pit: str = "LP{n}-{thk:.0f}THK"                      # lift pit slab (answer 10A)
+    pit_depth_line: str = "{depth:.0f} DEEP"
+    pcc_line: str = "PCC {thk:.0f}THK"
+    ramp: str = "RP{n}-{thk:.0f}THK {slope}"
+    ramp_no_thickness: str = "RP{n}-?THK {slope}"
+    pile: str = "P{n}-{dia:.0f}DIA"
+    pilecap_piles_line: str = "{n} PILES {dia:.0f}DIA"
+    fold_line: str = "{fold:.0f} FOLD"
     beam_inverted_suffix: str = "-INV"                   # answer 15C
     beam_taper: str = "{base}-{w:.0f}X{d:.0f}/{tip:.0f}"  # answer 2A: depth at support / at the tip
     footing_fold_line: str = "{fold:.0f} FOLD"
@@ -90,7 +97,9 @@ class SplitRules(BaseModel):
 
 class PanelRules(BaseModel):
     use_slab_edges: bool = True             # answer 3B: client slab edge lines close cantilever / chajja panels
-    cantilever_bottom_align: bool = True    # answer 4 / 14A: slab bottom flush with the deepest supporting beam
+    cantilever_bottom_align: bool = True    # answer 4 / 14A: slab bottom flush with the supporting beam bottom
+    cantilever_support: Literal["min", "max"] = "min"   # correction: with beams of different depth the smaller depth governs
+    cantilever_default_thickness_mm: float = 100.0      # answer 1B fallback when no tag and no adjacent slab
     region_cover: float = 0.5               # a panel covered this much by a legend region takes its meaning
     arc_fit_tol_mm: float = 2.5             # vertices this close to a circular column are replaced by a true arc (bulge)
     span_extend_mm: float = 150.0           # spans are lengthened this much at each end for the lattice only, so beam corners reach into round/odd supports
@@ -172,6 +181,12 @@ class TemplateSpec(BaseModel):
         "wall": LayerDef(name="CH-S-WALL", color=30, lineweight=18),
         "wall_mark": LayerDef(name="CH-S-WALL-MARK", color=30, lineweight=9),
         "joint": LayerDef(name="CH-JOINT", color=6, lineweight=18, linetype="Dash"),
+        "pcc": LayerDef(name="CH-S-PCC", color=8, lineweight=9, linetype="Dash"),
+        "ramp": LayerDef(name="CH-S-RAMP", color=192, lineweight=18),
+        "ramp_mark": LayerDef(name="CH-S-RAMP-MARK", color=11, lineweight=9),
+        "pile": LayerDef(name="CH-S-PILE", color=30, lineweight=18),
+        "pilecap": LayerDef(name="CH-S-PILECAP", color=3, lineweight=18),
+        "pilecap_mark": LayerDef(name="CH-S-PILECAP-MARK", color=3, lineweight=9),
     })
     text: TextSpec = Field(default_factory=TextSpec)
     marks: MarkFormats = Field(default_factory=MarkFormats)
@@ -184,12 +199,16 @@ class TemplateSpec(BaseModel):
     stack_match_tol_mm: float = 300.0        # centre distance for matching a column to the stack below
     stack_match_min_iou: float = 0.2
     raft_by_client: bool = True              # answer 14C: a raft is one the client calls RF / RAFT / MAT (layer, tag or mark)
+    combined_by_client: bool = True          # answer 8B: CF only when the client says combined
+    pcc_default_thickness_mm: float = 100.0  # PCC under footings when the client mentions PCC without a thickness
+    pcc_default_projection_mm: float = 100.0
+    pcc_always: bool = False                 # draw PCC under every foundation even without a client note
+    stair_estimate: bool = True              # answer 5: treads counted, mid landing at half height, flagged
     raft_min_area_m2: float = 0.0            # optional size rule (0 = off)
     raft_min_columns: int = 0                # optional stack-count rule (0 = off)
     beam_centreline: bool = True             # answer 6B: centreline on CH-S-BEAM-CL in addition to the outline
     client_notes: bool = True                # answer 18C: client general notes verbatim under each plan
-    level_reference: Literal["SSL", "FFL"] = "SSL"   # answer 20A: workbook elevations are top of structural slab
-    finish_thickness_mm: float = 0.0         # used only when level_reference is FFL
+    level_reference: Literal["SSL", "FFL"] = "SSL"   # answer 20A; the level workbook's Settings sheet overrides this
     opening_panel_cover: float = 0.6         # a lattice hole covered this much by openings is a cut-out, not a slab
     stair_panel_cover: float = 0.5           # ... or by stair geometry, a stair
     notes: list[str] = Field(default_factory=list)   # extra note lines written under every plan

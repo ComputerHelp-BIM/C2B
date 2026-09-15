@@ -8,6 +8,42 @@ The canonical JSON schema carries its own version (`schema_version` in every out
 A MAJOR bump of the schema means downstream utilities (DXF writer, Revit importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes values.
 
+## [0.5.0] - 2026-09-15
+
+Third round of template answers (special elements):
+
+### Added
+- PCC (lean concrete) under footings, combined footings, rafts, pile caps and pits when the
+  client mentions PCC: outline on `CH-S-PCC` offset by the projection, `PCC 100THK` line in the
+  foundation mark; thickness and projection read from the client note.
+- Slab folds like raft folds: legend "fold" regions inside a panel become hatched outlines on
+  `CH-S-SLAB-FOLD` with a `1500 FOLD` mark; lower side inside; the fold record carries the
+  vertical slab thickness for Revit.
+- Lift pits (`LP`) with depth from a `... DEEP` text or a level text; pile caps on
+  `CH-S-PILECAP` with a `n PILES dDIA` line; piles as circles on `CH-S-PILE` (round columns in Revit).
+- Ramps: a `RAMP 1:8 UP` note inside a panel makes it a ramp on `CH-S-RAMP` with the slope and
+  direction in the mark and the client's arrow line redrawn.
+- RCC walls only are drawn; a wall under a beam gets its top at the beam bottom.
+- Stairs: direction from DN/UP texts, tread lines counted (risers = treads + 1), landing assumed
+  at half the floor height, all flagged `STAIR_ESTIMATED`.
+- Level workbook gains a Settings sheet (`level_reference`) that wins over the spec.
+
+### Changed
+- Chajja / cantilever slab bottom aligns with the *smaller* adjacent beam depth (correction).
+- Combined footings `CF` only when the client says combined (answer 8B).
+- Cantilever slab thickness without a tag: neighbouring slab thickness, else 100 mm default.
+- Extraction schema 0.5.0 (`ramp_hints`, `pcc_hints`, `stairs[].labels`), normalised schema
+  0.5.0 (`folds`, `piles`, `level_reference`, PCC / pit / ramp / stair fields).
+
+## [0.4.0] - 2026-09-15
+
+### Added
+- Cantilever / chajja panels closed by client slab edge lines (`CS` marks, bottom aligned with
+  the supporting beam); client legend parsed into hatch-pattern meanings; sunk depth,
+  slab-at-beam-bottom offset, column stop and cut-outs from hatched regions (tags win);
+  interior cut-outs as panel holes; inverted beams (`-INV`, top offset); tapered cantilevers;
+  footing kinds; stairs with waist mark; joints on `CH-JOINT`; SSL level reference.
+
 ## [0.3.0] - 2026-09-15
 
 Conventions settled with the firm (twenty answers on the template):

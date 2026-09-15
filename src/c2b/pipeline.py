@@ -20,8 +20,8 @@ from .extract.slabs import extract_slabs
 from .floors import FloorFrame, detect_floors, localise
 from .profile import STRUCTURAL_ROLES, LayerRule, Profile, merge_profiles, suggest_profile
 from .schedules import ScheduleIndex, parse_schedules
-from .schema import DrawingInfo, Floor, Joint, LayerMapEntry, LevelHint, Point2, Project, Schedule, ScheduleRow, SlabEdge, UnassignedTag
-from .tags import clean_text, looks_like_note, parse_level_hint, parse_tag, strip_note_number
+from .schema import DrawingInfo, Floor, Joint, LayerMapEntry, LevelHint, PccHint, Point2, Project, RampHint, Schedule, ScheduleRow, SlabEdge, UnassignedTag
+from .tags import clean_text, looks_like_note, parse_level_hint, parse_pcc, parse_ramp, parse_tag, strip_note_number
 from .units import resolve_units
 
 _IMPERIAL_HINT = ("'", '"')
@@ -201,6 +201,25 @@ def extract(path: str | Path, user_profile: Profile | None = None, units_overrid
             coords = list(p_.geom.exterior.coords)
             for a, b in zip(coords[:-1], coords[1:]):
                 project.slab_edges.append(SlabEdge(floor_id=frame.id, start=Point2(x=a[0], y=a[1]), end=Point2(x=b[0], y=b[1]), source_layer=p_.layer, source_handle=p_.handle))
+        # ramp notes ("RAMP 1:8 UP") with the arrow line beside them, and PCC notes
+        floor_lines = [q for q in frame.prims if q.kind == "line"]
+        for t in (q for q in frame.prims if q.kind == "text" and q.text):
+            rp = parse_ramp(t.text)
+            if rp is not None:
+                c = t.rep_point()
+                reach = max(1500.0, 6.0 * (t.text_height or 125.0))
+                cand = [l for l in floor_lines if l.geom.length >= 400.0 and l.geom.distance(Point(c)) <= reach and roles.get(l.layer, ("",))[0] not in ("BEAM", "COLUMN", "GRID", "FOOTING", "WALL")]
+                arrow = max(cand, key=lambda l: l.geom.length) if cand else None
+                a0 = a1 = None
+                if arrow is not None:
+                    (x0, y0), (x1, y1) = list(arrow.geom.coords)[0][:2], list(arrow.geom.coords)[-1][:2]
+                    a0, a1 = Point2(x=x0, y=y0), Point2(x=x1, y=y1)
+                project.ramp_hints.append(RampHint(id=ctx.ids.next("RP"), floor_id=frame.id, text=clean_text(t.text)[:60], position=Point2(x=c[0], y=c[1]),
+                                                   slope_ratio=rp[0], direction=rp[1], arrow_start=a0, arrow_end=a1, handle=t.handle))
+            pc = parse_pcc(t.text)
+            if pc is not None:
+                c = t.rep_point()
+                project.pcc_hints.append(PccHint(text=clean_text(t.text)[:80], thickness_mm=pc[0], projection_mm=pc[1], floor_id=frame.id, handle=t.handle))
         for p_ in ctx.geoms("JOINT", "line", "polyline"):
             coords = list(p_.geom.coords)
             for a, b in zip(coords[:-1], coords[1:]):

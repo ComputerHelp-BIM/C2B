@@ -13,7 +13,8 @@ from ..diagnostics import DiagnosticsCollector
 from ..geometry import classify_polygon, rectangle_polygon
 from ..schema import Point2, Project
 from .geometry import Support, fit_arcs, lattice_panels, poly_from_points, representative_point, ring_points, text_fits
-from .model import (MarkMap, NBeam, NColumn, NFloor, NFooting, NGrid, NJoint, NLevel, NOpening, NPanel, NStair, NWall, NormalizedProject)
+from ..tags import parse_depth, parse_tag
+from .model import (MarkMap, NBeam, NColumn, NFloor, NFold, NFooting, NGrid, NJoint, NLevel, NOpening, NPanel, NPile, NStair, NWall, NormalizedProject)
 from .naming import normalise_floor_name, title_from_level_name
 from .spans import runs_for_floor, split_runs
 from .spec import TemplateSpec
@@ -38,6 +39,14 @@ def _fmt(fmt: str, **kw) -> str:
         return fmt
 
 
+def parse_pcc_safe(text: str):
+    from ..tags import parse_pcc
+    try:
+        return parse_pcc(text or "")
+    except Exception:
+        return None
+
+
 def _tagged_size(c) -> tuple[float, float] | None:
     """Size in the order the client's tag states it, else (short, long) from the resolved size."""
     from ..tags import parse_tag
@@ -57,9 +66,10 @@ class LevelRow:
         self.floor_id, self.name, self.order, self.elevation, self.f2f, self.revit_name = floor_id, name, order, elevation, f2f, revit_name
 
 
-def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | None = None, source_file: str = "") -> NormalizedProject:
+def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | None = None, source_file: str = "", level_reference: str | None = None) -> NormalizedProject:
     diag = DiagnosticsCollector()
-    np_ = NormalizedProject(source_file=source_file or project.drawing.file, source_schema_version=project.schema_version, spec_name=spec.name)
+    np_ = NormalizedProject(source_file=source_file or project.drawing.file, source_schema_version=project.schema_version, spec_name=spec.name,
+                            level_reference=(level_reference or spec.level_reference).upper())
 
     floors_sorted = sorted(project.floors, key=lambda f: f.index)
     floor_ids = [f.id for f in floors_sorted]
@@ -200,13 +210,14 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
                                        source_ids=[c.id], source_handles=c.source_handles))
             np_.mark_map.append(MarkMap(element_id=cid, floor_id=f.id, kind="column", mark=mark, client_mark=c.mark, client_tags=c.tags))
 
-    # ---- walls (kept as drawn) ---------------------------------------------
+    # ---- walls: RCC walls only are modelled (answer 6B); non-structural walls are kept as records -------------
     for w in project.walls:
         outline = poly_from_points(w.outline)
         if outline is None:
             continue
         np_.walls.append(NWall(id=f"{w.floor_id}-W{len([x for x in np_.walls if x.floor_id == w.floor_id]) + 1:03d}", floor_id=w.floor_id, mark=w.mark,
-                               outline=_pts(ring_points(outline)), center=w.center, thickness_mm=w.thickness_mm, length_mm=w.length_mm, source_id=w.id))
+                               outline=_pts(ring_points(outline)), center=w.center, thickness_mm=w.thickness_mm, length_mm=w.length_mm,
+                               structural=w.structural, source_id=w.id))
 
     # ---- beams: split into spans -------------------------------------------
     for f in floors_sorted:
@@ -297,7 +308,34 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
             waist = pt_.thickness_mm
             base = pt_.mark or f"ST{n}"
             mark = _fmt(spec.marks.stair.replace("ST{n}", "{base}"), base=base, n=n, thk=waist) if waist else base
+        direction = next(("DN" if l.upper().startswith(("DN", "DOWN")) else "UP") for l in st.labels if l.upper().startswith(("DN", "DOWN", "UP"))) if any(l.upper().startswith(("DN", "DOWN", "UP")) for l in st.labels) else None
+        treads = risers = None
+        landing = None
+        estimated = False
+        if spec.stair_estimate and outline is not None:
+            # tread lines: the client's stair lines lying inside this outline, parallel to each other (answer 5A)
+            inside_lines = []
+            for other in project.stairs:
+                if other.floor_id != st.floor_id or not other.lines:
+                    continue
+                for a, b in other.lines:
+                    seg = LineString([(a.x, a.y), (b.x, b.y)])
+                    if outline.buffer(5.0).contains(seg) and seg.length >= 300.0:
+                        inside_lines.append(seg)
+            if inside_lines:
+                angs = Counter(round(math.degrees(math.atan2(l.coords[1][1] - l.coords[0][1], l.coords[1][0] - l.coords[0][0])) % 180.0 / 5.0) * 5 for l in inside_lines)
+                treads = angs.most_common(1)[0][1]
+                risers = treads + 1
+                estimated = True
+            fl = next((q for q in np_.floors if q.id == st.floor_id), None)
+            lv = next((l for l in np_.levels if l.id in (fl.levels if fl else [])), None)
+            if lv and lv.floor_to_floor_mm:
+                landing = round(lv.floor_to_floor_mm / 2.0, 1)       # answer 5B
+                estimated = True
+        if estimated:
+            diag.info("STAIR_ESTIMATED", f"Stair {mark or st.id}: {treads or '?'} treads counted, landing assumed at half the floor height; verify against a section", floor_id=st.floor_id, location=(st.center.x, st.center.y))
         np_.stairs.append(NStair(id=f"{st.floor_id}-ST{len([x for x in np_.stairs if x.floor_id == st.floor_id]) + 1:03d}", floor_id=st.floor_id, mark=mark, waist_mm=waist,
+                                 direction=direction, tread_count=treads, riser_count_est=risers, landing_level_est_mm=landing, estimated=estimated,
                                  outline=_pts(ring_points(outline)) if outline else [], lines=st.lines, center=st.center, source_id=st.id))
 
     # ---- joints (as drawn) ----------------------------------------------------
@@ -439,14 +477,23 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
                         holes.append(_pts(ring_points(opoly)))     # inner loop of the slab sketch (answer 9C)
             if poly in oversized:
                 diag.warning("PANEL_LARGE", f"Panel {pid} is {poly.area / 1e6:.0f} m2; a beam may be missing", floor_id=f.id, element_id=pid, location=representative_point(poly))
-            if is_cant:
+            # ramps: a ramp note inside the hole (answer 18B); slope and direction from the note and its arrow
+            ramp = next((h for h in project.ramp_hints if h.floor_id == f.id and poly.contains(Point(h.position.x, h.position.y))), None)
+            if ramp is not None:
+                mark = _fmt(spec.marks.ramp if thickness is not None else spec.marks.ramp_no_thickness, n=i, thk=thickness, slope=ramp.slope_ratio or "1:?")
+            elif is_cant:
                 mark = _fmt(spec.marks.slab_cantilever, n=i, thk=thickness) if thickness is not None else _fmt(spec.marks.slab_no_thickness.replace("S{n}", "CS{n}"), n=i)
             else:
                 mark = _fmt(spec.marks.slab, n=i, thk=thickness) if thickness is not None else _fmt(spec.marks.slab_no_thickness, n=i)
             # level rule (answers 4 / 14A / 20A): slab top at SSL; cantilever slabs and "slab at beam bottom" panels sit
             # with their bottom flush with the deepest adjacent beam; sunk panels drop by the sunk depth
-            adj = adjacent_beams(poly)
-            support_depth = max((b.depth_mm or 0.0) for b in adj) if adj else None
+            adj = [b for b in adjacent_beams(poly) if b.depth_mm]
+            support_depth = (min if spec.panels.cantilever_support == "min" else max)(b.depth_mm for b in adj) if adj else None
+            if is_cant and thickness is None:
+                # answer 1A/1B: neighbouring slab thickness, else the firm default
+                neigh = [q.thickness_mm for q in np_.panels if q.floor_id == f.id and q.kind == "slab" and q.thickness_mm and poly_from_points(q.outline) is not None and poly_from_points(q.outline).buffer(400).intersects(poly)]
+                thickness = neigh[0] if neigh else spec.panels.cantilever_default_thickness_mm
+                source = "adjacent" if neigh else "default"
             top_offset, rule = 0.0, None
             bb_cover, _ = region_cover(poly, "beam_bottom")
             if (is_cant and spec.panels.cantilever_bottom_align) or bb_cover >= spec.panels.region_cover:
@@ -464,10 +511,26 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
             bulges = [0.0] * len(ring)
             if circles:
                 ring, bulges = fit_arcs(ring, circles, spec.panels.arc_fit_tol_mm)
-            np_.panels.append(NPanel(id=pid, floor_id=f.id, kind="cantilever" if is_cant else "slab", mark=mark, thickness_mm=thickness, thickness_source=source,
+            kind = "ramp" if ramp is not None else ("cantilever" if is_cant else "slab")
+            np_.panels.append(NPanel(id=pid, floor_id=f.id, kind=kind, mark=mark, thickness_mm=thickness, thickness_source=source,
                                      outline=_pts(ring), bulges=bulges, holes=holes, area_m2=round(poly.area / 1e6, 3), centroid=_pt((c.x, c.y)), mark_position=_pt(mp),
                                      sunk_mm=sunk, sunk_source=sunk_source, top_offset_mm=round(top_offset, 1), top_offset_rule=rule, support_depth_mm=support_depth,
-                                     cantilever=is_cant, opening_ids=op_ids, tag_ids=[s.id for s in inside]))
+                                     cantilever=is_cant, slope_ratio=ramp.slope_ratio if ramp else None, direction=ramp.direction if ramp else None,
+                                     arrow=[ramp.arrow_start, ramp.arrow_end] if ramp and ramp.arrow_start and ramp.arrow_end else [],
+                                     opening_ids=op_ids, tag_ids=[s.id for s in inside]))
+            # slab folds: legend "fold" regions or fold tags inside the panel (answers 3, 6A) -> hatched region, lower side inside
+            fold_regions = [(r, rp) for r, rp in regions_f if r.meaning == "fold" and rp.intersects(poly) and rp.intersection(poly).area > 0.25 * rp.area]
+            fold_tags = [s for s in inside if s.tags and any("FOLD" in (t.text or "").upper() for t in s.tags)]
+            for r, rp in fold_regions:
+                fp = rp.intersection(poly)
+                if fp.geom_type != "Polygon" or fp.area < 1e5:
+                    continue
+                fold_val = next((parse_tag(t.text).fold_mm for s_ in fold_tags for t in s_.tags if parse_tag(t.text).fold_mm), None) or r.value_mm
+                fid_ = f"{f.id}-FD{len([x for x in np_.folds if x.floor_id == f.id]) + 1:03d}"
+                fc = fp.centroid
+                np_.folds.append(NFold(id=fid_, floor_id=f.id, panel_id=pid, outline=_pts(ring_points(fp)), fold_mm=fold_val, vertical_thickness_mm=thickness,
+                                       mark=_fmt(spec.marks.fold_line, fold=fold_val) if fold_val else "FOLD", mark_position=_pt((fc.x, fc.y)), source_ids=r.source_handles))
+                np_.panels[-1].fold_ids.append(fid_)
             np_.mark_map.append(MarkMap(element_id=pid, floor_id=f.id, kind="slab", mark=mark, client_mark=inside[0].mark if inside else None, client_tags=[t for s in inside for t in s.tags]))
         stray = [s for s in tags if s.id not in used_tags]
         if stray:
@@ -483,6 +546,17 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
             t_adj = [p.thickness_mm for p, pp in panels_f if pp is not None and bp is not None and pp.buffer(5.0).intersects(bp) and p.thickness_mm]
             t_slab = max(t_adj) if t_adj else (f.default_slab_thickness_mm or 0.0)
             b.top_offset_mm = round(b.depth_mm - t_slab, 1)
+
+    # ---- wall tops (answer 6A): a wall under a beam stops at the beam bottom ---------------
+    for w in np_.walls:
+        wp = poly_from_points(w.outline)
+        if wp is None:
+            continue
+        over = [b for b in np_.beams if b.floor_id == w.floor_id and b.depth_mm and poly_from_points(b.outline) is not None and poly_from_points(b.outline).intersection(wp).area >= 0.5 * wp.area]
+        if over:
+            b = max(over, key=lambda b: b.depth_mm)
+            w.top_offset_mm = -float(b.depth_mm)
+            w.beam_above_id = b.id
 
     # ---- footings -----------------------------------------------------------
     for f in floors_sorted:
@@ -500,7 +574,8 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
             tag_text = " ".join((t.text or "") for t in x.tags).upper() + " " + (x.mark or "").upper()
             client_says_raft = (modifier == "raft") or bool(x.mark and x.mark.upper().startswith(("RF", "RAFT", "MAT"))) or "RAFT" in tag_text
             client_says_pilecap = bool(x.mark and x.mark.upper().startswith("PC")) or "PILE" in tag_text or "PILE" in (x.source_layer or "").upper()
-            client_says_pit = "PIT" in tag_text
+            client_says_pit = "PIT" in tag_text or modifier == "pit"
+            client_says_combined = bool(x.mark and x.mark.upper().startswith("CF")) or "COMBINED" in tag_text or "COMB." in tag_text
             is_raft = (spec.raft_by_client and client_says_raft) or (spec.raft_min_area_m2 > 0 and outline.area >= spec.raft_min_area_m2 * 1e6) or (spec.raft_min_columns > 0 and len(over) >= spec.raft_min_columns)
             if modifier in ("fold", "sunk"):
                 kind = modifier
@@ -514,13 +589,18 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
                 n_f += 1
                 n, kind = n_f, "pit"
                 mark = _fmt(spec.marks.pit, n=n, thk=x.thickness_mm) if x.thickness_mm else _fmt(spec.marks.footing_no_thickness, n=n).replace("F", "LP", 1)
-            elif client_says_pilecap:
+            elif modifier == "pile" and x.shape == "circle":
+                # a pile: modelled as a round column in Revit (answer 16B)
+                np_.piles.append(NPile(id=f"{f.id}-P{len([q for q in np_.piles if q.floor_id == f.id]) + 1:03d}", floor_id=f.id, center=x.center,
+                                       diameter_mm=x.diameter_mm or x.drawn_width_mm, source_id=x.id))
+                continue
+            elif client_says_pilecap or modifier == "pilecap":
                 n_f += 1
                 n, kind = n_f, "pilecap"
                 mark = _fmt(spec.marks.pilecap, n=n, thk=x.thickness_mm) if x.thickness_mm else _fmt(spec.marks.footing_no_thickness, n=n).replace("F", "PC", 1)
-            elif len(over) >= 2:
+            elif (client_says_combined if spec.combined_by_client else len(over) >= 2):
                 n_f += 1
-                n, kind = n_f, "combined"      # answer 16A
+                n, kind = n_f, "combined"      # answer 16A / 8B: only when the client says combined
                 mark = _fmt(spec.marks.footing_combined, n=n, thk=x.thickness_mm) if x.thickness_mm else _fmt(spec.marks.footing_no_thickness, n=n).replace("F", "CF", 1)
             else:
                 n_f += 1
@@ -529,6 +609,31 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
             lines = [mark] if mark else []
             if x.fold_mm:
                 lines.append(_fmt(spec.marks.footing_fold_line, fold=x.fold_mm))
+            pit_depth = None
+            if kind == "pit":
+                pit_depth = next((parse_depth(t.text) for t in x.tags if parse_depth(t.text)), None)
+                if pit_depth is None:
+                    # a level text inside the pit outline gives the depth relative to the floor (answer 4B)
+                    fl = next((q for q in np_.floors if q.id == f.id), None)
+                    inside_hints = [h for h in project.level_hints if h.floor_id == f.id and outline.contains(Point(h.elevation_mm * 0 + 0, 0)) is False]
+                    if fl and fl.elevation_mm is not None:
+                        for h in project.level_hints:
+                            if h.floor_id == f.id and h.elevation_mm < fl.elevation_mm:
+                                pit_depth = fl.elevation_mm - h.elevation_mm
+                                break
+                if pit_depth:
+                    lines.append(_fmt(spec.marks.pit_depth_line, depth=pit_depth))
+                else:
+                    diag.warning("PIT_DEPTH_UNKNOWN", f"Lift pit {mark} has no depth text", floor_id=f.id, location=(x.center.x, x.center.y))
+            # PCC (lean concrete) under foundations when the client mentions it, or always when the spec says so
+            pcc_t = pcc_p = None
+            if kind in ("footing", "combined", "raft", "pilecap", "pit"):
+                own = next((parse_pcc_safe(t.text) for t in x.tags if parse_pcc_safe(t.text)), None)
+                glob = next((h for h in project.pcc_hints if h.floor_id in (f.id, None)), None) or (project.pcc_hints[0] if project.pcc_hints else None)
+                if own or glob or spec.pcc_always:
+                    pcc_t = (own[0] if own and own[0] else None) or (glob.thickness_mm if glob else None) or spec.pcc_default_thickness_mm
+                    pcc_p = (own[1] if own and own[1] else None) or (glob.projection_mm if glob else None) or spec.pcc_default_projection_mm
+                    lines.append(_fmt(spec.marks.pcc_line, thk=pcc_t))
             if kind in ("footing", "combined", "pilecap") and not over:
                 diag.warning("FOOTING_NO_COLUMN", f"Footing {mark} has no column stack over it", floor_id=f.id, location=(x.center.x, x.center.y))
             prefix = {"raft": "RF", "combined": "CF", "pilecap": "PC", "pit": "LP"}.get(kind, "F")
@@ -540,11 +645,23 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
                 over = ["raft"] if parent is not None else []
                 if parent is not None and parent.mark:
                     lines = [parent.mark] + lines
+            pcc_outline = _pts(ring_points(outline.buffer(pcc_p, join_style=2))) if pcc_t else []
             np_.footings.append(NFooting(id=fid_, floor_id=f.id, kind=kind, mark=mark, mark_lines=lines, shape=x.shape, center=x.center, width_mm=x.width_mm, depth_mm=x.depth_mm,
                                          rotation_deg=x.rotation_deg, thickness_mm=x.thickness_mm, fold_mm=x.fold_mm, outline=_pts(ring_points(outline)), stack_ids=over,
+                                         pit_depth_mm=pit_depth, pcc_thickness_mm=pcc_t, pcc_projection_mm=pcc_p, pcc_outline=pcc_outline,
                                          client_mark=x.mark, source_ids=[x.id]))
             if mark:
                 np_.mark_map.append(MarkMap(element_id=fid_, floor_id=f.id, kind=kind, mark=mark, client_mark=x.mark, client_tags=x.tags))
+        caps = [(ft, poly_from_points(ft.outline)) for ft in np_.footings if ft.floor_id == f.id and ft.kind == "pilecap"]
+        for pl in [q for q in np_.piles if q.floor_id == f.id]:
+            cap = next((ft for ft, cp in caps if cp is not None and cp.contains(Point(pl.center.x, pl.center.y))), None)
+            if cap is not None:
+                pl.pilecap_id = cap.id
+                cap.pile_ids.append(pl.id)
+        for ft, _cp in caps:
+            if ft.pile_ids:
+                dia = next((q.diameter_mm for q in np_.piles if q.id == ft.pile_ids[0]), None) or 0
+                ft.mark_lines.insert(1, _fmt(spec.marks.pilecap_piles_line, n=len(ft.pile_ids), dia=dia))
         covered = {sid for ft in np_.footings if ft.floor_id == f.id for sid in ft.stack_ids}
         for s, pt in stacks_on_floor:
             if s.id not in covered and f.index == min(fl.index for fl in floors_sorted):

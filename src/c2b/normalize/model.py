@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from .. import __version__
 from ..schema import Diagnostic, Point2, TagRef
 
-NORMALIZED_SCHEMA_VERSION = "0.4.0"
+NORMALIZED_SCHEMA_VERSION = "0.5.0"
 
 
 class NFloor(BaseModel):
@@ -109,7 +109,7 @@ class NBeam(BaseModel):
 class NPanel(BaseModel):
     id: str
     floor_id: str
-    kind: Literal["slab", "cantilever", "opening", "stair"] = "slab"   # cantilever = chajja / balcony with a free edge
+    kind: Literal["slab", "cantilever", "ramp", "opening", "stair"] = "slab"   # cantilever = chajja / balcony with a free edge
     mark: str                      # "S16-200THK" / "CS3-100THK"
     thickness_mm: float | None = None
     thickness_source: str = "unknown"
@@ -125,9 +125,42 @@ class NPanel(BaseModel):
     top_offset_rule: str | None = None     # beam_bottom | cantilever_bottom_align | sunk
     support_depth_mm: float | None = None  # deepest adjacent beam
     cantilever: bool = False
+    slope_ratio: str | None = None         # ramps: "1:8"
+    direction: str | None = None           # ramps: UP | DN (looking along the arrow)
+    arrow: list[Point2] = Field(default_factory=list)      # ramps: arrow line as drawn
+    fold_ids: list[str] = Field(default_factory=list)
     opening_ids: list[str] = Field(default_factory=list)
     tag_ids: list[str] = Field(default_factory=list)       # extraction slab ids used
     bounded_by: list[str] = Field(default_factory=list)    # beam / column ids around the panel
+
+
+class NFold(BaseModel):
+    """A folded (lowered) part of a slab: hatched region on CH-S-SLAB-FOLD, lower side inside (answer 3C).
+
+    Revit: the panel splits into the outer part at the panel level and this region lowered by
+    ``fold_mm``, joined by a vertical slab of ``vertical_thickness_mm`` along the outline (answer 6A).
+    """
+
+    id: str
+    floor_id: str
+    panel_id: str | None = None
+    outline: list[Point2]
+    fold_mm: float | None = None
+    vertical_thickness_mm: float | None = None
+    mark: str = ""
+    mark_position: Point2
+    source_ids: list[str] = Field(default_factory=list)
+
+
+class NPile(BaseModel):
+    """A pile under a pile cap; modelled in Revit as a round column."""
+
+    id: str
+    floor_id: str
+    center: Point2
+    diameter_mm: float | None = None
+    pilecap_id: str | None = None
+    source_id: str | None = None
 
 
 class NFooting(BaseModel):
@@ -146,6 +179,11 @@ class NFooting(BaseModel):
     sunk_mm: float | None = None
     outline: list[Point2]
     stack_ids: list[str] = Field(default_factory=list)
+    pit_depth_mm: float | None = None           # lift pits: depth below the floor level
+    pcc_thickness_mm: float | None = None       # PCC (lean concrete) below the footing
+    pcc_projection_mm: float | None = None
+    pcc_outline: list[Point2] = Field(default_factory=list)
+    pile_ids: list[str] = Field(default_factory=list)
     client_mark: str | None = None
     source_ids: list[str] = Field(default_factory=list)
 
@@ -180,6 +218,9 @@ class NWall(BaseModel):
     center: Point2
     thickness_mm: float | None = None
     length_mm: float | None = None
+    structural: bool = True                 # only RCC walls are drawn and modelled (answer 6B)
+    top_offset_mm: float = 0.0              # wall top below the level above by the depth of the beam on it (answer 6A)
+    beam_above_id: str | None = None
     source_id: str | None = None
 
 
@@ -196,6 +237,11 @@ class NStair(BaseModel):
     floor_id: str
     mark: str | None = None
     waist_mm: float | None = None
+    direction: str | None = None            # UP | DN from the client texts
+    tread_count: int | None = None          # tread lines counted inside the outline (answer 5A)
+    riser_count_est: int | None = None      # treads + 1
+    landing_level_est_mm: float | None = None   # half the floor-to-floor height (answer 5B), flagged
+    estimated: bool = False
     outline: list[Point2] = Field(default_factory=list)
     lines: list[list[Point2]] = Field(default_factory=list)
     center: Point2
@@ -248,6 +294,9 @@ class NormalizedProject(BaseModel):
     walls: list[NWall] = Field(default_factory=list)
     stairs: list[NStair] = Field(default_factory=list)
     joints: list[NJoint] = Field(default_factory=list)
+    folds: list[NFold] = Field(default_factory=list)
+    piles: list[NPile] = Field(default_factory=list)
+    level_reference: str = "SSL"
     mark_map: list[MarkMap] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     diagnostics: list[Diagnostic] = Field(default_factory=list)

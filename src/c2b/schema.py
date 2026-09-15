@@ -254,12 +254,37 @@ class Joint(BaseModel):
     source_handle: str
 
 
+class RampHint(BaseModel):
+    """A ramp note in plan: 'RAMP 1:8 UP' with the arrow line next to it when found."""
+
+    id: str
+    floor_id: str
+    text: str
+    position: Point2
+    slope_ratio: str | None = None          # "1:8"
+    direction: str | None = None            # UP | DN
+    arrow_start: Point2 | None = None
+    arrow_end: Point2 | None = None
+    handle: str
+
+
+class PccHint(BaseModel):
+    """PCC (lean concrete) note: thickness and projection beyond the footing."""
+
+    text: str
+    thickness_mm: float | None = None
+    projection_mm: float | None = None
+    floor_id: str | None = None
+    handle: str
+
+
 class Stair(BaseModel):
     """Stair geometry carried through as drawn (outline polygons and raw lines)."""
 
     id: str
     floor_id: str
     label: str | None = None
+    labels: list[str] = Field(default_factory=list)   # every text near the stair (DN, UP, ST1 ...)
     center: Point2
     outline: list[Point2] = Field(default_factory=list)
     lines: list[list[Point2]] = Field(default_factory=list)
@@ -344,6 +369,8 @@ class Project(BaseModel):
     walls: list[Wall] = Field(default_factory=list)
     stairs: list[Stair] = Field(default_factory=list)
     slab_edges: list[SlabEdge] = Field(default_factory=list)
+    ramp_hints: list[RampHint] = Field(default_factory=list)
+    pcc_hints: list[PccHint] = Field(default_factory=list)
     legend: list[LegendItem] = Field(default_factory=list)
     regions: list[Region] = Field(default_factory=list)
     joints: list[Joint] = Field(default_factory=list)

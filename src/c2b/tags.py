@@ -316,3 +316,39 @@ def strip_note_number(text: str) -> str:
     """Remove a leading 'NOTE -', 'NOTES:', '1)', '2.' or '*' so notes can be renumbered."""
     s = re.sub(r"^\s*NOTES?\s*[:\-]?\s*", "", clean_text(text), flags=re.I)
     return re.sub(r"^\s*(?:\d{1,2}\s*[).:-]\s*|\*\s*)", "", s).strip()
+
+
+_RE_SLOPE = re.compile(r"\b1\s*(?::|IN)\s*(\d{1,3})\b", re.I)
+_RE_DIR = re.compile(r"\b(UP|DN|DOWN)\b", re.I)
+_RE_PCC_T = re.compile(r"PCC(?:\s*\(?\s*\d\s*:\s*\d\s*:\s*\d\s*\)?)?[^0-9]{0,25}?(\d{2,4})\s*(?:MM)?\s*(?:THK|THICK|TH\b)?|(\d{2,4})\s*(?:MM)?\s*(?:THK|THICK|TH\b)?\.?\s*(?:\w+\s+){0,3}PCC", re.I)
+_RE_PCC_P = re.compile(r"(\d{2,4})\s*(?:MM)?\s*(?:PROJ|PROJECTION|OFFSET|BEYOND|ALL\s*ROUND|EXTRA|WIDER)", re.I)
+_RE_DEEP = re.compile(r"(\d+(?:\.\d+)?)\s*(MM|M)?\s*(?:DEEP|DP\.?|DEPTH)\b", re.I)
+
+
+def parse_ramp(text: str) -> tuple[str | None, str | None] | None:
+    """('1:8', 'UP') for a ramp note, None if the text is not about a ramp."""
+    s = clean_text(text).upper()
+    m = _RE_SLOPE.search(s)
+    d = _RE_DIR.search(s)
+    if "RAMP" not in s and not (m and d):
+        return None
+    return (f"1:{m.group(1)}" if m else None, ("DN" if d.group(1).upper() in ("DN", "DOWN") else "UP") if d else None)
+
+
+def parse_pcc(text: str) -> tuple[float | None, float | None] | None:
+    """(thickness_mm, projection_mm) for a PCC / lean concrete note, None otherwise."""
+    s = clean_text(text).upper()
+    if "PCC" not in s and "LEAN CONCRETE" not in s and "BLINDING" not in s:
+        return None
+    t = _RE_PCC_T.search(s)
+    p_ = _RE_PCC_P.search(s)
+    thk = float(t.group(1) or t.group(2)) if t else None
+    return (thk, float(p_.group(1)) if p_ else None)
+
+
+def parse_depth(text: str) -> float | None:
+    """'LIFT PIT 1500 DEEP' -> 1500."""
+    m = _RE_DEEP.search(clean_text(text).upper())
+    if not m:
+        return None
+    return parse_length_mm(m.group(1) + (m.group(2) or ""))

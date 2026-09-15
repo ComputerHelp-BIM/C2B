@@ -106,6 +106,11 @@ def build_synthetic_drawing(path: Path) -> Path:
 
     floor(0, "FOUNDATION LEVEL", with_beams=False, with_footings=True)
     floor(40000, "GROUND FLOOR LEVEL", with_beams=True, with_footings=False)
+    # foundation note: PCC under footings
+    msp.add_text("NOTE: PCC 100 THK BELOW ALL FOOTINGS, 100 MM PROJECTION ALL ROUND", dxfattribs={"layer": "G-ANNO-TEXT", "height": 150}).set_placement((1000, 14000))
+    # ramp note with an arrow inside the bay between grids 1-2 / B-C of the ground floor
+    msp.add_text("RAMP 1:8 UP", dxfattribs={"layer": "G-ANNO-TEXT", "height": 125}).set_placement((40000 + 2600, 8200))
+    msp.add_line((40000 + 1000, 7500), (40000 + 5000, 7500), dxfattribs={"layer": "G-ANNO-TEXT"})
 
     # schedule: Mark | b | h  (classic text grid)
     sx, sy = 90000, 10000

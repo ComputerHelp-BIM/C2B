@@ -82,12 +82,12 @@ def test_spans(normalized):
 
 
 def test_panels(normalized):
-    panels = [p for p in normalized.panels if p.floor_id == "L02" and p.kind == "slab"]
-    # 3 x 2 bays, one split by the extra beam at y=2500 -> 7 panels (the opening at 13000..15000 x 6000..8500 sits inside a bay)
+    panels = [p for p in normalized.panels if p.floor_id == "L02" and p.kind in ("slab", "ramp")]
+    # 3 x 2 bays, one split by the extra beam at y=2500 -> 7 panels (one of them the ramp bay; the opening sits inside another bay)
     assert len(panels) == 7, [p.area_m2 for p in panels]
     tagged = [p for p in panels if p.thickness_mm == 150]
     assert len(tagged) >= 4
-    assert all(p.mark.startswith("S") for p in panels)
+    assert all(p.mark.startswith(("S", "RP")) for p in panels)
     with_opening = [p for p in panels if p.opening_ids]
     assert with_opening and with_opening[0].holes, "interior cut-out must become a hole of the panel"
     # legend region: the bay hatched with the sunk pattern is sunk by 75
@@ -101,8 +101,20 @@ def test_cantilever_panel(normalized):
     chajja = cs[0]
     assert chajja.mark == "CS1-100THK" and chajja.thickness_mm == 100
     assert abs(chajja.area_m2 - 6.0 * 0.9) < 0.3
-    # bottom aligned with the 450 deep supporting beam: top offset = -(450 - 100)
+    # bottom aligned with the supporting beam; the 450 horizontal beam and the 600 verticals touch it, the smaller depth governs
+    assert chajja.support_depth_mm == 450
     assert chajja.top_offset_mm == -350 and chajja.top_offset_rule == "cantilever_bottom_align"
+
+
+def test_ramp_pcc_and_settings(normalized):
+    ramps = [p for p in normalized.panels if p.floor_id == "L02" and p.kind == "ramp"]
+    assert len(ramps) == 1 and ramps[0].slope_ratio == "1:8" and ramps[0].direction == "UP" and ramps[0].mark.startswith("RP1-") and ramps[0].mark.endswith("1:8")
+    assert len(ramps[0].arrow) == 2
+    ftg = [x for x in normalized.footings if x.floor_id == "L01"]
+    assert all(x.pcc_thickness_mm == 100 and x.pcc_projection_mm == 100 and x.pcc_outline for x in ftg)
+    assert all(x.kind == "footing" for x in ftg)                # CF only when the client says so
+    assert any("PCC 100THK" in x.mark_lines for x in ftg)
+    assert normalized.level_reference == "SSL"
 
 
 def test_inverted_beam(normalized):
@@ -115,7 +127,7 @@ def test_footings_and_grids(normalized):
     ftg = [x for x in normalized.footings if x.floor_id == "L01"]
     assert len(ftg) == 12 and all(x.kind == "footing" and x.thickness_mm == 500 for x in ftg)
     assert all(len(x.stack_ids) == 1 for x in ftg)
-    assert ftg[0].mark == "F1-500THK"
+    assert ftg[0].mark == "F1-500THK" and ftg[0].mark_lines[0] == "F1-500THK"
     grids = [g for g in normalized.grids if g.floor_id == "L02"]
     assert len(grids) == 7 and all(g.bubble_centres for g in grids)
 
@@ -126,7 +138,7 @@ def test_template_dxf(normalized, tmp_path):
     doc = ezdxf.readfile(str(out))
     msp = doc.modelspace()
     layers = {e.dxf.layer for e in msp}
-    for key in ("column", "column_mark", "beam", "beam_mark", "slab", "slab_mark", "footing", "grid", "grid_mark", "level", "boundary", "origin", "text"):
+    for key in ("column", "column_mark", "beam", "beam_mark", "slab", "slab_mark", "footing", "grid", "grid_mark", "level", "boundary", "origin", "text", "pcc", "ramp"):
         assert spec.layer(key) in layers, key
     cols = list(msp.query(f'LWPOLYLINE[layer=="{spec.layer("column")}"]')) + list(msp.query(f'CIRCLE[layer=="{spec.layer("column")}"]'))
     assert len(cols) == normalized.summary.columns

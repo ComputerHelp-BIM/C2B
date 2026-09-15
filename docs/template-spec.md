@@ -21,6 +21,16 @@ Defaults reproduce `CH-TEMPLATE-REMARKED.dxf`.
 | Frames | client Boundary kept, extended 5000 mm downward for title, client notes (verbatim), generator note, legend | `frame.*`, `client_notes` |
 | Levels | elevation frame left of the plans: level lines, `NN NAME LVL.` marks, dimensions between levels | `frame.level_*`, `marks.level` |
 | Legend | copied from the seed template into every plan frame | `legend_from_seed` |
+| Cantilevers / chajjas | client slab edge lines close panels with a free edge → `CS` mark, bottom flush with the *smaller* adjacent beam depth; thickness from the tag, else the neighbouring slab, else 100 | `panels.use_slab_edges`, `panels.cantilever_support`, `panels.cantilever_default_thickness_mm` |
+| Client legend | hatch pattern → meaning (sunk depth, slab at beam bottom, column stop, cut-out, fold); a tag on the panel wins | `panels.region_cover` |
+| Cut-outs | all kinds on `CH-CUTOUT`; interior ones are panel holes; a hole that is all cut-out or stair gets no slab | `opening_panel_cover`, `stair_panel_cover` |
+| Slab folds | hatched region on `CH-S-SLAB-FOLD` with `1500 FOLD`; lower side inside; vertical slab thickness = slab thickness unless tagged | `marks.fold_line` |
+| Ramps | a `RAMP 1:8 UP` note inside a panel → `CH-S-RAMP`, mark `RP1-150THK 1:8`, arrow redrawn | `marks.ramp` |
+| Inverted / tapered beams | `-INV` suffix with top offset above the slab; free-end span with two depths → `B5-200X900/600` | `marks.beam_inverted_suffix`, `marks.beam_taper` |
+| Foundations | `F`; `CF` only when the client says combined; `RF` when the client says raft; `PC` pile caps with `n PILES dDIA`; `LP` lift pits with `1500 DEEP`; PCC outline on `CH-S-PCC` with `PCC 100THK` when the client mentions PCC | `combined_by_client`, `raft_by_client`, `pcc_*` |
+| Walls | RCC walls only; a wall under a beam has its top at the beam bottom | — |
+| Stairs | client lines carried through, `ST1-200THK` waist mark, treads counted, landing assumed at mid height (flagged) | `stair_estimate` |
+| Level reference | SSL; the level workbook's Settings sheet wins | `level_reference` |
 
 ## Levels workbook
 

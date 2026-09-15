@@ -71,6 +71,8 @@ CODES: dict[str, str] = {
     "NAME_NORMALISED": "Floor name normalised for the template",
     "PANEL_OFFSET_UNKNOWN": "Panel level offset could not be computed (beam depth or thickness missing)",
     "BEAM_ALT_DEPTH": "Beam tag carries a second depth without a free end",
+    "PIT_DEPTH_UNKNOWN": "Lift pit without a depth text or level",
+    "STAIR_ESTIMATED": "Stair risers and landing level estimated from the plan; verify against a section",
 }
 
 

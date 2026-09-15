@@ -39,6 +39,12 @@ def write_levels_template(project: Project, path: str | Path) -> Path:
     ws.freeze_panes = "A2"
     for col, width in zip("ABCDEFG", (10, 36, 8, 16, 18, 24, 50)):
         ws.column_dimensions[col].width = width
+    st = wb.create_sheet("Settings")
+    st.append(["key", "value", "notes"])
+    st.append(["level_reference", "SSL", "SSL = top of structural slab (default), FFL = finished floor; this sheet wins over the template spec"])
+    st.column_dimensions["A"].width = 18
+    st.column_dimensions["B"].width = 12
+    st.column_dimensions["C"].width = 80
     if project.level_hints:
         hs = wb.create_sheet("Level hints")
         hs.append(["name", "elevation_mm", "client text", "handle", "layer", "floor"])
@@ -112,3 +118,15 @@ def read_levels(path: str | Path) -> list:
         rows.append(LevelRow(fid, str(val("floor_name") or "").strip() or None, int(num("order") or 0) if num("order") is not None else None,
                              num("elevation_mm"), num("floor_to_floor_mm"), str(val("revit_level_name") or "").strip() or None))
     return rows
+
+
+def read_level_settings(path: str | Path) -> dict[str, str]:
+    """Key/value pairs from the workbook's Settings sheet (e.g. level_reference)."""
+    wb = load_workbook(str(path), data_only=True)
+    if "Settings" not in wb.sheetnames:
+        return {}
+    out: dict[str, str] = {}
+    for row in wb["Settings"].iter_rows(min_row=2, values_only=True):
+        if row and row[0] is not None and len(row) > 1 and row[1] is not None:
+            out[str(row[0]).strip()] = str(row[1]).strip()
+    return out
