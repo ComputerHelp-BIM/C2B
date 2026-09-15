@@ -115,3 +115,16 @@ def test_detects_resized_column(model, template, tmp_path):
         e.set_points([(minx + (p[0] - minx) * 1.5, p[1]) for p in pts], format="xy")
     codes = _codes(model, _edit(template, tmp_path, resize))
     assert "RT_RESIZED" in codes and "RT_MARK_MISMATCH" in codes
+
+
+def test_doctor_selftest_pipeline(tmp_path):
+    """What `c2b doctor --selftest` runs: demo drawing straight through to a clean round trip."""
+    from c2b.demo import build_demo_drawing
+    from c2b.pipeline import extract
+
+    dxf = build_demo_drawing(tmp_path / "demo.dxf")
+    result = extract(dxf)
+    assert result.project.summary.errors == 0 and result.project.summary.columns == 24
+    np_ = normalize(result.project, SPEC, None, source_file=dxf.name)
+    tpl = write_template_dxf(np_, tmp_path / "demo.template.dxf", SPEC)
+    assert compare(np_, read_template(tpl, SPEC)).ok()

@@ -52,18 +52,26 @@ Five real client drawings with five different conventions were used to build it:
 
 ## Install
 
+**Windows:** double-click `windows\install.bat`, then drag a client DXF onto
+`windows\C2B-run.bat`. See [QUICKSTART.md](QUICKSTART.md) for the five-minute version.
+
 ```bash
 python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
-c2b version
+pip install -e ".[dev,render]"
+c2b doctor          # checks the install and runs the whole pipeline on a demo drawing
 ```
 
 Requires Python 3.11+. Dependencies: ezdxf, shapely, pydantic, openpyxl, typer, pyyaml
-(matplotlib only for `c2b render`).
+(matplotlib only for `c2b render`). DWG input needs the free ODA File Converter or AutoCAD's
+`accoreconsole`; otherwise save the DXF by hand.
 
 ## Usage
 
 ```bash
+# everything in one command: extract, normalise to the template, verify the round trip
+c2b run client.dxf --seed templates/CH-TEMPLATE.dxf
+
+# or step by step:
 # 1. look at the drawing: units, layers and the roles guessed for them
 c2b inspect client.dxf
 

@@ -8,6 +8,23 @@ The canonical JSON schema carries its own version (`schema_version` in every out
 A MAJOR bump of the schema means downstream utilities (DXF writer, Revit importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes values.
 
+## [0.7.0] - 2026-09-15
+
+Everything needed to run utilities 1 to 4 on a firm machine without help.
+
+### Added
+- `c2b run <drawing>`: the whole pipeline in one command (extract, normalise, verify), with the
+  level workbook picked up automatically on the second run.
+- `c2b doctor`: checks Python, dependencies and DWG converters, then runs the entire pipeline on
+  a built-in demo drawing and reports READY or the exact problem.
+- `c2b demo`: writes a demo client drawing so the pipeline can be tried without client data;
+  the same drawing backs the test suite (`c2b.demo`).
+- Optional DWG input: ODA File Converter or AutoCAD `accoreconsole` is used when installed,
+  otherwise a clear message says what to install or to save the DXF by hand.
+- `windows\install.bat`, `windows\C2B-run.bat` (drag and drop a drawing), `windows\C2B-verify.bat`.
+- `QUICKSTART.md`: install, prove the install, run the demo, run a client drawing, the working
+  loop, what to expect, and a troubleshooting table.
+
 ## [0.6.0] - 2026-09-15
 
 ### Added
