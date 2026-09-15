@@ -165,6 +165,17 @@ class TemplateReader:
         def ring_local(poly: Polygon, origin) -> list[Point2]:
             return [local(origin, x, y) for x, y in ring_points(poly)]
 
+        def marks_by_id(marks) -> dict:
+            """Generated marks carry the id of the element they belong to, which removes all doubt
+            about which of two adjacent panels a text belongs to. Hand-added text has no id and
+            still falls back to the geometric search."""
+            out: dict[str, tuple] = {}
+            for m in marks:
+                xid = self._xdata(m[0]).get("id")
+                if xid:
+                    out.setdefault(xid, m)
+            return out
+
         def nearest_mark(marks, poly: Polygon, centre):
             inside = [m for m in marks if poly.contains(Point(m[2]))]
             if inside:
@@ -174,6 +185,7 @@ class TemplateReader:
 
         # ---- columns ---------------------------------------------------------
         col_marks = self._texts(msp, "column_mark")
+        col_marks_by_id = marks_by_id(col_marks)
         used_marks: set[int] = set()
         for e, poly, _bulges in self._polys(msp, "column") + [(c[0], c[1], []) for c in self._circles(msp, "column")]:
             centre = (poly.centroid.x, poly.centroid.y)
@@ -183,7 +195,7 @@ class TemplateReader:
             xd = self._xdata(e)
             shape = classify_polygon(poly)
             is_circle = e.dxftype() == "CIRCLE" or shape.shape == "circle"
-            mk = nearest_mark(col_marks, poly, centre)
+            mk = col_marks_by_id.get(xd.get("id")) or nearest_mark(col_marks, poly, centre)
             tm: TemplateMark = parse_template_mark(mk[1]) if mk else TemplateMark(text="")
             if mk:
                 used_marks.add(id(mk[0]))
@@ -200,6 +212,7 @@ class TemplateReader:
 
         # ---- beams -----------------------------------------------------------
         beam_marks = self._texts(msp, "beam_mark")
+        beam_marks_by_id = marks_by_id(beam_marks)
         for e, poly, _bulges in self._polys(msp, "beam"):
             centre = (poly.centroid.x, poly.centroid.y)
             floor, origin = owner(centre)
@@ -208,7 +221,7 @@ class TemplateReader:
             xd = self._xdata(e)
             shape = classify_polygon(poly)
             long_side, short_side = max(shape.width, shape.depth), min(shape.width, shape.depth)
-            mk0 = nearest_mark(beam_marks, poly, (poly.centroid.x, poly.centroid.y))
+            mk0 = beam_marks_by_id.get(self._xdata(e).get("id")) or nearest_mark(beam_marks, poly, (poly.centroid.x, poly.centroid.y))
             stated = parse_template_mark(mk0[1]).width_mm if mk0 else None
             # a bracket is wider than it is long: the mark's width says which side is which
             stub = bool(stated and abs(long_side - stated) <= 26 and abs(short_side - stated) > 26) or self._xdata(e).get("stub") == "1"
@@ -236,13 +249,14 @@ class TemplateReader:
         # ---- panels (slab, cantilever, ramp) ---------------------------------
         for key, mark_key in (("slab", "slab_mark"), ("ramp", "ramp_mark")):
             marks = self._texts(msp, mark_key)
+            marks_id = marks_by_id(marks)
             for e, poly, bulges in self._polys(msp, key):
                 centre = (poly.centroid.x, poly.centroid.y)
                 floor, origin = owner(centre)
                 if floor is None:
                     continue
                 xd = self._xdata(e)
-                mk = nearest_mark(marks, poly, centre)
+                mk = marks_id.get(xd.get("id")) or nearest_mark(marks, poly, centre)
                 tm = parse_template_mark(mk[1]) if mk else TemplateMark(text="")
                 if mk:
                     used_marks.add(id(mk[0]))
@@ -273,6 +287,7 @@ class TemplateReader:
         # ---- footings, rafts, pile caps, PCC, piles --------------------------
         for key in ("footing", "raft", "pilecap"):
             marks = self._texts(msp, {"footing": "footing_mark", "raft": "raft_mark", "pilecap": "pilecap_mark"}[key])
+            marks_id = marks_by_id(marks)
             for e, poly, _b in self._polys(msp, key):
                 centre = (poly.centroid.x, poly.centroid.y)
                 floor, origin = owner(centre)
@@ -280,7 +295,7 @@ class TemplateReader:
                     continue
                 xd = self._xdata(e)
                 shape = classify_polygon(poly)
-                mk = nearest_mark(marks, poly, centre)
+                mk = marks_id.get(xd.get("id")) or nearest_mark(marks, poly, centre)
                 tm = parse_template_mark(mk[1]) if mk else TemplateMark(text="")
                 if mk:
                     used_marks.add(id(mk[0]))
