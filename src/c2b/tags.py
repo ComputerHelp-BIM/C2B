@@ -265,3 +265,54 @@ def parse_size_from_name(name: str) -> tuple[float, float] | None:
     if w and d and w >= 50 and d >= 50:
         return (w, d)
     return None
+
+
+# ---------------------------------------------------------------------------
+# Level hints and general notes
+# ---------------------------------------------------------------------------
+
+_RE_LEVEL = re.compile(
+    r"(?P<name>[A-Za-z0-9 .\-/&()']*?)\b(?P<kw>LVL|LEVEL|FFL|SFL|SSL|TOS|TOF|TOC|PLINTH|GL|NGL|EGL)\b\.?\s*[:=]?\s*"
+    r"(?P<sign>[+\-−]?)\s*(?P<val>\d{1,3}(?:[.,]\d{1,3})?|\d{3,6})\s*(?P<unit>mm|m|MM|M)?(?![\d])",
+    re.I,
+)
+_RE_NOTE_START = re.compile(r"^\s*(?:\d{1,2}\s*[).:-]|\*|NOTES?\b|ALL\b|REFER\b|FOR\b|UNLESS\b|U\.N\.O)", re.I)
+
+
+def parse_level_hint(text: str) -> tuple[str, float] | None:
+    """Return (name, elevation_mm) when the text carries a level value, else None."""
+    s = clean_text(text).replace("\n", " ")
+    m = _RE_LEVEL.search(s)
+    if not m:
+        return None
+    raw = m.group("val").replace(",", ".")
+    unit = (m.group("unit") or "").lower()
+    val = float(raw)
+    if unit == "m" or (not unit and "." in raw):
+        mm = val * 1000.0
+    elif unit == "mm" or abs(val) >= 100:
+        mm = val
+    else:
+        mm = val * 1000.0
+    if m.group("sign") in ("-", "−"):
+        mm = -mm
+    name = (m.group("name") or "").strip(" -:.")
+    kw = m.group("kw").upper()
+    if kw in ("LVL", "LEVEL") and name:
+        name = f"{name} LVL."
+    elif not name:
+        name = kw
+    else:
+        name = f"{name} {kw}"
+    return name.upper(), round(mm, 1)
+
+
+def looks_like_note(text: str, min_len: int = 12) -> bool:
+    s = clean_text(text)
+    return len(s) >= min_len and bool(_RE_NOTE_START.match(s))
+
+
+def strip_note_number(text: str) -> str:
+    """Remove a leading 'NOTE -', 'NOTES:', '1)', '2.' or '*' so notes can be renumbered."""
+    s = re.sub(r"^\s*NOTES?\s*[:\-]?\s*", "", clean_text(text), flags=re.I)
+    return re.sub(r"^\s*(?:\d{1,2}\s*[).:-]\s*|\*\s*)", "", s).strip()

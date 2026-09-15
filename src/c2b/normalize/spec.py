@@ -51,10 +51,11 @@ class MarkFormats(BaseModel):
 
 
 class Placement(BaseModel):
-    column_mark: Literal["above", "centre", "auto"] = "above"
-    column_mark_gap_mm: float = 120.0       # gap between column top edge and mark centre line
+    column_mark: Literal["above", "centre", "auto"] = "centre"     # answer 1C: always inside
+    column_mark_gap_mm: float = 120.0       # gap between column top edge and mark centre line (for "above")
+    column_mark_rotate: Literal["none", "long-side"] = "long-side"  # answer 7: text runs along the longer side
     beam_mark: Literal["centre"] = "centre"
-    beam_mark_rotate: bool = False          # template keeps every mark horizontal
+    beam_mark_rotate: bool = True           # answer 7B: text runs along the beam
     slab_mark: Literal["centroid", "representative"] = "representative"
     grid_bubble_radius_mm: float = 300.0
     grid_extension_mm: float = 1500.0       # how far grid lines run past the outermost member
@@ -62,14 +63,18 @@ class Placement(BaseModel):
 
 
 class Numbering(BaseModel):
-    columns: Literal["x-then-y", "y-then-x", "grid"] = "x-then-y"   # template: down grid 1 (A..H), then grid 2 ...
-    keep_client_marks: bool = False
+    # row-major: A1, A2, ... then B1, B2 ... (rows bottom-up, left to right); column-major: down grid 1, then grid 2 ...
+    columns: Literal["row-major", "column-major", "rows-top-down", "grid"] = "row-major"     # answer 2B
+    keep_client_marks: bool = True          # answer 2C / 20C: a client column mark wins, numbering fills the gaps
+    keep_client_beam_marks: bool = True     # answer 8: client beam marks win, numbering fills the gaps
     beams_per_floor: bool = True
     slabs_per_floor: bool = True
     footings_per_floor: bool = True
 
 
 class SplitRules(BaseModel):
+    irregular_support_to_centre: bool = True   # answer 5: beams end at the centre of round / rotated / odd-shaped columns
+    irregular_angle_tol_deg: float = 3.0
     at_columns: bool = True
     at_walls: bool = True
     trim_at_beam_faces: bool = True         # a beam ending on another beam stops at its face
@@ -79,11 +84,12 @@ class SplitRules(BaseModel):
 
 
 class PanelRules(BaseModel):
+    arc_fit_tol_mm: float = 2.5             # vertices this close to a circular column are replaced by a true arc (bulge)
     span_extend_mm: float = 150.0           # spans are lengthened this much at each end for the lattice only, so beam corners reach into round/odd supports
     min_area_m2: float = 0.25
     max_area_m2: float = 250.0
     subtract_openings: bool = True
-    keep_arcs: bool = False                 # v0.2 writes flattened arcs at circular columns
+    keep_arcs: bool = True                  # answer 10B: true arcs (bulges) at circular columns
 
 
 class HatchMap(BaseModel):
@@ -132,6 +138,7 @@ class TemplateSpec(BaseModel):
         "column_hatch": LayerDef(name="CH-S-COLUMN-HATCH", color=252, lineweight=18),
         "column_mark": LayerDef(name="CH-S-COLUMN-MARK", color=171, lineweight=9),
         "beam": LayerDef(name="CH-S-BEAM", color=3, lineweight=18),
+        "beam_cl": LayerDef(name="CH-S-BEAM-CL", color=3, lineweight=9, linetype="Dash"),
         "beam_mark": LayerDef(name="CH-S-BEAM-MARK", color=2, lineweight=9),
         "slab": LayerDef(name="CH-S-SLAB", color=192, lineweight=18),
         "slab_mark": LayerDef(name="CH-S-SLAB-MARK", color=11, lineweight=9),
@@ -167,8 +174,11 @@ class TemplateSpec(BaseModel):
     frame: FrameLayout = Field(default_factory=FrameLayout)
     stack_match_tol_mm: float = 300.0        # centre distance for matching a column to the stack below
     stack_match_min_iou: float = 0.2
-    raft_min_area_m2: float = 100.0          # a footing outline at least this large is a raft
-    raft_min_columns: int = 0                # or holding at least this many column stacks (0 = area rule only)
+    raft_by_client: bool = True              # answer 14C: a raft is one the client calls RF / RAFT / MAT (layer, tag or mark)
+    raft_min_area_m2: float = 0.0            # optional size rule (0 = off)
+    raft_min_columns: int = 0                # optional stack-count rule (0 = off)
+    beam_centreline: bool = True             # answer 6B: centreline on CH-S-BEAM-CL in addition to the outline
+    client_notes: bool = True                # answer 18C: client general notes verbatim under each plan
     opening_panel_cover: float = 0.6         # a lattice hole covered this much by openings is a cut-out, not a slab
     stair_panel_cover: float = 0.5           # ... or by stair geometry, a stair
     notes: list[str] = Field(default_factory=list)   # extra note lines written under every plan

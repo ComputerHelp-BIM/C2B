@@ -8,6 +8,29 @@ The canonical JSON schema carries its own version (`schema_version` in every out
 A MAJOR bump of the schema means downstream utilities (DXF writer, Revit importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes values.
 
+## [0.3.0] - 2026-09-15
+
+Conventions settled with the firm (twenty answers on the template):
+
+### Changed
+- Column marks sit inside the column, text along the longer side; beam marks run along the beam.
+- Client column and beam marks are kept (`C32-400X750`, `T1SW51a-200X2850`, `MB-300X750`);
+  generated numbers fill the gaps left by the client's numbering. Columns without client
+  marks are numbered row by row from the bottom row (A1, A2 ... B1, B2 ...).
+- Column marks quote the size in the client's order (b x D), not the plan orientation.
+- Beams end at the centre of round, rotated or odd-shaped columns (zero-width cut, the two
+  spans meet at the centre); axis-aligned rectangular columns still cut at their faces.
+- Slab panels carry true arcs (bulges) around circular columns.
+- A raft is one the client calls RF / RAFT / MAT (layer, tag or mark); the size rule is off.
+- Client general notes are carried verbatim under each plan, followed by the generator note.
+
+### Added
+- `CH-S-BEAM-CL` centreline on every span.
+- Level hints: level texts in client sections ("GROUND FLOOR LVL. +2.500", "FFL +3.000") are
+  read into `level_hints` and pre-fill the level workbook (flagged "please confirm").
+- Extraction schema 0.3.0 (`floors[].notes`, `level_hints`), normalised schema 0.3.0
+  (`panels[].bulges`, `columns[].mark_rotation_deg`, `floors[].notes`).
+
 ## [0.2.0] - 2026-09-12
 
 ### Added

@@ -74,7 +74,19 @@ class Floor(BaseModel):
     floor_to_floor_mm: float | None = None
     default_beam_depth_mm: float | None = None
     default_slab_thickness_mm: float | None = None
+    notes: list[str] = Field(default_factory=list)      # client general notes found inside the frame, verbatim
     counts: dict[str, int] = Field(default_factory=dict)
+
+
+class LevelHint(BaseModel):
+    """A level read from a client section/elevation text, e.g. 'GROUND FLOOR LVL. +2.500'."""
+
+    name: str
+    elevation_mm: float
+    text: str
+    handle: str
+    layer: str
+    floor_id: str | None = None
 
 
 class TagRef(BaseModel):
@@ -286,6 +298,7 @@ class Project(BaseModel):
     openings: list[Opening] = Field(default_factory=list)
     walls: list[Wall] = Field(default_factory=list)
     stairs: list[Stair] = Field(default_factory=list)
+    level_hints: list[LevelHint] = Field(default_factory=list)
     schedules: list[Schedule] = Field(default_factory=list)
     tags_unassigned: list[UnassignedTag] = Field(default_factory=list)
     diagnostics: list[Diagnostic] = Field(default_factory=list)

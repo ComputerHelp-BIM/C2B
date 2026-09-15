@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from shapely.strtree import STRtree
 from ..diagnostics import DiagnosticsCollector
 from ..geometry import classify_polygon, rectangle_polygon
 from ..schema import Point2, Project
-from .geometry import lattice_panels, poly_from_points, representative_point, ring_points, text_fits
+from .geometry import Support, fit_arcs, lattice_panels, poly_from_points, representative_point, ring_points, text_fits
 from .model import (MarkMap, NBeam, NColumn, NFloor, NFooting, NGrid, NLevel, NOpening, NPanel, NStair, NWall, NormalizedProject)
 from .naming import normalise_floor_name, title_from_level_name
 from .spans import runs_for_floor, split_runs
@@ -35,6 +36,20 @@ def _fmt(fmt: str, **kw) -> str:
         return fmt.format_map(_Safe(**kw))
     except (ValueError, TypeError):
         return fmt
+
+
+def _tagged_size(c) -> tuple[float, float] | None:
+    """Size in the order the client's tag states it, else (short, long) from the resolved size."""
+    from ..tags import parse_tag
+    for t in c.tags:
+        pt = parse_tag(t.text)
+        if pt.width_mm and pt.depth_mm:
+            return (pt.width_mm, pt.depth_mm)
+    if c.width_mm and c.depth_mm:
+        if c.size_source == "schedule":
+            return (c.width_mm, c.depth_mm)
+        return (min(c.width_mm, c.depth_mm), max(c.width_mm, c.depth_mm))
+    return None
 
 
 class LevelRow:
@@ -105,49 +120,84 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
         np_.floors.append(NFloor(id=f.id, index=f.index, name=level_name, title=title, source_name=f.name, origin=f.origin,
                                  frame=[_pt((left, frame_bottom)), _pt((right, frame_bottom)), _pt((right, top)), _pt((left, top))],
                                  plan_bottom_y=plan_bottom, elevation_mm=elevation, levels=plan_levels.get(f.id, []),
-                                 default_beam_depth_mm=f.default_beam_depth_mm, default_slab_thickness_mm=f.default_slab_thickness_mm))
+                                 default_beam_depth_mm=f.default_beam_depth_mm, default_slab_thickness_mm=f.default_slab_thickness_mm,
+                                 notes=list(f.notes) if spec.client_notes else []))
 
     # ---- column stacks ------------------------------------------------------
     stacks, col_to_stack = build_stacks(project, floor_ids, spec.numbering.columns, spec.stack_match_tol_mm, spec.stack_match_min_iou, diag)
     np_.stacks = stacks
     stack_by_id = {s.id: s for s in stacks}
+    # answer 2C / 20C: a client mark wins; generated numbers fill the gaps left by the client's numbering
+    if spec.numbering.keep_client_marks:
+        used: set[int] = set()
+        for st in stacks:
+            if st.client_marks:
+                m = re.match(r"^C(\d+)$", st.client_marks[0].upper())
+                if m:
+                    used.add(int(m.group(1)))
+        nxt = 1
+        for st in stacks:
+            if st.client_marks:
+                st.mark_base = st.client_marks[0]
+                continue
+            while nxt in used:
+                nxt += 1
+            st.number = nxt
+            st.mark_base = f"C{nxt}"
+            used.add(nxt)
+            nxt += 1
     col_ids_by_floor: dict[str, dict[str, str]] = {}
     text = spec.text
     for f in floors_sorted:
         fidx = floor_ids.index(f.id)
-        for c in sorted((c for c in project.columns if c.floor_id == f.id), key=lambda c: stack_by_id[col_to_stack[c.id]].number):
+        for c in sorted((c for c in project.columns if c.floor_id == f.id), key=lambda c: (stack_by_id[col_to_stack[c.id]].number, stack_by_id[col_to_stack[c.id]].mark_base)):
             stack = stack_by_id[col_to_stack[c.id]]
             n = stack.number
+            base = stack.mark_base
             outline = poly_from_points(c.outline)
             if outline is None:
                 continue
             if c.shape == "circle":
                 dia = c.diameter_mm or c.drawn_width_mm or 0
-                mark = stack.client_marks[0] if spec.numbering.keep_client_marks and c.mark else _fmt(spec.marks.column_circle, n=n, dia=dia)
+                mark = _fmt(spec.marks.column_circle.replace("C{n}", "{base}"), base=base, n=n, dia=dia)
             else:
-                w, d = c.width_mm or c.drawn_width_mm or 0, c.depth_mm or c.drawn_depth_mm or 0
-                mark = (c.mark if spec.numbering.keep_client_marks and c.mark else None) or _fmt(spec.marks.column, n=n, w=w, d=d)
-            # placement
+                # the mark quotes the size as the client tagged it (b x D), not as the rectangle happens to lie in plan;
+                # without a tag the shorter side comes first
+                w, d = _tagged_size(c) or ((c.width_mm or c.drawn_width_mm or 0), (c.depth_mm or c.drawn_depth_mm or 0))
+                mark = _fmt(spec.marks.column.replace("C{n}", "{base}"), base=base, n=n, w=w, d=d)
+            # rotation: text along the longer side (answer 7)
+            rot = 0.0
+            if spec.placement.column_mark_rotate == "long-side" and c.shape != "circle":
+                minx, miny, maxx, maxy = outline.bounds
+                long_is_y = (c.depth_mm or (maxy - miny)) > (c.width_mm or (maxx - minx)) if c.shape == "rect" else (maxy - miny) > (maxx - minx)
+                rot = (c.rotation_deg + (90.0 if long_is_y else 0.0)) if c.shape == "rect" else (90.0 if long_is_y else 0.0)
+                rot = ((rot + 90.0) % 180.0) - 90.0
+                if rot <= -90.0:
+                    rot += 180.0
             place = spec.placement.column_mark
-            fits = text_fits(mark, text.mark_height, text.width_factor, outline, c.rotation_deg)
+            fits = text_fits(mark, text.mark_height, text.width_factor, outline, rot)
             if place == "centre" or (place == "auto" and fits):
                 mp = representative_point(outline)
+                if not fits:
+                    diag.info("MARK_FIT", f"Mark '{mark}' overflows column {c.id}; placed at its centre anyway", floor_id=f.id, element_id=c.id, location=mp)
             else:
                 minx, miny, maxx, maxy = outline.bounds
                 mp = ((minx + maxx) / 2, maxy + spec.placement.column_mark_gap_mm)
+                rot = 0.0
                 if place == "auto":
                     diag.info("MARK_FIT", f"Mark '{mark}' does not fit inside column {c.id}; placed above", floor_id=f.id, element_id=c.id, location=mp)
             above = floor_ids[fidx + 1] if fidx + 1 < len(floor_ids) else None
             below = floor_ids[fidx - 1] if fidx > 0 else None
             stops = above is not None and above not in stack.floors
             starts = below is not None and below not in stack.floors
-            cid = f"{f.id}-C{n:03d}"
+            cid = f"{f.id}-C{len(col_ids_by_floor.get(f.id, {})) + 1:03d}"
             col_ids_by_floor.setdefault(f.id, {})[c.id] = cid
             stack.column_ids[f.id] = cid
             np_.columns.append(NColumn(id=cid, floor_id=f.id, stack_id=stack.id, mark=mark, shape=c.shape, center=c.center,
                                        width_mm=c.width_mm, depth_mm=c.depth_mm, rotation_deg=c.rotation_deg, diameter_mm=c.diameter_mm,
                                        outline=_pts(ring_points(outline)), stops_here=stops, starts_here=starts, wall_like=c.wall_like,
-                                       size_source=c.size_source, mark_position=_pt(mp), client_mark=c.mark, source_ids=[c.id], source_handles=c.source_handles))
+                                       size_source=c.size_source, mark_position=_pt(mp), mark_rotation_deg=round(rot, 3), client_mark=c.mark,
+                                       source_ids=[c.id], source_handles=c.source_handles))
             np_.mark_map.append(MarkMap(element_id=cid, floor_id=f.id, kind="column", mark=mark, client_mark=c.mark, client_tags=c.tags))
 
     # ---- walls (kept as drawn) ---------------------------------------------
@@ -161,18 +211,18 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
     # ---- beams: split into spans -------------------------------------------
     for f in floors_sorted:
         runs = runs_for_floor(project, f.id)
-        supports: list[tuple[str, Polygon]] = []
+        supports: list[Support] = []
         col_lookup = {c.id: c for c in np_.columns if c.floor_id == f.id}
         for c in col_lookup.values():
             poly = poly_from_points(c.outline)
             if poly is not None and (spec.split.at_columns or (c.wall_like and spec.split.at_walls)):
-                supports.append((c.stack_id, poly))
+                supports.append(Support(c.stack_id, poly, c.shape, c.rotation_deg))
         if spec.split.at_walls:
             for w in np_.walls:
                 if w.floor_id == f.id:
                     poly = poly_from_points(w.outline)
                     if poly is not None:
-                        supports.append((w.id, poly))
+                        supports.append(Support(w.id, poly, "polygon", 0.0))
         spans = split_runs(runs, supports, spec, diag, f.id)
         # numbering: horizontal runs first (by y descending), then vertical (by x ascending), along the run
         def span_key(s):
@@ -181,12 +231,28 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
             off = -r.axis.start[1] if horizontal else r.axis.start[0]
             return (0 if horizontal else 1, round(off / 50.0), round(r.axis.t_of(r.axis.start) / 50.0), s["t1"])
         spans.sort(key=span_key)
+        used_b: set[int] = set()
+        if spec.numbering.keep_client_beam_marks:
+            for sp in spans:
+                m = re.match(r"^B(\d+)$", (sp["run"].payload.mark or "").upper())
+                if m:
+                    used_b.add(int(m.group(1)))
+        nxt_b = 1
         for i, s in enumerate(spans, start=1):
             r = s["run"]
             b = r.payload
             w = r.width
             d = r.depth
-            mark = (b.mark if spec.numbering.keep_client_marks and b.mark else None) or (_fmt(spec.marks.beam, n=i, w=w, d=d) if d else _fmt(spec.marks.beam_no_depth, n=i, w=w))
+            if spec.numbering.keep_client_beam_marks and b.mark:
+                base = b.mark
+            else:
+                while nxt_b in used_b:
+                    nxt_b += 1
+                base = f"B{nxt_b}"
+                used_b.add(nxt_b)
+                nxt_b += 1
+            fmt = (spec.marks.beam if d else spec.marks.beam_no_depth).replace("B{n}", "{base}")
+            mark = _fmt(fmt, base=base, n=i, w=w, d=d)
             outline = s["outline"]
             p1, p2 = r.axis.point_at(s["t1"]), r.axis.point_at(s["t2"])
             mp = representative_point(outline)
@@ -242,6 +308,14 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
         openings_f = [(o, poly_from_points(o.outline)) for o in np_.openings if o.floor_id == f.id]
         stairs_f = [poly_from_points(st.outline) for st in np_.stairs if st.floor_id == f.id and st.outline]
         stairs_f = [x for x in stairs_f if x is not None]
+        circles: list[tuple[tuple[float, float], float]] = []
+        if spec.panels.keep_arcs:
+            for c in cols_f:
+                if c.shape == "circle":
+                    cp = poly_from_points(c.outline)
+                    if cp is not None:
+                        minx, miny, maxx, maxy = cp.bounds
+                        circles.append(((cp.centroid.x, cp.centroid.y), ((maxx - minx) + (maxy - miny)) / 4.0))
         used_tags: set[str] = set()
         n_slab = 0
         # numbering: top-left to bottom-right by panel representative point
@@ -295,7 +369,11 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
             mark = _fmt(spec.marks.slab, n=i, thk=thickness) if thickness is not None else _fmt(spec.marks.slab_no_thickness, n=i)
             c = poly.centroid
             mp = representative_point(poly) if spec.placement.slab_mark == "representative" else (c.x, c.y)
-            np_.panels.append(NPanel(id=pid, floor_id=f.id, mark=mark, thickness_mm=thickness, thickness_source=source, outline=_pts(ring_points(out_poly)),
+            ring = ring_points(out_poly)
+            bulges = [0.0] * len(ring)
+            if circles:
+                ring, bulges = fit_arcs(ring, circles, spec.panels.arc_fit_tol_mm)
+            np_.panels.append(NPanel(id=pid, floor_id=f.id, mark=mark, thickness_mm=thickness, thickness_source=source, outline=_pts(ring), bulges=bulges,
                                      area_m2=round(poly.area / 1e6, 3), centroid=_pt((c.x, c.y)), mark_position=_pt(mp), sunk_mm=sunk, opening_ids=op_ids,
                                      tag_ids=[s.id for s in inside]))
             np_.mark_map.append(MarkMap(element_id=pid, floor_id=f.id, kind="slab", mark=mark, client_mark=inside[0].mark if inside else None, client_tags=[t for s in inside for t in s.tags]))
@@ -316,7 +394,8 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
                 continue
             over = [s.id for s, pt in stacks_on_floor if outline.contains(pt)]
             modifier = x.modifier
-            is_raft = outline.area >= spec.raft_min_area_m2 * 1e6 or (spec.raft_min_columns > 0 and len(over) >= spec.raft_min_columns)
+            client_says_raft = (modifier == "raft") or bool(x.mark and x.mark.upper().startswith(("RF", "RAFT", "MAT"))) or any("RAFT" in (t.text or "").upper() for t in x.tags)
+            is_raft = (spec.raft_by_client and client_says_raft) or (spec.raft_min_area_m2 > 0 and outline.area >= spec.raft_min_area_m2 * 1e6) or (spec.raft_min_columns > 0 and len(over) >= spec.raft_min_columns)
             if modifier in ("fold", "sunk"):
                 kind = modifier
                 mark = ""

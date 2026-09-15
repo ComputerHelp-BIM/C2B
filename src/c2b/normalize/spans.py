@@ -4,7 +4,7 @@ from __future__ import annotations
 from shapely.geometry import Polygon
 
 from ..schema import Beam, Project
-from .geometry import Axis, Run, complement, crossing_cuts, poly_from_points, span_rectangle, support_cuts
+from .geometry import Axis, Run, Support, complement, crossing_cuts, poly_from_points, span_rectangle, support_cuts
 from .spec import TemplateSpec
 
 
@@ -20,14 +20,17 @@ def runs_for_floor(project: Project, fid: str) -> list[Run]:
     return runs
 
 
-def split_runs(runs: list[Run], supports: list[tuple[str, Polygon]], spec: TemplateSpec, diag, fid: str) -> list[dict]:
+def split_runs(runs: list[Run], supports: list[Support], spec: TemplateSpec, diag, fid: str) -> list[dict]:
     """Return span records: {run, t1, t2, outline, support_start, support_end}."""
     rules = spec.split
     out: list[dict] = []
     for run in runs:
-        cuts = support_cuts(run, supports, rules.support_cover_ratio) if (rules.at_columns or rules.at_walls) else []
+        t_min, t_max = 0.0, run.axis.length
+        cuts = []
+        if rules.at_columns or rules.at_walls:
+            cuts, t_min, t_max = support_cuts(run, supports, rules.support_cover_ratio, rules.irregular_support_to_centre, rules.irregular_angle_tol_deg)
         cuts += crossing_cuts(run, runs, end_tol=max(run.width, 50.0), trim_at_faces=rules.trim_at_beam_faces, split_crossing_by=rules.split_crossing_by)
-        free = complement([(c.t1, c.t2) for c in cuts], run.axis.length)
+        free = complement([(c.t1, c.t2) for c in cuts], t_max, t_min)
         for i, (t1, t2) in enumerate(free):
             if t2 - t1 < rules.min_span_mm:
                 diag.info("SPAN_DROPPED", f"Span of {t2 - t1:.0f} mm on beam {run.id} dropped", floor_id=fid, element_id=run.id, location=run.axis.point_at(t1))
@@ -44,10 +47,10 @@ def _touching_support(run: Run, t: float, supports, runs, width: float) -> str |
     p = Point(run.axis.point_at(t))
     tol = max(60.0, 0.25 * width)
     best, best_d = None, None
-    for sid, poly in supports:
-        d = poly.distance(p)
+    for sup in supports:
+        d = sup.poly.distance(p)
         if d <= tol and (best_d is None or d < best_d):
-            best, best_d = sid, d
+            best, best_d = sup.id, d
     if best is None:
         for other in runs:
             if other.id == run.id:

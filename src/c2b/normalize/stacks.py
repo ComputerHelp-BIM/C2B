@@ -11,12 +11,16 @@ from .model import NStack
 
 
 def _order_key(mode: str, c: Column):
-    if mode == "y-then-x":
-        return (-round(c.center.y / 100.0), round(c.center.x / 100.0))
+    """Row-major numbers along a row of columns (A1, A2, ...) starting at the bottom row; the 250 mm
+    bucket keeps slightly staggered columns on one row."""
+    if mode in ("row-major",):
+        return (round(c.center.y / 250.0), round(c.center.x / 250.0))
+    if mode in ("rows-top-down", "y-then-x"):
+        return (-round(c.center.y / 250.0), round(c.center.x / 250.0))
     if mode == "grid" and c.grid_ref:
         gx, gy = c.grid_ref.split("/", 1)
-        return (_grid_sort(gx), _grid_sort(gy))
-    return (round(c.center.x / 100.0), round(c.center.y / 100.0))
+        return (0, _grid_sort(gy), _grid_sort(gx))
+    return (round(c.center.x / 250.0), round(c.center.y / 250.0))     # column-major / x-then-y
 
 
 def _grid_sort(label: str):

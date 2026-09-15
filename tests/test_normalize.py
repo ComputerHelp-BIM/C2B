@@ -49,16 +49,20 @@ def test_levels_and_floors(normalized):
 
 def test_stacks_and_column_marks(normalized):
     assert len(normalized.stacks) == 12
-    # every stack exists on both floors, numbered x-then-y starting at grid 1/A
+    # every stack exists on both floors; row-major numbering starts at grid 1/A, the client's "C1" at 1/C keeps its mark
     assert all(s.floors == ["L01", "L02"] for s in normalized.stacks)
     first = normalized.stacks[0]
-    assert first.mark_base == "C1" and first.grid_ref == "1/A"
+    assert first.grid_ref == "1/A" and first.mark_base == "C2"        # C1 is taken by the client mark
+    client = next(s for s in normalized.stacks if s.client_marks == ["C1"])
+    assert client.grid_ref == "1/C" and client.mark_base == "C1"
+    assert normalized.stacks[1].grid_ref == "2/A"                        # along the row, then the next row
     cols = [c for c in normalized.columns if c.floor_id == "L02"]
     assert len(cols) == 12
     marks = {c.mark for c in cols}
-    assert "C1-300X450" in marks and any(m.startswith("C12-600DIA") or m.endswith("600DIA") for m in marks)
-    c1 = next(c for c in cols if c.mark == "C1-300X450")
-    assert c1.mark_position.y > c1.center.y   # placed above the column (template convention)
+    assert "C1-300X450" in marks and "C2-300X450" in marks and any(m.endswith("600DIA") for m in marks)
+    c2 = next(c for c in cols if c.mark == "C2-300X450")
+    assert abs(c2.mark_position.y - c2.center.y) < 1 and abs(c2.mark_position.x - c2.center.x) < 1   # inside, at the centre
+    assert c2.mark_rotation_deg == 90.0                                  # text along the 450 side
     assert not any(c.stops_here for c in cols) and not any(c.starts_here for c in cols)
 
 
@@ -71,7 +75,10 @@ def test_spans(normalized):
     supported = [s for s in spans if s.support_start and s.support_end]
     assert len(supported) >= 15
     assert any(s.mark.startswith("B1-230X") for s in spans)
+    assert any(s.mark.startswith("MB-230X600") for s in spans)          # client mark kept
     assert all(s.depth_mm in (450, 600) for s in spans)
+    vertical = [s for s in spans if abs(s.angle_deg - 90) < 1]
+    assert all(s.mark_rotation_deg == 90.0 for s in vertical)
 
 
 def test_panels(normalized):
@@ -110,4 +117,8 @@ def test_template_dxf(normalized, tmp_path):
     assert xd["id"].startswith("L0") and xd["mark"].startswith("C")
     assert len(list(msp.query(f'LINE[layer=="{spec.layer("level")}"]'))) == 2
     assert len(list(msp.query("DIMENSION"))) == 1
+    assert len(list(msp.query(f'LINE[layer=="{spec.layer("beam_cl")}"]'))) == normalized.summary.beams
+    # the circular column leaves true arcs in the adjacent panels
+    arcs = [e for e in msp.query(f'LWPOLYLINE[layer=="{spec.layer("slab")}"]') if any(abs(p[4]) > 1e-9 for p in e.get_points())]
+    assert arcs, "expected bulges on panels next to the round column"
     assert spec.text.style in doc.styles

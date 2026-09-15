@@ -64,6 +64,7 @@ _MODIFIER_RULES: list[tuple[str, str]] = [
     (r"projection|proj", "projection"),
     (r"non[\s\-_.]*str|non[\s\-_.]*structural|masonry|brick|block\s*work", "non_structural"),
     (r"retaining", "retaining"),
+    (r"\braft\b|\bmat\b", "raft"),
     (r"podium", "podium"),
     (r"hatch|solid|fill", "hatch"),
     (r"iden|(^|[^a-z])no\.?([^a-z]|$)|size|tag|mark|thk|label", "tag_layer"),

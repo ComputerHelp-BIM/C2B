@@ -154,7 +154,7 @@ class TemplateWriter:
             fr = spec.frame
             self._mtext("text", f.title, (cx, f.plan_bottom_y + fr.title_above_band_mm), spec.text.title_height, 5, floor=f.id, kind="title")
             y = f.plan_bottom_y - fr.notes_first_line_below_mm
-            for i, note in enumerate(np_.notes, start=1):
+            for i, note in enumerate(list(f.notes) + list(np_.notes), start=1):
                 self._mtext("text", f"{i}) {note}", (cx + fr.notes_offset_x_mm, y), spec.text.note_height, 4, width=12300.0, floor=f.id, kind="note")
                 y -= fr.notes_line_spacing_mm
             self._place_legend(right, f.plan_bottom_y)
@@ -175,7 +175,7 @@ class TemplateWriter:
             else:
                 e = self.msp.add_lwpolyline(pts, close=True, dxfattribs={"layer": spec.layer("column")})
             self._xdata(e, id=c.id, stack=c.stack_id, mark=c.mark, client=c.client_mark, src=",".join(c.source_ids))
-            self._mtext("column_mark", c.mark, g(c.floor_id, c.mark_position), spec.text.mark_height, 5, id=c.id)
+            self._mtext("column_mark", c.mark, g(c.floor_id, c.mark_position), spec.text.mark_height, 5, rotation=c.mark_rotation_deg, id=c.id)
             if spec.hatch.hatch_all_columns or c.stops_here:
                 stop_rings.setdefault(c.floor_id, []).append(pts if c.shape != "circle" else _circle_ring(g(c.floor_id, c.center), (c.diameter_mm or 300) / 2))
         for fid, rings in stop_rings.items():
@@ -188,12 +188,20 @@ class TemplateWriter:
 
         for b in np_.beams:
             e = self._poly("beam", [g(b.floor_id, p) for p in b.outline], id=b.id, run=b.run_id, mark=b.mark, client=b.client_mark)
+            if spec.beam_centreline:
+                cl = self.msp.add_line(g(b.floor_id, b.start), g(b.floor_id, b.end), dxfattribs={"layer": spec.layer("beam_cl")})
+                self._xdata(cl, id=b.id, kind="centreline")
             self._mtext("beam_mark", b.mark, g(b.floor_id, b.mark_position), spec.text.mark_height, 5, rotation=b.mark_rotation_deg, id=b.id)
 
         for s in np_.panels:
             if s.kind != "slab":
                 continue   # cut-outs and stairs are drawn from their own records
-            self._poly("slab", [g(s.floor_id, p) for p in s.outline], id=s.id, mark=s.mark, thk=s.thickness_mm, src=",".join(s.tag_ids))
+            if s.bulges and any(abs(bv) > 1e-9 for bv in s.bulges):
+                pts_b = [(*g(s.floor_id, p), bv) for p, bv in zip(s.outline, s.bulges)]
+                e = self.msp.add_lwpolyline(pts_b, format="xyb", close=True, dxfattribs={"layer": spec.layer("slab")})
+                self._xdata(e, id=s.id, mark=s.mark, thk=s.thickness_mm, src=",".join(s.tag_ids))
+            else:
+                self._poly("slab", [g(s.floor_id, p) for p in s.outline], id=s.id, mark=s.mark, thk=s.thickness_mm, src=",".join(s.tag_ids))
             self._mtext("slab_mark", s.mark, g(s.floor_id, s.mark_position), spec.text.mark_height, 5, id=s.id)
             if s.sunk_mm:
                 pattern = spec.hatch.slab_sunk_150 if s.sunk_mm >= 150 else spec.hatch.slab_sunk_75

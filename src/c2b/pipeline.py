@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from shapely.geometry import Point
+
 from . import __version__
 from .diagnostics import DiagnosticsCollector
 from .dxfio import Prim, dedupe_prims, iter_prims, layer_stats, load_document, modelspace_extent, read_meta
@@ -17,8 +19,8 @@ from .extract.slabs import extract_slabs
 from .floors import FloorFrame, detect_floors, localise
 from .profile import STRUCTURAL_ROLES, LayerRule, Profile, merge_profiles, suggest_profile
 from .schedules import ScheduleIndex, parse_schedules
-from .schema import DrawingInfo, Floor, LayerMapEntry, Point2, Project, Schedule, ScheduleRow, UnassignedTag
-from .tags import parse_tag
+from .schema import DrawingInfo, Floor, LayerMapEntry, LevelHint, Point2, Project, Schedule, ScheduleRow, UnassignedTag
+from .tags import clean_text, looks_like_note, parse_level_hint, parse_tag, strip_note_number
 from .units import resolve_units
 
 _IMPERIAL_HINT = ("'", '"')
@@ -192,12 +194,37 @@ def extract(path: str | Path, user_profile: Profile | None = None, units_overrid
             hint = f"; hidden-line geometry exists on {', '.join(hidden_layers)} and is skipped, the tags may belong to it" if hidden_layers else ""
             diag.warning("TAG_UNASSIGNED", f"{len(items)} tag(s) on layer {layer} matched no element (e.g. {sample}){hint}", floor_id=frame.id, layer=layer, location=items[0].rep_point())
 
+        # client general notes inside the frame, verbatim (numbering stripped, re-numbered by the template writer)
+        notes: list[str] = []
+        seen_notes: set[str] = set()
+        for t in sorted((t for t in frame.prims if t.kind == "text" and t.text and roles.get(t.layer, ("", "NOTE"))[1] in ("NOTE", "TITLE")), key=lambda t: (-t.rep_point()[1], t.rep_point()[0])):
+            txt = clean_text(t.text)
+            if txt.upper() == frame.name.upper() or not looks_like_note(txt):
+                continue
+            txt = strip_note_number(txt)
+            key = txt.upper()
+            if not txt or key in seen_notes:
+                continue
+            seen_notes.add(key)
+            notes.append(txt)
         project.floors.append(Floor(
-            id=frame.id, index=frame.index, name=frame.name, name_source=frame.name_source,
+            id=frame.id, index=frame.index, name=frame.name, name_source=frame.name_source, notes=notes,
             origin=Point2(x=frame.origin[0], y=frame.origin[1]),
             boundary=[Point2(x=c[0], y=c[1]) for c in list(frame.boundary.exterior.coords)[:-1]] if frame.boundary is not None else [],
             default_beam_depth_mm=frame.default_beam_depth, default_slab_thickness_mm=frame.default_slab_thickness,
         ))
+
+    # level hints from sections / elevations anywhere in the drawing
+    seen_hints: set[tuple[str, float]] = set()
+    for t in prims:
+        if t.kind != "text" or not t.text:
+            continue
+        hint = parse_level_hint(t.text)
+        if hint is None or hint in seen_hints:
+            continue
+        seen_hints.add(hint)
+        fid = next((f.id for f in frames if f.boundary is not None and f.boundary.contains(Point(t.rep_point()[0] + f.origin[0], t.rep_point()[1] + f.origin[1]))), None)
+        project.level_hints.append(LevelHint(name=hint[0], elevation_mm=hint[1], text=clean_text(t.text)[:80], handle=t.handle, layer=t.layer, floor_id=fid))
 
     project.diagnostics = diag.items
     project.recompute_summary()

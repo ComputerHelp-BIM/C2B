@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from .. import __version__
 from ..schema import Diagnostic, Point2, TagRef
 
-NORMALIZED_SCHEMA_VERSION = "0.2.0"
+NORMALIZED_SCHEMA_VERSION = "0.3.0"
 
 
 class NFloor(BaseModel):
@@ -30,6 +30,7 @@ class NFloor(BaseModel):
     levels: list[str] = Field(default_factory=list)   # level ids drawn from this plan (typical floors)
     default_beam_depth_mm: float | None = None
     default_slab_thickness_mm: float | None = None
+    notes: list[str] = Field(default_factory=list)       # client notes, verbatim, written under the plan
     counts: dict[str, int] = Field(default_factory=dict)
 
 
@@ -71,6 +72,7 @@ class NColumn(BaseModel):
     wall_like: bool = False
     size_source: str = "unknown"
     mark_position: Point2
+    mark_rotation_deg: float = 0.0
     client_mark: str | None = None
     source_ids: list[str] = Field(default_factory=list)
     source_handles: list[str] = Field(default_factory=list)
@@ -109,6 +111,7 @@ class NPanel(BaseModel):
     thickness_mm: float | None = None
     thickness_source: str = "unknown"
     outline: list[Point2]
+    bulges: list[float] = Field(default_factory=list)    # per outline vertex: DXF bulge of the segment to the next vertex (0 = straight)
     area_m2: float
     centroid: Point2
     mark_position: Point2

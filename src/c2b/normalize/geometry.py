@@ -95,12 +95,12 @@ def merge_intervals(intervals: list[tuple[float, float]]) -> list[tuple[float, f
     return out
 
 
-def complement(intervals: list[tuple[float, float]], length: float) -> list[tuple[float, float]]:
-    """Free intervals within [0, length] after removing ``intervals``."""
+def complement(intervals: list[tuple[float, float]], length: float, start: float = 0.0) -> list[tuple[float, float]]:
+    """Free intervals within [start, length] after removing ``intervals`` (zero-length cuts split without a gap)."""
     spans: list[tuple[float, float]] = []
-    t = 0.0
+    t = start
     for a, b in merge_intervals(intervals):
-        a, b = max(a, 0.0), min(b, length)
+        a, b = max(a, start), min(b, length)
         if a > t:
             spans.append((t, a))
         t = max(t, b)
@@ -128,13 +128,38 @@ class Cut:
     by: str            # support id
 
 
-def support_cuts(run: Run, supports: list[tuple[str, Polygon]], cover_ratio: float) -> list[Cut]:
-    """Intervals along the run covered by columns/walls that cross the beam width."""
+@dataclass
+class Support:
+    id: str
+    poly: Polygon
+    shape: str = "rect"          # rect | circle | polygon
+    rotation_deg: float = 0.0
+
+    def is_irregular_for(self, run_angle: float, tol_deg: float) -> bool:
+        if self.shape != "rect":
+            return True
+        d = angle_diff_deg(self.rotation_deg, run_angle)
+        return not (d <= tol_deg or abs(d - 90.0) <= tol_deg)
+
+
+def support_cuts(run: Run, supports: list[Support], cover_ratio: float, to_centre: bool = True, angle_tol: float = 3.0) -> tuple[list[Cut], float, float]:
+    """Intervals along the run covered by columns/walls.
+
+    Axis-aligned rectangular supports cut the beam at their faces. Round, rotated or
+    odd-shaped supports cut it at their centre (zero-width cut) so adjacent spans meet
+    at the column centre; a run ending inside such a support is extended to the centre.
+    Returns (cuts, t_min, t_max) with the possibly extended run domain.
+    """
     cuts: list[Cut] = []
-    for sid, poly in supports:
-        if not poly.intersects(run.outline):
+    t_min, t_max = 0.0, run.axis.length
+    w = run.width
+    for sup in supports:
+        poly = sup.poly
+        irregular = to_centre and sup.is_irregular_for(run.axis.angle, angle_tol)
+        probe = span_rectangle(run, -w, run.axis.length + w) if irregular else run.outline
+        if not poly.intersects(probe):
             continue
-        inter = poly.intersection(run.outline)
+        inter = poly.intersection(probe)
         if inter.is_empty or inter.area < 1.0:
             continue
         iv = run.axis.interval_of(inter)
@@ -143,11 +168,19 @@ def support_cuts(run: Run, supports: list[tuple[str, Polygon]], cover_ratio: flo
         t1, t2 = iv
         if t2 - t1 <= 0:
             continue
-        # a support must cover most of the beam width, otherwise it merely touches the beam
-        if inter.area / max(1.0, (t2 - t1) * run.width) < cover_ratio:
-            continue
-        cuts.append(Cut(t1, t2, sid))
-    return cuts
+        if inter.area / max(1.0, (t2 - t1) * w) < cover_ratio:
+            continue   # merely touches the beam edge
+        if irregular:
+            c = poly.centroid
+            tc = run.axis.t_of((c.x, c.y))
+            cuts.append(Cut(tc, tc, sup.id))
+            if tc > run.axis.length:
+                t_max = max(t_max, tc)
+            if tc < 0.0:
+                t_min = min(t_min, tc)
+        else:
+            cuts.append(Cut(t1, t2, sup.id))
+    return cuts, t_min, t_max
 
 
 def crossing_cuts(run: Run, others: list[Run], end_tol: float, trim_at_faces: bool, split_crossing_by: str) -> list[Cut]:
@@ -242,3 +275,60 @@ def text_fits(text: str, height: float, width_factor: float, poly: Polygon, rota
     c = representative_point(poly)
     box = rectangle_polygon(c, w * 1.1, height * 1.3, rotation_deg)
     return poly.contains(box)
+
+
+def fit_arcs(ring: list[Pt], circles: list[tuple[Pt, float]], tol: float) -> tuple[list[Pt], list[float]]:
+    """Replace runs of vertices lying on a known circle by one arc segment (DXF bulge).
+
+    Returns the reduced vertex list and, per vertex, the bulge of the segment to the next
+    vertex (0 = straight). Bulge = tan(sweep / 4), positive for counter-clockwise arcs.
+    """
+    n = len(ring)
+    if n < 3 or not circles:
+        return list(ring), [0.0] * n
+    on: list[int | None] = [None] * n
+    for i, v in enumerate(ring):
+        for k, (c, r) in enumerate(circles):
+            if abs(math.dist(v, c) - r) <= tol:
+                on[i] = k
+                break
+    start = next((i for i in range(n) if on[i] is None), None)
+    if start is None:
+        return list(ring), [0.0] * n
+    order = list(range(start, n)) + list(range(0, start))
+    pts: list[Pt] = []
+    bulges: list[float] = []
+    i = 0
+    while i < n:
+        k = on[order[i]]
+        if k is None:
+            pts.append(ring[order[i]])
+            bulges.append(0.0)
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and on[order[j + 1]] == k:
+            j += 1
+        if j == i:
+            pts.append(ring[order[i]])
+            bulges.append(0.0)
+            i += 1
+            continue
+        c, r = circles[k]
+        p0, p1 = ring[order[i]], ring[order[j]]
+        a0 = math.atan2(p0[1] - c[1], p0[0] - c[0])
+        a1 = math.atan2(p1[1] - c[1], p1[0] - c[0])
+        ccw = (a1 - a0) % (2 * math.pi)
+        if j - i >= 2:
+            pm = ring[order[(i + j) // 2]]
+            am = math.atan2(pm[1] - c[1], pm[0] - c[0])
+            mid_on_ccw = (am - a0) % (2 * math.pi) <= ccw
+            sweep = ccw if mid_on_ccw else ccw - 2 * math.pi
+        else:
+            sweep = ccw if ccw <= math.pi else ccw - 2 * math.pi
+        pts.append(p0)
+        bulges.append(math.tan(sweep / 4.0))
+        pts.append(p1)
+        bulges.append(0.0)
+        i = j + 1
+    return pts, bulges
