@@ -114,6 +114,7 @@ class Tolerances(BaseModel):
     beam_min_width_mm: float = 100.0
     beam_max_width_mm: float = 1500.0
     beam_min_length_mm: float = 500.0
+    beam_stub_min_length_mm: float = 40.0     # brackets / corbels: a 200 wide x 50 long nib is a real member
     beam_min_overlap_mm: float = 300.0
     beam_merge_gap_mm: float = 800.0       # merge collinear edge pieces across crossing beams
     beam_merge_offset_mm: float = 2.0

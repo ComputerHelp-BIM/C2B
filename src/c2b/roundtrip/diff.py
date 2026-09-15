@@ -199,7 +199,8 @@ def compare(model: NormalizedProject, drawing: NormalizedProject, tol: Tolerance
             base = parse_template_mark(mk).base
             size = _size(e)
             # a beam mark describes the cross-section: spans of one mark differ in length, never in width
-            section = (min(size),) if (size and cat == "beams") else (tuple(sorted(size)) if size else None)
+            section = ((getattr(e, "width_mm", None) or min(size),) if (size and cat == "beams")
+                       else (tuple(sorted(size)) if size else None))
             if base:
                 key = (e.floor_id, base)
                 prev = seen.get(key)
@@ -217,7 +218,7 @@ def compare(model: NormalizedProject, drawing: NormalizedProject, tol: Tolerance
                 drawn = sorted(size)
                 stated = sorted(tm.size)
                 if cat == "beams":
-                    drawn, stated = [min(size)], [tm.width_mm]
+                    drawn, stated = [getattr(e, "width_mm", None) or min(size)], [tm.width_mm]
                 if any(abs(x - y) > 26 for x, y in zip(drawn, stated)):
                     shown = f"{tm.width_mm:.0f}x{tm.depth_mm:.0f}"
                     add("WARNING", "RT_MARK_MISMATCH", f"{cat[:-1]} {e.id}: mark says {shown} but the drawing measures {size[0]:.0f}x{size[1]:.0f}",

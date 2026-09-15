@@ -495,7 +495,8 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
                 thickness = neigh[0] if neigh else spec.panels.cantilever_default_thickness_mm
                 source = "adjacent" if neigh else "default"
             top_offset, rule = 0.0, None
-            bb_cover, _ = region_cover(poly, "beam_bottom")
+            # "slab at beam bottom" and "projection at beam bottom lvl." mean the same thing
+            bb_cover = max(region_cover(poly, "beam_bottom")[0], region_cover(poly, "projection")[0])
             if (is_cant and spec.panels.cantilever_bottom_align) or bb_cover >= spec.panels.region_cover:
                 if support_depth and thickness:
                     top_offset = -(support_depth - thickness)

@@ -80,6 +80,11 @@ CODES: dict[str, str] = {
     "RT_LEVELS_RELATIVE": "Level lines carry no elevation data; elevations measured from the lowest line",
     "RT_NO_ID": "Entity on a C2B layer without a C2B id (added or copied by hand)",
     "RT_ORPHAN_MARK": "Mark text in the drawing belongs to no element",
+    # --- Revit (utility 5) ---
+    "REVIT_NO_LEVELS": "No levels: fill the level workbook and normalise again",
+    "REVIT_FLOOR_NO_LEVEL": "A plan floor has no level in the workbook; its elements are skipped",
+    "REVIT_NO_SIZE": "Element has no size and cannot be created in Revit",
+    "REVIT_COLUMN_NO_TOP": "Column on the highest level has no level above it",
 }
 
 

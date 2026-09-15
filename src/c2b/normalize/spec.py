@@ -91,7 +91,7 @@ class SplitRules(BaseModel):
     at_walls: bool = True
     trim_at_beam_faces: bool = True         # a beam ending on another beam stops at its face
     split_crossing_by: Literal["depth", "none"] = "depth"   # at an X crossing the shallower beam is split
-    min_span_mm: float = 150.0
+    min_span_mm: float = 40.0               # brackets and corbels are real members, not slivers
     support_cover_ratio: float = 0.5        # a column must cover this share of the beam width to split it
 
 
@@ -116,6 +116,8 @@ class HatchMap(BaseModel):
     slab_sunk_150: str = "HEX"
     slab_at_beam_bottom: str = "ANSI33"
     raft_fold_sunk: str = "ANSI37"
+    # one pattern per distinct sunk depth, allocated in the order the depths appear
+    sunk_patterns: list[str] = Field(default_factory=lambda: ["ANGLE", "HEX", "ANSI33", "ANSI37", "CROSS", "AR-SAND"])
     scale: float = 20.0
     hatch_all_columns: bool = False          # template hatched every column; legend says the hatch means "stops here"
 
@@ -213,7 +215,14 @@ class TemplateSpec(BaseModel):
     stair_panel_cover: float = 0.5           # ... or by stair geometry, a stair
     notes: list[str] = Field(default_factory=list)   # extra note lines written under every plan
     write_generator_note: bool = True
-    legend_from_seed: bool = True
+    legend_from_seed: bool = False      # False: build the legend from what this drawing uses; True: copy the seed's
+    legend_texts: dict[str, str] = Field(default_factory=lambda: {
+        "sunk": "INDICATES SLAB/BEAM SUNK BY {value:.0f}MM.",
+        "beam_bottom": "INDICATES SLAB AT BEAM BOTTOM",
+        "column_stop": "INDICATES COLUMN STOP AT LEVEL",
+        "fold": "INDICATES RAFT/SLAB SUNK-FOLD",
+        "cutout": "THUS MARKED CUT-OUT",
+    })
 
     def layer(self, key: str) -> str:
         return self.layers[key].name

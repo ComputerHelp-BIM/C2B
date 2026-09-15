@@ -208,13 +208,19 @@ class TemplateReader:
             xd = self._xdata(e)
             shape = classify_polygon(poly)
             long_side, short_side = max(shape.width, shape.depth), min(shape.width, shape.depth)
-            ang = shape.rotation_deg if shape.width >= shape.depth else shape.rotation_deg + 90.0
-            ang %= 180.0
+            mk0 = nearest_mark(beam_marks, poly, (poly.centroid.x, poly.centroid.y))
+            stated = parse_template_mark(mk0[1]).width_mm if mk0 else None
+            # a bracket is wider than it is long: the mark's width says which side is which
+            stub = bool(stated and abs(long_side - stated) <= 26 and abs(short_side - stated) > 26) or self._xdata(e).get("stub") == "1"
+            if stub:
+                long_side, short_side = short_side, long_side
+            along_width = (shape.width >= shape.depth) != stub
+            ang = (shape.rotation_deg if along_width else shape.rotation_deg + 90.0) % 180.0
             ux, uy = math.cos(math.radians(ang)), math.sin(math.radians(ang))
             half = long_side / 2
             p1 = (centre[0] - ux * half, centre[1] - uy * half)
             p2 = (centre[0] + ux * half, centre[1] + uy * half)
-            mk = nearest_mark(beam_marks, poly, centre)
+            mk = mk0
             tm = parse_template_mark(mk[1]) if mk else TemplateMark(text="")
             if mk:
                 used_marks.add(id(mk[0]))

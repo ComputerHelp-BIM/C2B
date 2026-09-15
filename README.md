@@ -15,8 +15,8 @@ Version `0.6.0` (tool) — extraction schema `0.5.0`, normalised schema `0.5.0`.
 | 1 | **Extract + check**: client DXF → canonical JSON, Excel review workbook, review DXF, diagnostics | `c2b extract`, v0.1.0 |
 | 2 | **Normalise**: column stacks, beam spans at supports, slab panels, template marks → template DXF + schedules | `c2b normalize`, v0.5.0 |
 | 3 | **Round trip**: template DXF → JSON + Excel again, verified against the normalised model | `c2b verify`, v0.6.0 |
-| 4 | Revit importer: JSON → native columns, beams, floors, foundations | next |
-| 5 | Cross-check: quantities, supports, continuity | later |
+| 4 | **Revit importer**: JSON → build plan → native columns, beams, floors, foundations | `c2b revit-plan` + pyRevit, v0.8.0 |
+| 5 | Cross-check: quantities, supports, continuity | next |
 
 The original plan had a separate "drawing checker" before conversion. Checking a drawing
 *is* parsing it, so step 1 does both: the same run that extracts the data produces the
@@ -52,8 +52,8 @@ Five real client drawings with five different conventions were used to build it:
 
 ## Install
 
-**Windows:** double-click `windows\install.bat`, then drag a client DXF onto
-`windows\C2B-run.bat`. See [QUICKSTART.md](QUICKSTART.md) for the five-minute version.
+**Windows:** double-click `windows\install.bat`, then `windows\C2B.bat` for the window, or drag
+a client DXF onto `windows\C2B-run.bat`. See [QUICKSTART.md](QUICKSTART.md).
 
 ```bash
 python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate

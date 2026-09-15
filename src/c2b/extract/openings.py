@@ -89,17 +89,23 @@ def extract_walls(ctx: FloorContext) -> list[Wall]:
 
 
 def extract_stairs(ctx: FloorContext) -> list:
-    """Stair geometry is carried through as drawn: closed outlines plus the raw lines (treads, arrows)."""
+    """Stair geometry is carried through exactly as drawn.
+
+    Flights, landings, treads and nosing lines are all wanted, so unlike columns or footings
+    nothing here is deduplicated or swallowed by the outline that contains it.
+    """
     from ..schema import Point2, Stair
     from .context import outline_points
-    outlines = collect_outlines(ctx, "STAIR", 100.0, 1e5, 1e10, 1e6, drop_containers=False)
     out = []
-    for o in outlines:
-        c = o.poly.centroid
-        near = [t.text.strip() for t in ctx.texts("STAIR_TAG") + ctx.texts("NOTE") if o.poly.buffer(1000).contains(Point(t.rep_point()))]
+    tag_prims = ctx.texts("STAIR_TAG") + ctx.texts("NOTE")
+    for p in ctx.geoms("STAIR", "polygon", "solid"):
+        if p.geom.area < 1e4:
+            continue
+        c = p.geom.centroid
+        near = [t.text.strip() for t in tag_prims if p.geom.buffer(1000).contains(Point(t.rep_point()))]
         labels = [x for x in near if x.upper().startswith("ST") or "THK" in x.upper()]
         out.append(Stair(id=ctx.ids.next("ST"), floor_id=ctx.floor_id, label=labels[0] if labels else None, labels=near, center=Point2(x=c.x, y=c.y),
-                         outline=outline_points(o.poly), area_mm2=round(o.poly.area, 1), source_layer=o.layer, source_handles=o.handles + o.merged_handles))
+                         outline=outline_points(p.geom), area_mm2=round(p.geom.area, 1), source_layer=p.layer, source_handles=[p.handle]))
     lines = []
     for p in ctx.geoms("STAIR", "line", "polyline"):
         coords = list(p.geom.coords)

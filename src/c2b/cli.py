@@ -21,6 +21,14 @@ def version() -> None:
 
 
 @app.command()
+def gui(drawing: Optional[Path] = typer.Argument(None, exists=True, help="Optional drawing to preload")) -> None:
+    """Open the C2B window: pick a drawing, press Run, read the issues."""
+    from .gui import run_gui
+
+    raise typer.Exit(run_gui(drawing))
+
+
+@app.command()
 def demo(out: Path = typer.Option(Path("demo"), "--out", "-o", help="Folder for the demo drawing")) -> None:
     """Write a small demo client drawing so the whole pipeline can be tried without client data."""
     from .demo import build_demo_drawing
@@ -358,6 +366,46 @@ def verify(
         typer.echo(f"  {code:20s} {n}")
     typer.echo(f"Outputs in {out}")
     raise typer.Exit(0 if res.ok() else 1)
+
+
+@app.command("revit-plan")
+def revit_plan(
+    normalized: Path = typer.Argument(..., exists=True, help="<stem>.normalized.json from normalize (or .reread.json after drafter edits)"),
+    mapping: Optional[Path] = typer.Option(None, "--mapping", "-m", help="Revit family mapping YAML (default: next to the file, else built-in)"),
+    out: Path = typer.Option(None, "--out", "-o", help="Output folder (default: next to the JSON)"),
+    write_mapping: bool = typer.Option(False, "--write-mapping", help="Write a starting mapping file and stop"),
+) -> None:
+    """Utility 5, step 1: turn the model into a Revit build plan and a workbook of what will be created."""
+    from .export.revit_excel import write_revit_workbook
+    from .normalize.model import NormalizedProject
+    from .revit.mapping import RevitMapping
+    from .revit.plan import build_plan
+
+    stem = normalized.name.replace(".normalized.json", "").replace(".reread.json", "").replace(".json", "")
+    out = out or normalized.parent
+    out.mkdir(parents=True, exist_ok=True)
+    mapping_path = mapping or (out / f"{stem}.revit-mapping.yaml")
+    if write_mapping:
+        RevitMapping().save(mapping_path)
+        typer.echo(f"Mapping written to {mapping_path}. Edit the family and type names to match your Revit template.")
+        raise typer.Exit(0)
+    rm = RevitMapping.load(mapping_path) if mapping_path.exists() else RevitMapping()
+    if not mapping_path.exists():
+        rm.save(mapping_path)
+        typer.secho(f"No mapping found, so a starting one was written to {mapping_path.name}. Check the family names in it.", fg=typer.colors.YELLOW)
+    model = NormalizedProject.model_validate_json(normalized.read_text(encoding="utf-8"))
+    plan = build_plan(model, rm)
+    (out / f"{stem}.revit.json").write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+    write_revit_workbook(plan, out / f"{stem}.revit.xlsx")
+    errors = [d for d in plan.diagnostics if d.severity == "ERROR"]
+    for kind, n in sorted(plan.counts.items()):
+        typer.echo(f"  {kind:12s} {n}")
+    if errors:
+        for d in errors[:5]:
+            typer.secho(f"  {d.code}: {d.message}", fg=typer.colors.RED)
+    typer.secho(f"Build plan: {out / f'{stem}.revit.json'}", fg=typer.colors.RED if errors else typer.colors.GREEN)
+    typer.echo(f"Check {out / f'{stem}.revit.xlsx'} (Types to create) before running it in Revit.")
+    raise typer.Exit(1 if errors else 0)
 
 
 @app.command()

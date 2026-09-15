@@ -8,6 +8,37 @@ The canonical JSON schema carries its own version (`schema_version` in every out
 A MAJOR bump of the schema means downstream utilities (DXF writer, Revit importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes values.
 
+## [0.8.0] - 2026-09-15
+
+### Fixed (found by running Test17-clean in the firm)
+- **Sunk hatches were never drawn.** An earlier edit had stranded the hatch code inside the
+  fold loop, so a drawing without folds got no sunk hatching at all. Test17 now carries 480
+  sunk regions on `CH-S-SLAB-SUNK`.
+- **The legend was missing** unless a seed template was given, and then it was the seed's.
+  The legend is now built from what the drawing actually uses (each sunk depth, slab at beam
+  bottom, column stop, fold), one hatch pattern per depth from a palette, in the template's
+  layout. `legend_from_seed: true` restores the old behaviour.
+- **Staircases were thinned out.** Stair geometry went through the member de-duplication used
+  for columns, so treads inside a flight outline were swallowed. Stairs are now carried
+  through exactly as drawn: Test17 keeps all 44 flight outlines and every tread line.
+- **Bracket beams were dropped.** A bracket is wider than it is long (200 wide, 50 long), so
+  it failed both the minimum-span and the width tests. Short rectangles on a beam layer whose
+  long side is a plausible beam width are now brackets, with the mark deciding which side is
+  the width on the way back in. Test17 gains 310 bracket beams.
+- Marked spans shorter than the minimum are kept (a 50 mm corbel is a real member); spans of
+  zero length are always dropped.
+- "Projection at beam bottom lvl." is treated as "slab at beam bottom".
+
+### Added
+- **The C2B window** (`c2b gui`, or `windows\C2B.bat`): pick a drawing, press Run, watch the
+  three steps, read the issues in plain language, then open the template DXF, the workbooks or
+  the folder. Settings are remembered. The worker is Tk-free and tested.
+- **Utility 5, the Revit importer.** `c2b revit-plan` turns the normalised model into a build
+  plan (`<name>.revit.json`) plus a workbook listing every family and type it will use, driven
+  by an editable mapping file. A pyRevit button (`revit/C2B.extension`) executes that plan:
+  levels, grids, columns, beams, floors with holes, foundations, PCC, piles, RCC walls and
+  shaft openings. The script has not yet been run against a live Revit model.
+
 ## [0.7.0] - 2026-09-15
 
 Everything needed to run utilities 1 to 4 on a firm machine without help.

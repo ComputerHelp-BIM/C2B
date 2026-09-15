@@ -24,6 +24,8 @@ class TemplateWriter:
         self.seed_path = Path(seed) if seed else (Path(spec.seed_dxf) if spec.seed_dxf else None)
         self.legend_entities = []
         self.legend_anchor = None
+        self.used_meanings: dict[tuple[str, float | None], str] = {}
+        self._sunk_patterns: dict[float, str] = {}
         if self.seed_path and self.seed_path.exists():
             self.doc = ezdxf.readfile(str(self.seed_path))
             self._harvest_legend()
@@ -108,6 +110,15 @@ class TemplateWriter:
         self.legend_anchor = (maxx, plan_bottom)
         self.legend_entities = [e.copy() for e in best_items]
 
+    def sunk_pattern(self, depth: float) -> str:
+        """One hatch pattern per sunk depth, taken from the palette in the order the depths appear."""
+        depth = float(depth)
+        if depth not in self._sunk_patterns:
+            used = set(self._sunk_patterns.values())
+            palette = [p for p in self.spec.hatch.sunk_patterns if p not in used]
+            self._sunk_patterns[depth] = palette[0] if palette else self.spec.hatch.slab_sunk_75
+        return self._sunk_patterns[depth]
+
     # --------------------------------------------------------------- helpers
     def _xdata(self, entity, **fields) -> None:
         entity.set_xdata(self.spec.xdata_appid, [(1000, f"{k}={v}") for k, v in fields.items() if v is not None])
@@ -160,7 +171,6 @@ class TemplateWriter:
             for i, note in enumerate(list(f.notes) + list(np_.notes), start=1):
                 self._mtext("text", f"{i}) {note}", (cx + fr.notes_offset_x_mm, y), spec.text.note_height, 4, width=12300.0, floor=f.id, kind="note")
                 y -= fr.notes_line_spacing_mm
-            self._place_legend(right, f.plan_bottom_y)
 
         for gr in np_.grids:
             line = self.msp.add_line(g(gr.floor_id, gr.start), g(gr.floor_id, gr.end), dxfattribs={"layer": spec.layer("grid"), "linetype": spec.grid_linetype, "ltscale": spec.grid_ltscale})
@@ -183,6 +193,8 @@ class TemplateWriter:
                 stop_rings.setdefault(c.floor_id, []).append(pts if c.shape != "circle" else _circle_ring(g(c.floor_id, c.center), (c.diameter_mm or 300) / 2))
         for fid, rings in stop_rings.items():
             self._hatch("column_hatch", rings, spec.hatch.column_stop, floor=fid, meaning="column_stop")
+        if stop_rings:
+            self.used_meanings[("column_stop", None)] = spec.hatch.column_stop
 
         for w in np_.walls:
             if not w.structural:
@@ -192,7 +204,8 @@ class TemplateWriter:
                 self._mtext("wall_mark", w.mark, g(w.floor_id, w.center), spec.text.mark_height, 5, id=w.id)
 
         for b in np_.beams:
-            e = self._poly("beam", [g(b.floor_id, p) for p in b.outline], id=b.id, run=b.run_id, mark=b.mark, client=b.client_mark)
+            stub = "1" if (b.width_mm and b.length_mm and b.length_mm < b.width_mm) else None
+            e = self._poly("beam", [g(b.floor_id, p) for p in b.outline], id=b.id, run=b.run_id, mark=b.mark, client=b.client_mark, stub=stub)
             if spec.beam_centreline:
                 cl = self.msp.add_line(g(b.floor_id, b.start), g(b.floor_id, b.end), dxfattribs={"layer": spec.layer("beam_cl")})
                 self._xdata(cl, id=b.id, kind="centreline")
@@ -209,6 +222,11 @@ class TemplateWriter:
             else:
                 self._poly(layer_key, [g(s.floor_id, p) for p in s.outline], id=s.id, mark=s.mark, thk=s.thickness_mm, kind=s.kind, top_offset=s.top_offset_mm, src=",".join(s.tag_ids))
             self._mtext(mark_key, s.mark, g(s.floor_id, s.mark_position), spec.text.mark_height, 5, id=s.id)
+            if s.sunk_mm:
+                self._hatch("slab_sunk", [[g(s.floor_id, q) for q in s.outline]], self.sunk_pattern(s.sunk_mm), id=s.id, sunk=s.sunk_mm)
+                self.used_meanings[("sunk", float(s.sunk_mm))] = self.sunk_pattern(s.sunk_mm)
+            if s.top_offset_rule in ("beam_bottom", "projection"):
+                self.used_meanings[("beam_bottom", None)] = spec.hatch.slab_at_beam_bottom
             if s.kind == "ramp" and len(s.arrow) == 2:
                 a, b = g(s.floor_id, s.arrow[0]), g(s.floor_id, s.arrow[1])
                 ln = self.msp.add_line(a, b, dxfattribs={"layer": spec.layer("ramp")})
@@ -224,9 +242,7 @@ class TemplateWriter:
             self._poly("slab_fold", pts, id=fd.id, panel=fd.panel_id, fold=fd.fold_mm)
             self._hatch("slab_fold", [pts], spec.hatch.raft_fold_sunk, id=fd.id, meaning="fold")
             self._mtext("slab_mark", fd.mark, g(fd.floor_id, fd.mark_position), spec.text.mark_height, 5, id=fd.id)
-            if s.sunk_mm:
-                pattern = spec.hatch.slab_sunk_150 if s.sunk_mm >= 150 else spec.hatch.slab_sunk_75
-                self._hatch("slab_sunk", [[g(s.floor_id, p) for p in s.outline]], pattern, id=s.id, sunk=s.sunk_mm)
+            self.used_meanings[("fold", None)] = spec.hatch.raft_fold_sunk
 
         for x in np_.footings:
             in_raft = "raft" in x.stack_ids
@@ -267,11 +283,45 @@ class TemplateWriter:
                 ln = self.msp.add_line(g(st.floor_id, a), g(st.floor_id, b), dxfattribs={"layer": spec.layer("stairs")})
                 self._xdata(ln, id=st.id)
 
+        # the legend lists what this drawing actually uses, so it is drawn once every element is in
+        for f in np_.floors:
+            right = max(p.x for p in f.frame)
+            if spec.legend_from_seed and self.legend_entities:
+                self._place_legend(right, f.plan_bottom_y)
+            else:
+                self._draw_legend(right, f.plan_bottom_y)
+
         if np_.levels:
             self._write_elevation_frame(np_)
 
         self.doc.saveas(str(path))
         return Path(path)
+
+    def _draw_legend(self, frame_right: float, plan_bottom: float) -> None:
+        """Legend built from the meanings this drawing actually uses, in the template's layout."""
+        spec, fr = self.spec, self.spec.frame
+        rows = self._legend_rows()
+        if not rows:
+            return
+        box_w, box_h = 700.0, 300.0
+        x1 = frame_right - fr.legend_from_right_mm
+        y_top = plan_bottom - fr.legend_top_above_mm
+        for i, (pattern, text) in enumerate(rows):
+            y = y_top - i * fr.legend_row_mm
+            ring = [(x1, y - box_h), (x1 + box_w, y - box_h), (x1 + box_w, y), (x1, y)]
+            self._poly("legend", ring, kind="legend")
+            self._hatch("hatch", [ring], pattern, kind="legend")
+            self._mtext("legend", text, (x1 + box_w + spec.text.mark_height * 1.6, y - box_h / 2), spec.text.mark_height, 4, width=4624.0, kind="legend")
+
+    def _legend_rows(self) -> list[tuple[str, str]]:
+        spec = self.spec
+        rows: list[tuple[str, str]] = []
+        for (meaning, value), pattern in sorted(self.used_meanings.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0)):
+            text = spec.legend_texts.get(meaning)
+            if not text:
+                continue
+            rows.append((pattern, text.format(value=value or 0)))
+        return rows
 
     def _place_legend(self, frame_right: float, plan_bottom: float) -> None:
         if not (self.spec.legend_from_seed and self.legend_entities and self.legend_anchor):

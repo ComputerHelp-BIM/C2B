@@ -20,6 +20,15 @@ def _segments_from_prim(p) -> list[Segment]:
     return out
 
 
+def _rect_from(shape, angle_deg: float, length: float, width: float) -> PairedRect:
+    """A PairedRect centred on ``shape`` running ``length`` along ``angle_deg``, ``width`` across."""
+    ux, uy = math.cos(math.radians(angle_deg)), math.sin(math.radians(angle_deg))
+    half = length / 2
+    start = (shape.center[0] - ux * half, shape.center[1] - uy * half)
+    end = (shape.center[0] + ux * half, shape.center[1] + uy * half)
+    return PairedRect(start, end, width, angle_deg % 180, (Segment(shape.center, shape.center), Segment(shape.center, shape.center)), 0.0)
+
+
 def extract_beams(ctx: FloorContext) -> list[Beam]:
     tol = ctx.tol
     segs: list[Segment] = []
@@ -30,18 +39,23 @@ def extract_beams(ctx: FloorContext) -> list[Beam]:
         elif p.kind in ("polygon", "solid"):
             s = classify_polygon(p.geom)
             short, long_ = min(s.width, s.depth), max(s.width, s.depth)
+            kind = "polyline" if p.kind == "polygon" else "block"
             if s.shape == "rect" and tol.beam_min_width_mm <= short <= tol.beam_max_width_mm and long_ >= tol.beam_min_length_mm and long_ / short >= 2:
+                # a normal beam: the long side is the span
                 ang = s.rotation_deg if s.width >= s.depth else s.rotation_deg + 90
-                ux, uy = math.cos(math.radians(ang)), math.sin(math.radians(ang))
-                half = long_ / 2
-                rect = PairedRect((s.center[0] - ux * half, s.center[1] - uy * half), (s.center[0] + ux * half, s.center[1] + uy * half), short, ang % 180, (Segment(s.center, s.center), Segment(s.center, s.center)), 0.0)
-                direct.append((rect, p.layer, [p.handle], "polyline" if p.kind == "polygon" else "block", _block_size(p)))
+                direct.append((_rect_from(s, ang, long_, short), p.layer, [p.handle], kind, _block_size(p)))
+            elif (s.shape == "rect" and tol.beam_min_width_mm <= long_ <= tol.beam_max_width_mm
+                  and tol.beam_stub_min_length_mm <= short < tol.beam_min_length_mm):
+                # a bracket or corbel: too short to be a span, and the LONG side is the beam width
+                ang = s.rotation_deg if s.width < s.depth else s.rotation_deg + 90
+                direct.append((_rect_from(s, ang, short, long_), p.layer, [p.handle], kind, _block_size(p)))
             else:
                 segs.extend(_segments_from_prim(p))
 
     merged = merge_collinear(segs, angle_tol=0.5, offset_tol=tol.beam_merge_offset_mm, gap_tol=tol.beam_merge_gap_mm)
     rects, unpaired = pair_parallel(merged, tol.beam_min_width_mm, tol.beam_max_width_mm, tol.beam_min_overlap_mm, tol.beam_angle_tol_deg)
-    rects = [r for r in rects if r.length >= tol.beam_min_length_mm]
+    # a pair whose overlap is short but whose width matches a beam is a bracket, not noise
+    rects = [r for r in rects if r.length >= min(tol.beam_min_length_mm, tol.beam_stub_min_length_mm)]
 
     items: list[tuple[PairedRect, str, list[str], str, tuple | None, int]] = []
     for r in rects:

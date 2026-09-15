@@ -60,7 +60,15 @@ c2b run demo\demo.dxf
 Open `demo\out\demo\demo.template.dxf` in AutoCAD. It is a two-floor structural layout drawn
 in the CH template conventions, produced from a drawing the tool had never seen before.
 
-## 4. Run your own drawing
+## 4. The window (what drafters use)
+
+Double-click `windows\C2B.bat`, or run `c2b gui`. Pick the client drawing, pick the firm's
+template once (it is remembered), press **Run**. The three steps appear as they happen, the
+issues are listed in plain language underneath, and the buttons at the bottom open the
+template DXF, the workbooks or the folder. **Re-check an edited template DXF** lists every
+change a drafter made after the drawing was generated.
+
+## 5. Run your own drawing from the command line
 
 Put your template at `templates\CH-TEMPLATE.dxf` first, then **drag a client DXF onto
 `windows\C2B-run.bat`**. On the command line that is:
@@ -86,7 +94,7 @@ It writes everything into `C:\Projects\Tower A\out\STR-PLANS\`:
 install the free [ODA File Converter](https://www.opendesign.com/guestfiles/oda_file_converter)
 and C2B will convert DWG files itself.
 
-## 5. The normal working loop
+## 6. The normal working loop
 
 1. `c2b run <drawing>` — first pass.
 2. Open `*.review.xlsx` → **Diagnostics**. Errors block, warnings need a decision.
@@ -97,7 +105,7 @@ and C2B will convert DWG files itself.
 6. Drag the edited file onto `windows\C2B-verify.bat` — every change against the model is
    listed, and `*.reread.json` becomes the corrected data for Revit.
 
-## 6. What to expect on a real drawing
+## 7. What to expect on a real drawing
 
 From the five client drawings used to build this, a first pass with no profile editing:
 
@@ -110,7 +118,18 @@ From the five client drawings used to build this, a first pass with no profile e
 Nothing is guessed silently: anything the tool could not resolve is a diagnostic with a code,
 a floor, a location and an element id, in both the workbook and the report.
 
-## 7. When something looks wrong
+## 8. Into Revit (utility 5)
+
+```
+c2b revit-plan out\TowerA\TowerA.normalized.json --write-mapping   # first time: set your family names
+c2b revit-plan out\TowerA\TowerA.normalized.json
+```
+
+Check `TowerA.revit.xlsx`, sheet **Types to create**, then in Revit press **C2B → Import C2B
+model** and pick `TowerA.revit.json`. See `revit\README.md`. The Revit script has not yet been
+run against a live model, so expect to adjust family and parameter names on the first project.
+
+## 9. When something looks wrong
 
 | Symptom | Cause and fix |
 |---|---|
