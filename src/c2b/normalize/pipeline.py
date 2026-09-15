@@ -326,11 +326,13 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
         polys = [p for p in polys if p is not None]
         # client slab edge lines close cantilever / chajja / balcony panels (answer 3B)
         edge_geom = None
+        structure_union = None
         if spec.panels.use_slab_edges:
             edges = [LineString([(e.start.x, e.start.y), (e.end.x, e.end.y)]) for e in project.slab_edges if e.floor_id == f.id]
             if edges:
                 from shapely.ops import unary_union as _uu
                 edge_geom = _uu(edges)
+                structure_union = _uu([q for q in polys if q is not None]).buffer(6.0)
                 polys.append(edge_geom.buffer(1.0, cap_style=2))
         panels, oversized = lattice_panels(polys, spec.panels.min_area_m2 * 1e6, spec.panels.max_area_m2 * 1e6)
         regions_f = [(r, poly_from_points(r.outline)) for r in project.regions if r.floor_id == f.id]
@@ -391,9 +393,10 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
             # cantilever / chajja: a hole whose boundary runs along a client slab edge, not a beam
             is_cant = False
             if edge_geom is not None and edge_geom.intersects(poly.exterior.buffer(3.0)):
-                on_edge = edge_geom.intersection(poly.exterior.buffer(3.0)).length
-                on_beams = sum(bp.exterior.intersection(poly.exterior.buffer(3.0)).length for _, bp in beam_polys if bp.intersects(poly.exterior.buffer(3.0)))
-                is_cant = on_edge > 0.15 * poly.exterior.length and on_edge > 0.0 and (on_edge >= 0.5 * max(on_beams, 1.0) or on_beams == 0.0)
+                # free edge = the part of the panel boundary on a client slab edge that is not also a beam / column / wall face
+                on_edge = edge_geom.intersection(poly.exterior.buffer(3.0))
+                free_edge = on_edge.difference(structure_union) if structure_union is not None else on_edge
+                is_cant = free_edge.length >= max(300.0, 0.1 * poly.exterior.length)
             if is_cant:
                 n_cs += 1
                 i = n_cs
