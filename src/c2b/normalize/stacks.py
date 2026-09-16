@@ -80,8 +80,10 @@ def build_stacks(project: Project, floors_in_order: list[str], mode: str, tol_mm
         sid = f"STK{n:03d}"
         remap[i] = sid
         present = [f for f in floors_in_order if f in s["cols"]]
-        result.append(NStack(id=sid, number=n, mark_base=f"C{n}", grid_ref=first.grid_ref, centre=first.center, floors=present,
-                             client_marks=sorted({c.mark for c in s["cols"].values() if c.mark})))
+        # a stub column is numbered in its own series; the client does not tag them at all
+        kind = "stub" if all(c.modifier == "stub" for c in s["cols"].values()) else "column"
+        result.append(NStack(id=sid, number=n, mark_base=f"C{n}", kind=kind, grid_ref=first.grid_ref, centre=first.center,
+                             floors=present, client_marks=sorted({c.mark for c in s["cols"].values() if c.mark})))
         sizes = {(c.width_mm, c.depth_mm, c.diameter_mm) for c in s["cols"].values()}
         if len(sizes) > 1:
             diag.info("STACK_SIZE_CHANGE", f"Stack {sid} (C{n}) changes size between floors: {sorted(str(x) for x in sizes)}", element_id=sid, location=(first.center.x, first.center.y))

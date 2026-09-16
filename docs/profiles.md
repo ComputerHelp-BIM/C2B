@@ -50,6 +50,28 @@ tolerances:
 `hidden` (skip), `stop`/`start`/`stub`/`podium` (columns), `fold`/`sunk`/`drop`/`projection`
 (slabs, footings), `non_structural`/`retaining` (walls), `hatch`.
 
+## A column's life: start, stop and the floor below
+
+The template models the column that sits **below** a floor level, so of the outlines a client
+draws on one plan only some belong to that floor. The `start` and `stop` layer modifiers say
+which:
+
+| Modifier | Example layer | Meaning |
+|---|---|---|
+| (none) | `S-COLUMN` | the column under this floor |
+| `stop` | `S-COLUM_STOP` | a column running up from below that ends here — this floor's column |
+| `start` | `S-COLUMN_START` | a column beginning here, so nothing stands under this floor; not drawn on it |
+| `stub` | `S.STUB COL` | a stub column; marked `ST1`, `ST2`, … and sized from its own outline when untagged |
+
+Where a `stop` outline and a plain one are drawn over each other, the plain one is the floor
+above's column and is dropped for this floor. Reported as `COLUMN_ABOVE_FLOOR` and
+`COLUMN_STARTS_ABOVE`.
+
+Shaped walls (L, T, C, F) are cut into their rectangular legs so each can carry the mark and
+size the client wrote on it (`COLUMN_LEGS_SPLIT`). The legs **overlap at the corner**, because
+both run to the outside face, which is how the client dimensions them and how the walls meet in
+the model. A shape that is not rectilinear is left whole.
+
 ## Which witness wins: tag or outline
 
 When the client's tag and their own outline disagree about a size, `size_sources` decides which

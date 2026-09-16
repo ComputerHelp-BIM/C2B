@@ -1,16 +1,77 @@
 """Column extraction."""
 from __future__ import annotations
 
-from ..geometry import classify_polygon, is_wall_like, nearest_grid_intersection_label
+from dataclasses import replace
+
+from shapely.strtree import STRtree
+
+from ..geometry import classify_polygon, is_wall_like, nearest_grid_intersection_label, split_rectilinear
 from ..schema import Column
 from .associate import TagCand, associate_tags, make_tag_cands, merge_parsed
 from .context import FloorContext, outline_points, pt, tag_ref
-from .outlines import collect_outlines
+from .outlines import Outline, collect_outlines
 
 
 def _sizes_match(a: tuple[float, float], b: tuple[float, float], tol: float) -> bool:
     sa, sb = sorted(a), sorted(b)
     return abs(sa[0] - sb[0]) <= tol and abs(sa[1] - sb[1]) <= tol
+
+
+def _modifiers(ctx: FloorContext, layer: str) -> set[str]:
+    rule = ctx.rules.get(layer)
+    return set(rule.modifiers) if rule else set()
+
+
+def _this_floors_columns(ctx: FloorContext, outlines: list[Outline]) -> list[Outline]:
+    """Answer 4: of the outlines drawn here, which are the columns *below* this floor level.
+
+    The client draws a column's life on three layers. A plain outline is the column under this
+    floor. A "start" outline is a column beginning here, so there is nothing under this floor to
+    model and it is not this floor's column at all. A "stop" outline is a column running up from
+    below that ends here; where the client has drawn a stop outline and a plain one over each
+    other, the plain one is the floor above's column and the stop one is this floor's.
+    """
+    keep, dropped_start, dropped_above = [], 0, 0
+    stops = [o for o in outlines if "stop" in _modifiers(ctx, o.layer)]
+    stop_tree = STRtree([o.poly for o in stops]) if stops else None
+    for o in outlines:
+        mods = _modifiers(ctx, o.layer)
+        if "start" in mods:
+            dropped_start += 1
+            continue
+        if stop_tree is not None and not (mods & {"stop", "stub"}):
+            covered = any(o.poly.intersection(stops[int(k)].poly).area >= 0.5 * min(o.poly.area, stops[int(k)].poly.area)
+                          for k in stop_tree.query(o.poly, predicate="intersects"))
+            if covered:
+                dropped_above += 1
+                continue
+        keep.append(o)
+    if dropped_start:
+        ctx.diag.info("COLUMN_STARTS_ABOVE", f"{dropped_start} column(s) start at this floor, so nothing stands under it here", floor_id=ctx.floor_id)
+    if dropped_above:
+        ctx.diag.info("COLUMN_ABOVE_FLOOR", f"{dropped_above} column outline(s) drawn over a stopping column belong to the floor above", floor_id=ctx.floor_id)
+    return keep
+
+
+def _split_legs(ctx: FloorContext, outlines: list[Outline]) -> list[Outline]:
+    """Answer 2: each leg of an L, T, C or F shaped wall is its own element.
+
+    The client marks and sizes every leg separately, so a wall kept whole can only hold one of
+    those marks and the rest land nowhere. Shapes that are already rectangles, or that are not
+    rectilinear, come back untouched.
+    """
+    out: list[Outline] = []
+    split = 0
+    for o in outlines:
+        legs = split_rectilinear(o.poly, min_side=ctx.tol.column_min_side_mm)
+        if len(legs) < 2:
+            out.append(o)
+            continue
+        split += 1
+        out.extend(replace(o, poly=leg) for leg in legs)
+    if split:
+        ctx.diag.info("COLUMN_LEGS_SPLIT", f"{split} shaped wall(s) split into their legs so each can carry its own mark", floor_id=ctx.floor_id)
+    return out
 
 
 def extract_columns(ctx: FloorContext) -> list[Column]:
@@ -19,6 +80,9 @@ def extract_columns(ctx: FloorContext) -> list[Column]:
         ctx, "COLUMN", tol.column_min_side_mm, tol.column_min_area_mm2, tol.column_max_area_mm2, tol.column_max_side_mm,
         include_generic_hatch=True,
     )
+    if not outlines:
+        return []
+    outlines = _split_legs(ctx, _this_floors_columns(ctx, outlines))
     if not outlines:
         return []
 

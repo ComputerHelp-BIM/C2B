@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from .. import __version__
 from ..schema import Diagnostic, Point2, TagRef
 
-NORMALIZED_SCHEMA_VERSION = "0.7.0"
+NORMALIZED_SCHEMA_VERSION = "0.8.0"
 
 
 class NFloor(BaseModel):
@@ -47,7 +47,8 @@ class NLevel(BaseModel):
 class NStack(BaseModel):
     id: str
     number: int
-    mark_base: str                 # "C12"
+    mark_base: str                 # "C12", or "ST3" for a stub column
+    kind: Literal["column", "stub"] = "column"
     grid_ref: str | None = None
     centre: Point2                 # centre on the lowest floor
     floors: list[str] = Field(default_factory=list)          # floor ids where the column exists, bottom to top

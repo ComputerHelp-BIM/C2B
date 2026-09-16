@@ -146,10 +146,15 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
                 m = re.match(r"^C(\d+)$", st.client_marks[0].upper())
                 if m:
                     used.add(int(m.group(1)))
-        nxt = 1
+        nxt, nxt_stub = 1, 1
         for st in stacks:
             if st.client_marks:
                 st.mark_base = st.client_marks[0]
+                continue
+            if st.kind == "stub":
+                # answer 2: an untagged stub column is ST{n}, sized from its own outline
+                st.mark_base = f"{spec.numbering.stub_prefix}{nxt_stub}"
+                nxt_stub += 1
                 continue
             while nxt in used:
                 nxt += 1

@@ -8,6 +8,41 @@ The canonical JSON schema carries its own version (`schema_version` in every out
 A MAJOR bump of the schema means downstream utilities (DXF writer, Revit importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes values.
 
+## [0.11.0] - 2026-09-16
+
+Each leg of a shaped wall is now its own element, and only the outlines that belong to a floor
+are read from it. Normalised schema `0.7.0` → `0.8.0` (new field, no breaking change).
+
+### Added
+
+- **Shaped walls are cut into their legs** (answer 2). The client marks and sizes every leg of
+  an L, T, C or F separately, so a wall kept whole could only hold one of those marks and the
+  rest landed nowhere. The legs **overlap at the corner**, because both run to the outside face
+  -- that is how the client dimensions them and how the walls meet in the model. Partitioning
+  instead leaves one leg short of its own tag. Shapes that are not rectilinear are left whole.
+  Test17: `COLUMN_MULTI_SIZE` 174 → 62, `MARK_FIT` 104 → 0.
+- **A column's life is read from the layer** (answer 4). The template models the column below a
+  floor level, so of the outlines drawn on one plan only some belong to that floor: a `start`
+  outline is a column beginning here with nothing under this floor, and where a `stop` outline
+  and a plain one are drawn over each other the plain one is the floor above's column.
+  Reported as `COLUMN_STARTS_ABOVE` and `COLUMN_ABOVE_FLOOR`.
+- **Untagged stub columns are `ST1`, `ST2`, …** (answer 2), sized from their own outline. Test17
+  has 45 of them and the client tags none. `numbering.stub_prefix` sets the letter.
+
+### Fixed
+
+- **A wall drawn a fraction off square split into legs no one drew.** A client polyline is
+  rarely exactly axis-aligned; squared up, a wall drawn 0.0003 degrees off leaves its two faces
+  a few microns apart, and cutting on both made sliver cells that broke a leg into pieces. One
+  Test17 wall came out as three legs, the third a 200 x 1620 ghost no mark could ever match.
+  Cut lines closer together than a millimetre are now one line.
+
+### Confirmed, not changed
+
+- An untagged column already takes its stack's mark from whichever floor the client *did* tag,
+  falling back to the next number free in the client's own numbering (answer 3). Its size
+  already comes from the outline. Both now have tests.
+
 ## [0.10.0] - 2026-09-16
 
 Columns and their marks, from the answers to the column questions. Extraction schema

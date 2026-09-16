@@ -9,7 +9,8 @@ import math
 from dataclasses import dataclass, field
 
 import shapely
-from shapely.geometry import LineString, Point, Polygon
+from shapely.affinity import rotate
+from shapely.geometry import LineString, Point, Polygon, box
 from shapely.ops import polygonize, unary_union
 
 Pt = tuple[float, float]
@@ -438,3 +439,97 @@ def is_wall_like(
     if shape == "polygon" and long_side >= min_length_mm:
         return True
     return shape != "circle" and short_side > 0 and long_side / short_side >= min_side_ratio and long_side >= min_length_mm
+
+
+#: Beyond this many distinct vertex coordinates in one direction a shape is not a wall of a few
+#: legs, and is left whole rather than cut into a mosaic.
+_SPLIT_MAX_GRID = 12
+
+
+def _snap_grid(values: list[float], tol: float) -> list[float]:
+    """Collapse cut lines closer together than ``tol`` into one.
+
+    A client polyline is rarely exactly axis-aligned: a wall drawn 0.0003 degrees off leaves its
+    two faces a few microns apart once squared up, and cutting on both makes sliver cells that
+    split a leg into pieces no one drew.
+    """
+    out: list[float] = []
+    for v in values:
+        if not out or v - out[-1] > tol:
+            out.append(v)
+    return out
+
+
+def split_rectilinear(poly: Polygon, min_side: float = 100.0, area_tol: float = 0.02,
+                      snap: float = 1.0) -> list[Polygon]:
+    """Cut an L, T, C or F shaped member into the rectangular legs it is made of.
+
+    The client marks and sizes each leg of a shear wall separately, so each leg has to be its own
+    element for those marks to land anywhere. The shape is squared up to its own dominant angle,
+    cut on every vertex coordinate, and the largest rectangles that fit inside are taken as the
+    legs.
+
+    The legs **overlap at the corner**, because that is how the client dimensions them and how
+    the walls meet in the model: both legs of an L run to the outside face, so an L of 2000 and
+    1500 is a 2000 leg and a 1500 leg, not a 2000 leg and a 1300 remainder. Partitioning instead
+    leaves one leg short of its own tag.
+
+    Returns ``[poly]`` unchanged when the shape is already a rectangle, is not rectilinear (the
+    legs would not cover it), or is too intricate to be a wall of a few legs.
+    """
+    if poly is None or poly.is_empty or poly.area <= 0:
+        return [poly] if poly is not None else []
+    mrr = poly.minimum_rotated_rectangle
+    if mrr.geom_type != "Polygon":
+        return [poly]
+    # square the shape up to the long edge of its own bounding rectangle
+    ring = list(mrr.exterior.coords)[:4]
+    edges = [(ring[i], ring[(i + 1) % 4]) for i in range(4)]
+    (ax, ay), (bx, by) = max(edges, key=lambda e: math.dist(e[0], e[1]))
+    angle = math.degrees(math.atan2(by - ay, bx - ax))
+    origin = poly.centroid
+    p = rotate(poly, -angle, origin=origin)
+
+    xs = _snap_grid(sorted({round(x, 3) for x, _y in p.exterior.coords}), snap)
+    ys = _snap_grid(sorted({round(y, 3) for _x, y in p.exterior.coords}), snap)
+    if len(xs) < 3 and len(ys) < 3:
+        return [poly]                                   # already a rectangle
+    if len(xs) > _SPLIT_MAX_GRID or len(ys) > _SPLIT_MAX_GRID:
+        return [poly]
+
+    nx, ny = len(xs) - 1, len(ys) - 1
+    filled = [[False] * ny for _ in range(nx)]
+    covered = 0.0
+    for i in range(nx):
+        for j in range(ny):
+            cx, cy = (xs[i] + xs[i + 1]) / 2, (ys[j] + ys[j + 1]) / 2
+            if p.contains(Point(cx, cy)):
+                filled[i][j] = True
+                covered += (xs[i + 1] - xs[i]) * (ys[j + 1] - ys[j])
+    if covered <= 0 or abs(covered - p.area) > area_tol * p.area:
+        return [poly]                                   # not rectilinear: the cells miss the shape
+
+    # prefix sums, so "is this block solid" is O(1)
+    acc = [[0] * (ny + 1) for _ in range(nx + 1)]
+    for i in range(nx):
+        for j in range(ny):
+            acc[i + 1][j + 1] = acc[i][j + 1] + acc[i + 1][j] - acc[i][j] + (1 if filled[i][j] else 0)
+
+    def solid(i0: int, i1: int, j0: int, j1: int) -> bool:
+        cells = acc[i1 + 1][j1 + 1] - acc[i0][j1 + 1] - acc[i1 + 1][j0] + acc[i0][j0]
+        return cells == (i1 - i0 + 1) * (j1 - j0 + 1)
+
+    blocks = [(i0, i1, j0, j1)
+              for i0 in range(nx) for i1 in range(i0, nx)
+              for j0 in range(ny) for j1 in range(j0, ny)
+              if solid(i0, i1, j0, j1)]
+    # a leg is a rectangle no larger one contains: the full run in each direction
+    maximal = [b for b in blocks
+               if not any(c != b and c[0] <= b[0] and b[1] <= c[1] and c[2] <= b[2] and b[3] <= c[3]
+                          for c in blocks)]
+    legs = [box(xs[i0], ys[j0], xs[i1 + 1], ys[j1 + 1]) for i0, i1, j0, j1 in maximal]
+    legs = [leg for leg in legs
+            if min(leg.bounds[2] - leg.bounds[0], leg.bounds[3] - leg.bounds[1]) >= min_side]
+    if len(legs) < 2 or unary_union(legs).area < (1 - area_tol) * p.area:
+        return [poly]                                   # the legs do not account for the shape
+    return [rotate(leg, angle, origin=origin) for leg in legs]
