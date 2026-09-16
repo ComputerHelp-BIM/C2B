@@ -79,3 +79,16 @@ def test_layer_size():
 
 def test_clean_text():
     assert clean_text("%%UTHUS MARKED\\PCUT-OUT") == "THUS MARKED\nCUT-OUT"
+
+
+def test_parse_symbolic_size():
+    """A schedule may state a depth no number fits: the rule is carried, not discarded."""
+    from c2b.tags import parse_symbolic_size
+
+    assert parse_symbolic_size("300XSLB THK.") == (300.0, "slab_thickness")
+    assert parse_symbolic_size("300 X SLAB THK") == (300.0, "slab_thickness")
+    assert parse_symbolic_size("200XAS/LAYOUT") == (200.0, "layout")
+    assert parse_symbolic_size("200XAS PER LAYOUT") == (200.0, "layout")
+    assert parse_symbolic_size("200X650") is None      # an ordinary size; the numeric parser has it
+    assert parse_symbolic_size("SB") is None
+    assert parse_symbolic_size("") is None

@@ -352,3 +352,35 @@ def parse_depth(text: str) -> float | None:
     if not m:
         return None
     return parse_length_mm(m.group(1) + (m.group(2) or ""))
+
+
+#: A schedule may state a depth the table cannot hold as a number: "300XSLB THK." means the beam
+#: is as deep as the slab it sits in (a concealed beam), "200XAS/LAYOUT" means the plan tag says.
+#: The rule is carried through as a symbol and resolved where the answer is known.
+RE_SIZE_SYMBOLIC = re.compile(
+    rf"(?P<w>{LENGTH})\s*[xX×*]\s*(?P<rule>SLB\s*THK\.?|SLAB\s*THK\.?|AS\s*[/\-]?\s*LAYOUT|AS\s*PER\s*LAYOUT|AS\s*[/\-]?\s*PLAN)",
+    re.I,
+)
+
+#: What a symbolic depth resolves against.
+DEPTH_RULE_SLAB = "slab_thickness"
+DEPTH_RULE_LAYOUT = "layout"
+
+
+def parse_symbolic_size(name: str) -> tuple[float, str] | None:
+    """Parse ``300XSLB THK.`` / ``200XAS/LAYOUT`` into (width_mm, depth rule).
+
+    Returns ``None`` when the text states no width or no rule this understands, so a caller can
+    fall back to :func:`parse_size_from_name`. Dropping these rows is what left 414 of Test17's
+    575 depth-less beams with no schedule entry at all.
+    """
+    m = RE_SIZE_SYMBOLIC.search(name or "")
+    if not m:
+        return None
+    w = parse_length_mm(m.group("w"))
+    if not w or w < 50:
+        return None
+    rule = re.sub(r"[\s.]+", "", m.group("rule")).upper()
+    if rule in ("SLBTHK", "SLABTHK"):
+        return (w, DEPTH_RULE_SLAB)
+    return (w, DEPTH_RULE_LAYOUT)
