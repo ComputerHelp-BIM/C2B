@@ -19,3 +19,4 @@ out/
 # Firm template DXFs are not committed
 templates/*.dxf
 templates/*.dwg
+demo
