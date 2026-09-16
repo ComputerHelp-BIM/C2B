@@ -1,4 +1,4 @@
-# Canonical schema v0.1.0
+# Canonical schema v0.5.0
 
 Written by `c2b extract` as `<stem>.c2b.json`. All lengths are millimetres, all angles
 degrees, all element coordinates are **floor-local** (the floor `Origin` point is 0,0).

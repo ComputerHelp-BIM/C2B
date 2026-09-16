@@ -188,7 +188,10 @@ class TemplateWriter:
             else:
                 e = self.msp.add_lwpolyline(pts, close=True, dxfattribs={"layer": spec.layer("column")})
             self._xdata(e, id=c.id, stack=c.stack_id, mark=c.mark, client=c.client_mark, src=",".join(c.source_ids))
-            self._mtext("column_mark", c.mark, g(c.floor_id, c.mark_position), spec.text.mark_height, 5, rotation=c.mark_rotation_deg, id=c.id)
+            # the normaliser decided the text, its lines and where it sits; XDATA keeps the full
+            # mark so utility 4 recovers it even when the drawing shows it on two lines
+            self._mtext("column_mark", "\\P".join(c.mark_lines or [c.mark]), g(c.floor_id, c.mark_position),
+                        spec.text.mark_height, 5, rotation=c.mark_rotation_deg, id=c.id, mark=c.mark)
             if spec.hatch.hatch_all_columns or c.stops_here:
                 stop_rings.setdefault(c.floor_id, []).append(pts if c.shape != "circle" else _circle_ring(g(c.floor_id, c.center), (c.diameter_mm or 300) / 2))
         for fid, rings in stop_rings.items():
@@ -209,7 +212,8 @@ class TemplateWriter:
             if spec.beam_centreline:
                 cl = self.msp.add_line(g(b.floor_id, b.start), g(b.floor_id, b.end), dxfattribs={"layer": spec.layer("beam_cl")})
                 self._xdata(cl, id=b.id, kind="centreline")
-            self._mtext("beam_mark", b.mark, g(b.floor_id, b.mark_position), spec.text.mark_height, 5, rotation=b.mark_rotation_deg, id=b.id)
+            text = self._beam_mark(b)
+            self._mtext("beam_mark", text, g(b.floor_id, b.mark_position), spec.text.mark_height, 5, rotation=b.mark_rotation_deg, id=b.id, mark=b.mark)
 
         for s in np_.panels:
             if s.kind not in ("slab", "cantilever", "ramp"):
@@ -322,6 +326,26 @@ class TemplateWriter:
                 continue
             rows.append((pattern, text.format(value=value or 0)))
         return rows
+
+    def _beam_mark(self, beam) -> str:
+        """The full mark when it fits along the span, otherwise the mark alone.
+
+        The size stays in the schedule and in the data; a 650 mm bracket simply cannot carry
+        "BK1-200X650" without covering its neighbours.
+
+        Unlike a shear wall's two-line mark this stays in the writer on purpose: it abbreviates
+        the text without moving it, so nothing downstream sees a different answer. A wall mark
+        changes where the mark *sits*, which the normalised model records and Revit reads, so
+        that one is decided in the normaliser instead.
+        """
+        spec = self.spec
+        if not spec.placement.beam_mark_shorten:
+            return beam.mark
+        width = len(beam.mark) * spec.text.mark_height * spec.text.width_factor
+        if width <= (beam.length_mm or 0) * 0.95:
+            return beam.mark
+        base = beam.mark.rsplit("-", 1)[0] if "-" in beam.mark else beam.mark
+        return spec.marks.beam_short.format(base=base)
 
     def _place_legend(self, frame_right: float, plan_bottom: float) -> None:
         if not (self.spec.legend_from_seed and self.legend_entities and self.legend_anchor):

@@ -14,6 +14,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field
 
+from .geometry import WALL_LIKE_MIN_LENGTH_MM, WALL_LIKE_MIN_SIDE_RATIO
 from .tags import parse_size_from_name
 
 # Roles a layer's geometry or text can play.
@@ -109,8 +110,8 @@ class Tolerances(BaseModel):
     column_iou_dedupe: float = 0.6
     column_tag_radius_factor: float = 1.5   # x max side of column
     column_tag_radius_min_mm: float = 600.0
-    wall_like_min_side_ratio: float = 4.0
-    wall_like_min_length_mm: float = 1000.0
+    wall_like_min_side_ratio: float = WALL_LIKE_MIN_SIDE_RATIO
+    wall_like_min_length_mm: float = WALL_LIKE_MIN_LENGTH_MM
     beam_min_width_mm: float = 100.0
     beam_max_width_mm: float = 1500.0
     beam_min_length_mm: float = 500.0

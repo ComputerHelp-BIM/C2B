@@ -12,7 +12,7 @@ import ezdxf
 from shapely.geometry import LineString, Point, Polygon
 
 from ..diagnostics import DiagnosticsCollector
-from ..geometry import classify_polygon
+from ..geometry import classify_polygon, is_wall_like
 from ..normalize.geometry import poly_from_points, ring_points
 from ..normalize.model import (NBeam, NColumn, NFloor, NFold, NFooting, NGrid, NJoint, NLevel, NOpening, NPanel, NPile,
                                NStair, NWall, NormalizedProject)
@@ -62,6 +62,26 @@ class TemplateReader:
             return out
         except Exception:
             return {}
+
+    @staticmethod
+    def _full_mark(text: str, xdata: dict) -> str:
+        """The mark as the data holds it.
+
+        The drawing may show a shortened form ("BK1" for "BK1-200X650") or a wall mark on two
+        lines; when the text is still part of the recorded mark, the recorded mark is the truth.
+        A drafter who retypes a mark writes something else, and that is reported as a change.
+        """
+        stored = (xdata or {}).get("mark")
+        if not stored:
+            return text
+        flat = " ".join(text.split())
+        if not flat:
+            return stored
+        parts = [p for p in flat.replace("X", "x").split() if p]
+        stored_flat = stored.replace("X", "x")
+        if stored_flat.startswith(parts[0]) and all(p in stored_flat for p in parts):
+            return stored
+        return text
 
     def _layer_key(self, e) -> str | None:
         return self.by_name.get(e.dxf.layer.upper())
@@ -196,16 +216,21 @@ class TemplateReader:
             shape = classify_polygon(poly)
             is_circle = e.dxftype() == "CIRCLE" or shape.shape == "circle"
             mk = col_marks_by_id.get(xd.get("id")) or nearest_mark(col_marks, poly, centre)
-            tm: TemplateMark = parse_template_mark(mk[1]) if mk else TemplateMark(text="")
+            mark_text = self._full_mark(mk[1], self._xdata(mk[0])) if mk else ""
+            tm: TemplateMark = parse_template_mark(mark_text) if mk else TemplateMark(text="")
             if mk:
                 used_marks.add(id(mk[0]))
             n = len([c for c in np_.columns if c.floor_id == floor.id]) + 1
             np_.columns.append(NColumn(
                 id=xd.get("id") or self._new_id(floor.id, "C", e), floor_id=floor.id, stack_id=xd.get("stack", tm.base or ""), mark=tm.text,
+                # the mark is the recombined whole; the lines are what the drawing actually shows
+                mark_lines=[ln.strip() for ln in (mk[1] or "").split("\n") if ln.strip()] if mk else [],
                 shape="circle" if is_circle else shape.shape, center=local(origin, *centre),
                 width_mm=tm.width_mm or (None if is_circle else round(shape.width, 1)),
                 depth_mm=tm.depth_mm or (None if is_circle else round(shape.depth, 1)),
                 rotation_deg=0.0 if is_circle else round(shape.rotation_deg, 3),
+                # read off the drawing, not the XDATA: an entity a drafter added by hand has none
+                wall_like=False if is_circle else is_wall_like(shape.shape, shape.width, shape.depth),
                 diameter_mm=tm.diameter_mm or (round(e.dxf.radius * 2, 1) if e.dxftype() == "CIRCLE" else None),
                 outline=ring_local(poly, origin), mark_position=local(origin, *mk[2]) if mk else local(origin, *centre),
                 mark_rotation_deg=round(mk[3], 3) if mk else 0.0, client_mark=xd.get("client"), source_ids=[xd.get("src")] if xd.get("src") else []))
@@ -222,7 +247,7 @@ class TemplateReader:
             shape = classify_polygon(poly)
             long_side, short_side = max(shape.width, shape.depth), min(shape.width, shape.depth)
             mk0 = beam_marks_by_id.get(self._xdata(e).get("id")) or nearest_mark(beam_marks, poly, (poly.centroid.x, poly.centroid.y))
-            stated = parse_template_mark(mk0[1]).width_mm if mk0 else None
+            stated = parse_template_mark(self._full_mark(mk0[1], self._xdata(mk0[0]))).width_mm if mk0 else None
             # a bracket is wider than it is long: the mark's width says which side is which
             stub = bool(stated and abs(long_side - stated) <= 26 and abs(short_side - stated) > 26) or self._xdata(e).get("stub") == "1"
             if stub:
@@ -234,7 +259,7 @@ class TemplateReader:
             p1 = (centre[0] - ux * half, centre[1] - uy * half)
             p2 = (centre[0] + ux * half, centre[1] + uy * half)
             mk = mk0
-            tm = parse_template_mark(mk[1]) if mk else TemplateMark(text="")
+            tm = parse_template_mark(self._full_mark(mk[1], self._xdata(mk[0]))) if mk else TemplateMark(text="")
             if mk:
                 used_marks.add(id(mk[0]))
             n = len([b for b in np_.beams if b.floor_id == floor.id]) + 1

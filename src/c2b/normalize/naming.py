@@ -25,3 +25,17 @@ def normalise_floor_name(name: str) -> str:
 def title_from_level_name(level_name: str) -> str:
     """'GROUND FLOOR LVL.' -> 'GROUND FLOOR LEVEL' for plan titles."""
     return level_name.replace("LVL.", "LEVEL").strip()
+
+
+#: A mark that ends in a stated size, e.g. ``T1SW136c-200X2500`` -> ``T1SW136c`` + ``200X2500``.
+_RE_MARK_SIZE = re.compile(r"^(?P<base>.*?)[-\s]*(?P<size>\d+(?:\.\d+)?\s*[xX]\s*\d+(?:\.\d+)?)\s*$")
+
+
+def split_mark_size(mark: str) -> tuple[str, str]:
+    """Split a mark into its base and the size it states, or ``(mark, "")`` if it states none.
+
+    The size is returned verbatim: a mark broken onto two lines must still read back as the same
+    mark, so neither the numbers nor their order may be rewritten on the way.
+    """
+    m = _RE_MARK_SIZE.match(mark or "")
+    return (m.group("base"), m.group("size")) if m else (mark or "", "")

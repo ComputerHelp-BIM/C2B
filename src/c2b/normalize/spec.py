@@ -36,6 +36,8 @@ class MarkFormats(BaseModel):
     column_circle: str = "C{n}-{dia:.0f}DIA"
     beam: str = "B{n}-{w:.0f}X{d:.0f}"
     beam_no_depth: str = "B{n}-{w:.0f}X?"
+    beam_short: str = "{base}"                          # used when the full mark does not fit along the span
+    column_wall: str = "{base}\\P{size}"                 # two lines beside a shear wall, as the client draws it
     slab: str = "S{n}-{thk:.0f}THK"
     slab_no_thickness: str = "S{n}-?THK"
     slab_cantilever: str = "CS{n}-{thk:.0f}THK"
@@ -66,6 +68,9 @@ class Placement(BaseModel):
     column_mark: Literal["above", "centre", "auto"] = "centre"     # answer 1C: always inside
     column_mark_gap_mm: float = 120.0       # gap between column top edge and mark centre line (for "above")
     column_mark_rotate: Literal["none", "long-side"] = "long-side"  # answer 7: text runs along the longer side
+    wall_mark: Literal["beside", "inside"] = "beside"   # a 200 x 1500 wall cannot hold its mark inside, as the client's own drawings show
+    wall_mark_gap_mm: float = 200.0                     # gap from the wall face to the mark
+    beam_mark_shorten: bool = True                      # a span too short for the full mark shows the mark alone, the size staying in the schedule
     beam_mark: Literal["centre"] = "centre"
     beam_mark_rotate: bool = True           # answer 7B: text runs along the beam
     slab_mark: Literal["centroid", "representative"] = "representative"

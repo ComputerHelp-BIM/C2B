@@ -8,6 +8,61 @@ The canonical JSON schema carries its own version (`schema_version` in every out
 A MAJOR bump of the schema means downstream utilities (DXF writer, Revit importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes values.
 
+## [0.9.0] - 2026-09-16
+
+Stabilising grids, columns, beams, slabs and their marks on Test17 before going further.
+Normalised schema `0.5.0` → `0.6.0` (new field, no breaking change).
+
+### Fixed
+
+- **Grids: `T1` was being read as a grid.** This client writes the tower prefix on every grid
+  bubble, so "T1" sat beside all 38 of them and won two lines as a label. A text written on
+  most of a floor's bubbles names nothing and is now struck from the label pool before any
+  line is named (`GRID_LABEL_QUALIFIER`, informational). Counting how often the text is
+  *written* is what distinguishes it: counting the lines it merely sits beside also catches
+  real labels, which are surrounded by their own leader, dimension and ticks.
+- **Grids: dimension strings were being drawn as grids.** A dimension string down the margin
+  is long enough to pass for a grid and borrows the nearest bubble's text, so grid `B` ran
+  down the left margin instead of across the plan. A label names one line, so the lines
+  claiming it are now arbitrated: a bubble off a line's own end beats a nearer one sitting
+  across it, and the loser, having nothing else to be, is dropped.
+- **Grids: `B` and `G` went missing on every floor.** Their real grid lines are 800 mm stubs,
+  and short lines were being discarded *before* labels were settled — so a stub lost its
+  bubble to any long line that happened to run past it. Length is now only consulted for a
+  line that owns no bubble at all.
+  Test17: 38 grids per floor with all 38 client labels and no spurious ones (was 31, then 41).
+- **Shear wall marks ran over their neighbours.** `T1SW17-200X1500` rotated inside a 200 mm
+  wall overflows it and collides with the beam marks alongside. Wall marks now go beside the
+  wall on two lines, as the client draws them, and utility 4 recovers the whole mark from the
+  two lines via XDATA. Test17: `MARK_FIT` 969 → 68.
+- **A wall mark could show a third size.** The second line was built from the measured
+  polyline while the mark stated the client's tagged size; where a client tag disagrees with
+  their own geometry the drawing showed neither. The line now repeats the size the mark
+  states, verbatim, and the disagreement is reported once as `RT_MARK_MISMATCH` rather than
+  twice. Test17 round trip: 645 → 531 warnings, all of them genuine client inconsistencies.
+- **Beam marks no longer overflow short spans.** A span too short for the full mark shows the
+  mark alone; the size stays in the schedule and in the data.
+- **Step lines are no longer slab edges**, which was over-classifying panels as cantilevers.
+  Test17: 2485 → 1722 panels, every one of them carrying a thickness.
+- **`wall_like` survived the round trip.** The re-read model had every shear wall back as an
+  ordinary column. The rule now lives in one place (`geometry.is_wall_like`) and is applied
+  to the drawing rather than read from XDATA, so entities added by hand are judged too.
+
+### Changed
+
+- Wall mark placement is decided in the normaliser, not the DXF writer, so the workbook, the
+  drawing and Revit all place it identically. `NColumn` gains `mark_lines` (the lines as
+  drawn), matching what `NFooting` already carried.
+- New template spec settings: `placement.wall_mark` (`beside` | `inside`),
+  `placement.wall_mark_gap_mm`, `placement.beam_mark_shorten`, and the `marks.column_wall` /
+  `marks.beam_short` formats.
+
+### Added
+
+- `tools/audit_client.py` — coverage audit of the output against the client drawing, per
+  floor, reading the client through the same code path as the extractor.
+- `tools/compare_floor.py` — side-by-side render of the same bay from client and template.
+
 ## [0.8.0] - 2026-09-15
 
 ### Fixed (found by running Test17-clean in the firm)

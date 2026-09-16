@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from .. import __version__
 from ..schema import Diagnostic, Point2, TagRef
 
-NORMALIZED_SCHEMA_VERSION = "0.5.0"
+NORMALIZED_SCHEMA_VERSION = "0.6.0"
 
 
 class NFloor(BaseModel):
@@ -60,6 +60,7 @@ class NColumn(BaseModel):
     floor_id: str
     stack_id: str
     mark: str                      # "C12-300X900"
+    mark_lines: list[str] = Field(default_factory=list)   # as drawn; a shear wall mark is split over two
     shape: Literal["rect", "circle", "polygon"]
     center: Point2
     width_mm: float | None = None

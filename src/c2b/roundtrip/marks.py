@@ -8,7 +8,7 @@ from ..tags import clean_text, parse_depth, parse_pcc, parse_tag
 
 _RE_PILES = re.compile(r"(\d+)\s*PILES?\s*(\d+(?:\.\d+)?)\s*(?:MM)?\s*DIA", re.I)
 _RE_FOLD = re.compile(r"(\d+(?:\.\d+)?)\s*(?:MM)?\s*FOLD", re.I)
-_RE_BASE = re.compile(r"^\s*([A-Z]{1,4}\d{1,4}[A-Za-z]{0,3})\b", re.I)
+_RE_BASE = re.compile(r"^\s*([A-Za-z]{1,4}\d{1,4}[A-Za-z0-9]{0,4})\b")
 _RE_SLOPE = re.compile(r"\b1\s*:\s*(\d{1,3})\b")
 _RE_DIR = re.compile(r"\b(UP|DN|DOWN)\b", re.I)
 

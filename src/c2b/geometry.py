@@ -413,3 +413,28 @@ def nearest_grid_intersection_label(point: Pt, grids_x: list[tuple[str, float]],
 
 def as_point(p: Pt) -> Point:
     return Point(p[0], p[1])
+
+
+#: Defaults for :func:`is_wall_like`. ``Tolerances`` seeds its profile fields from these, so the
+#: numbers live in one place whether the caller has a profile (extraction) or not (round trip).
+WALL_LIKE_MIN_SIDE_RATIO = 4.0
+WALL_LIKE_MIN_LENGTH_MM = 1000.0
+
+
+def is_wall_like(
+    shape: str,
+    width: float,
+    depth: float,
+    min_side_ratio: float = WALL_LIKE_MIN_SIDE_RATIO,
+    min_length_mm: float = WALL_LIKE_MIN_LENGTH_MM,
+) -> bool:
+    """Is this column really a shear wall?
+
+    Long and thin, or an irregular polygon long enough to be a wall leg. It decides how the
+    element is marked and how it is built, so extraction and the round trip must answer it the
+    same way -- including for entities a drafter added by hand, which carry no XDATA to consult.
+    """
+    long_side, short_side = max(width, depth), min(width, depth)
+    if shape == "polygon" and long_side >= min_length_mm:
+        return True
+    return shape != "circle" and short_side > 0 and long_side / short_side >= min_side_ratio and long_side >= min_length_mm

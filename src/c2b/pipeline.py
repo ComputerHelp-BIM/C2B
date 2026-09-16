@@ -189,15 +189,19 @@ def extract(path: str | Path, user_profile: Profile | None = None, units_overrid
                 cp = _Poly([(q.x, q.y) for q in c.outline])
                 if any(sp.intersection(cp).area >= 0.5 * cp.area for sp in stop_polys if sp.intersects(cp)):
                     c.modifier = "stop"
-        # slab edge lines (free edges of cantilevers / chajjas) and slab outline rings
+        # slab edge lines (free edges of cantilevers / chajjas) and slab outline rings.
+        # Lines on drop, projection, fold or sunk layers describe a step in the slab, not its edge.
+        modifier_layers = {name for name, r in rules.items() if set(r.modifiers) & {"drop", "projection", "fold", "sunk", "hidden"}}
         for p_ in ctx.geoms("SLAB", "line", "polyline"):
+            if p_.layer in modifier_layers:
+                continue
             coords = list(p_.geom.coords)
             for a, b in zip(coords[:-1], coords[1:]):
                 if ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5 >= 50.0:
                     project.slab_edges.append(SlabEdge(floor_id=frame.id, start=Point2(x=a[0], y=a[1]), end=Point2(x=b[0], y=b[1]), source_layer=p_.layer, source_handle=p_.handle))
         for p_ in ctx.geoms("SLAB", "polygon"):
-            if p_.geom.area < 1e5:
-                continue   # text boxes and hatch swatches
+            if p_.geom.area < 1e5 or p_.layer in modifier_layers:
+                continue   # text boxes, hatch swatches, and steps in the slab
             coords = list(p_.geom.exterior.coords)
             for a, b in zip(coords[:-1], coords[1:]):
                 project.slab_edges.append(SlabEdge(floor_id=frame.id, start=Point2(x=a[0], y=a[1]), end=Point2(x=b[0], y=b[1]), source_layer=p_.layer, source_handle=p_.handle))

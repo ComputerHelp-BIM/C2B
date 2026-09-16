@@ -1,7 +1,7 @@
 """Column extraction."""
 from __future__ import annotations
 
-from ..geometry import classify_polygon, nearest_grid_intersection_label
+from ..geometry import classify_polygon, is_wall_like, nearest_grid_intersection_label
 from ..schema import Column
 from .associate import TagCand, associate_tags, make_tag_cands, merge_parsed
 from .context import FloorContext, outline_points, pt, tag_ref
@@ -46,7 +46,7 @@ def extract_columns(ctx: FloorContext) -> list[Column]:
 
         drawn_w, drawn_d = round(s.width, 1), round(s.depth, 1)
         long_side, short_side = max(s.width, s.depth), min(s.width, s.depth)
-        wall_like = (s.shape != "circle" and short_side > 0 and long_side / short_side >= tol.wall_like_min_side_ratio and long_side >= tol.wall_like_min_length_mm) or (s.shape == "polygon" and long_side >= tol.wall_like_min_length_mm)
+        wall_like = is_wall_like(s.shape, s.width, s.depth, tol.wall_like_min_side_ratio, tol.wall_like_min_length_mm)
         width = depth = dia = None
         size_source = "unknown"
         if len(sizes) > 1:

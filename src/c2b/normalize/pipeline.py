@@ -15,7 +15,7 @@ from ..schema import Point2, Project
 from .geometry import Support, fit_arcs, lattice_panels, poly_from_points, representative_point, ring_points, text_fits
 from ..tags import parse_depth, parse_tag
 from .model import (MarkMap, NBeam, NColumn, NFloor, NFold, NFooting, NGrid, NJoint, NLevel, NOpening, NPanel, NPile, NStair, NWall, NormalizedProject)
-from .naming import normalise_floor_name, title_from_level_name
+from .naming import normalise_floor_name, split_mark_size, title_from_level_name
 from .spans import runs_for_floor, split_runs
 from .spec import TemplateSpec
 from .stacks import build_stacks
@@ -186,12 +186,26 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
                     rot += 180.0
             place = spec.placement.column_mark
             fits = text_fits(mark, text.mark_height, text.width_factor, outline, rot)
-            if place == "centre" or (place == "auto" and fits):
+            minx, miny, maxx, maxy = outline.bounds
+            base, size = split_mark_size(mark)
+            lines: list[str] = []
+            if c.wall_like and spec.placement.wall_mark == "beside" and size:
+                # A 200 mm wall cannot hold its mark, and rotating it inside runs the text over the
+                # beams alongside. The client writes it beside the wall on two lines, so do we --
+                # decided here, not in the writer, so the workbook and Revit place it there too.
+                # The size is copied verbatim: the drawn text must read back as this same mark.
+                lines = [base, size]
+                gap = spec.placement.wall_mark_gap_mm + text.mark_height
+                if (maxy - miny) >= (maxx - minx):        # wall up the page: mark to its right
+                    mp = (maxx + gap, (miny + maxy) / 2)
+                else:                                      # wall across the page: mark above it
+                    mp = ((minx + maxx) / 2, maxy + gap)
+                rot = 0.0
+            elif place == "centre" or (place == "auto" and fits):
                 mp = representative_point(outline)
                 if not fits:
                     diag.info("MARK_FIT", f"Mark '{mark}' overflows column {c.id}; placed at its centre anyway", floor_id=f.id, element_id=c.id, location=mp)
             else:
-                minx, miny, maxx, maxy = outline.bounds
                 mp = ((minx + maxx) / 2, maxy + spec.placement.column_mark_gap_mm)
                 rot = 0.0
                 if place == "auto":
@@ -203,7 +217,7 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
             cid = f"{f.id}-C{len(col_ids_by_floor.get(f.id, {})) + 1:03d}"
             col_ids_by_floor.setdefault(f.id, {})[c.id] = cid
             stack.column_ids[f.id] = cid
-            np_.columns.append(NColumn(id=cid, floor_id=f.id, stack_id=stack.id, mark=mark, shape=c.shape, center=c.center,
+            np_.columns.append(NColumn(id=cid, floor_id=f.id, stack_id=stack.id, mark=mark, mark_lines=lines or [mark], shape=c.shape, center=c.center,
                                        width_mm=c.width_mm, depth_mm=c.depth_mm, rotation_deg=c.rotation_deg, diameter_mm=c.diameter_mm,
                                        outline=_pts(ring_points(outline)), stops_here=stops, starts_here=starts, wall_like=c.wall_like,
                                        size_source=c.size_source, mark_position=_pt(mp), mark_rotation_deg=round(rot, 3), client_mark=c.mark,
