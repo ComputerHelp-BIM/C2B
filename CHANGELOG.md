@@ -8,6 +8,46 @@ The canonical JSON schema carries its own version (`schema_version` in every out
 A MAJOR bump of the schema means downstream utilities (DXF writer, Revit importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes values.
 
+## [0.10.0] - 2026-09-16
+
+Columns and their marks, from the answers to the column questions. Extraction schema
+`0.5.0` → `0.6.0`, normalised schema `0.6.0` → `0.7.0` (new fields, no breaking change).
+
+### Fixed
+
+- **Marks swapped between two legs of a wall.** Both marks are written in the gap between the
+  legs, each sitting a few millimetres nearer the leg it does *not* name, and nearest-outline-
+  wins takes them at face value. Nothing later notices: neither leg is bare and neither holds
+  two, so there is nothing to rebalance. The size the client wrote on the tag now decides which
+  member it names -- a far better witness than which outline the text happens to sit nearer.
+  Test17 round trip: 531 → 485 warnings.
+- **A leg left with no mark when freeing its tag takes a chain of moves.** Where a leg's only
+  candidate is held by a neighbour that holds just the one, and that neighbour's own second
+  candidate is held by a third element with two, feeding the first leg means moving the spare
+  along the chain. A single rebalance pass cannot see that far. This is the augmenting step of
+  bipartite matching, run only for the starved so every assignment the greedy got right is left
+  alone; a tag written inside an element is never taken from it.
+
+### Changed
+
+- **Column marks go back inside, on the bounding-box centre** (answer 7), and step down a
+  ladder of standard heights -- 100, 75, 50 mm -- until they fit. Heights come from a ladder,
+  never a freely computed size: a drawing whose every mark is slightly different cannot be
+  re-styled or edited as a set. A mark too long even at the smallest height shows its base
+  alone, as a short beam span already did, with the size kept in the schedule and in the XDATA
+  utility 4 reads back. Test17: 1760 marks at 100 mm, 17 at 75, 189 at 50, 52 showing the base
+  alone; `MARK_FIT` 969 → 104.
+- `placement.wall_mark` now defaults to `inside`; `beside` remains available.
+
+### Added
+
+- **Which witness wins is a setting** (answer 5): `size_sources.column` is `tag` (the client's
+  stated size, the default) or `outline` (measure the drawing, keeping the tag for the mark).
+  Exposed in the drafter's window as **Column size from**, and remembered between runs. The
+  same setting exists for beams, slabs and footings; only columns act on it so far.
+- `NColumn.mark_height_mm` -- the height the mark is drawn at, so the workbook, the drawing and
+  Revit agree on it.
+
 ## [0.9.0] - 2026-09-16
 
 Stabilising grids, columns, beams, slabs and their marks on Test17 before going further.

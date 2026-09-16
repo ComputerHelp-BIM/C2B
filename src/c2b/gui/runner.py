@@ -22,6 +22,7 @@ class JobSettings:
     profile: Path | None = None
     levels: Path | None = None
     units: str | None = None                 # None = read from the drawing
+    column_size_from: str = "tag"            # "tag" (the client's stated size) or "outline" (measure the drawing)
 
 
 @dataclass
@@ -72,7 +73,11 @@ def run_job(settings: JobSettings, progress: Progress) -> JobResult:
             progress("info", f"Converted {drawing.name} to DXF")
 
         progress("step", f"1 of 3   Reading {dxf.name}")
-        project = extract(dxf, Profile.load(settings.profile) if settings.profile else None, settings.units or None)
+        profile = Profile.load(settings.profile) if settings.profile else Profile()
+        profile.size_sources.column = settings.column_size_from
+        if settings.column_size_from == "outline":
+            progress("info", "         column sizes measured from the drawn outline, not the tag")
+        project = extract(dxf, profile, settings.units or None)
         p = project.project
         write_json(p, out / f"{stem}.c2b.json")
         res.review_xlsx = write_workbook(p, out / f"{stem}.review.xlsx")

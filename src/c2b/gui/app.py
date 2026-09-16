@@ -24,6 +24,7 @@ from .runner import JobResult, JobSettings, run_job, run_verify
 
 SETTINGS_FILE = Path.home() / ".c2b" / "gui.json"
 UNITS = ("read from drawing", "mm", "cm", "m", "in", "ft")
+COLUMN_SIZE_FROM = ("tag or schedule (client's intent)", "drawn outline (measure the drawing)")
 COLORS = {"step": "#1F4E78", "good": "#1E7B34", "warn": "#9A6700", "bad": "#B42318", "info": "#333333"}
 
 
@@ -50,8 +51,9 @@ class C2BWindow(tk.Tk):
         self.queue: queue.Queue = queue.Queue()
         self.result: JobResult | None = None
         self.worker: threading.Thread | None = None
-        self.vars = {k: tk.StringVar() for k in ("drawing", "seed", "profile", "levels", "out", "units")}
+        self.vars = {k: tk.StringVar() for k in ("drawing", "seed", "profile", "levels", "out", "units", "col_size")}
         self.vars["units"].set(UNITS[0])
+        self.vars["col_size"].set(COLUMN_SIZE_FROM[0])
         self._build()
         self._load_settings()
         self.after(80, self._drain)
@@ -80,6 +82,9 @@ class C2BWindow(tk.Tk):
         units.grid(row=5, column=1, sticky="w", pady=(6, 0))
         ttk.Label(units, text="Units:").pack(side="left")
         ttk.Combobox(units, textvariable=self.vars["units"], values=UNITS, width=18, state="readonly").pack(side="left", padx=(6, 18))
+        ttk.Label(units, text="Column size from:").pack(side="left")
+        ttk.Combobox(units, textvariable=self.vars["col_size"], values=COLUMN_SIZE_FROM, width=26,
+                     state="readonly").pack(side="left", padx=(6, 18))
         self.run_btn = ttk.Button(units, text="Run", style="Run.TButton", command=self.start)
         self.run_btn.pack(side="left")
         self.verify_btn = ttk.Button(units, text="Re-check an edited template DXF", command=self.start_verify)
@@ -161,6 +166,7 @@ class C2BWindow(tk.Tk):
             out_dir=Path(self.vars["out"].get()) if self.vars["out"].get().strip() else None,
             seed=self._path("seed"), spec=None, profile=self._path("profile"), levels=self._path("levels"),
             units=None if units == UNITS[0] else units,
+            column_size_from="tag" if self.vars["col_size"].get() == COLUMN_SIZE_FROM[0] else "outline",
         )
         self.status.configure(text="Working…  a large drawing can take a minute.")
         self.worker = threading.Thread(target=self._work, args=(run_job, (settings,)), daemon=True)
@@ -242,7 +248,7 @@ class C2BWindow(tk.Tk):
     def _load_settings(self) -> None:
         try:
             data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-            for key in ("seed", "profile", "out", "units"):
+            for key in ("seed", "profile", "out", "units", "col_size"):
                 if data.get(key):
                     self.vars[key].set(data[key])
         except Exception:
@@ -251,7 +257,7 @@ class C2BWindow(tk.Tk):
     def _save_settings(self) -> None:
         try:
             SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-            SETTINGS_FILE.write_text(json.dumps({k: self.vars[k].get() for k in ("seed", "profile", "out", "units")}, indent=2), encoding="utf-8")
+            SETTINGS_FILE.write_text(json.dumps({k: self.vars[k].get() for k in ("seed", "profile", "out", "units", "col_size")}, indent=2), encoding="utf-8")
         except Exception:
             pass
 

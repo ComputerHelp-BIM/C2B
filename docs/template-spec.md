@@ -11,7 +11,8 @@ Defaults reproduce `CH-TEMPLATE-REMARKED.dxf`.
 |---|---|---|
 | Column stacks | columns matched floor to floor by overlap / centre distance (300 mm), numbered once for the whole building; client marks win, generated numbers fill the gaps, row by row from the bottom row (`row-major`) | `numbering.columns`, `numbering.keep_client_marks`, `stack_match_tol_mm` |
 | Column marks | `C{n}-{w}X{d}` / `C{n}-{dia}DIA` in the client's b x D order, inside the column, text along the longer side | `marks.column`, `placement.column_mark`, `placement.column_mark_rotate` |
-| Shear wall marks | a column too thin to hold its mark (long, narrow, or an irregular leg) has it beside the wall on two lines -- base, then the size the mark states -- as the client draws it. The whole mark is kept in XDATA, so utility 4 reads the two lines back as one mark | `placement.wall_mark`, `placement.wall_mark_gap_mm`, `marks.column_wall` |
+| Column mark size | the mark steps down a ladder of standard heights until it fits inside its own member, on the bounding-box centre; a mark too long even at the smallest shows its base alone, the size staying in the schedule. Heights come from a ladder, never a freely computed size, so the drawing can be re-styled as a set. The whole mark is kept in XDATA, so utility 4 recovers it either way | `text.column_mark_heights`, `placement.column_mark_fit` |
+| Shear wall marks | on the bounding-box centre like every other column (answer 7). `placement.wall_mark: beside` instead writes the mark clear of the wall on two lines -- base, then the size the mark states | `placement.wall_mark`, `placement.wall_mark_gap_mm`, `marks.column_wall` |
 | Column stop | column present on this floor but not the next gets the `column_stop` hatch | `hatch.column_stop`, `hatch.hatch_all_columns` |
 | Beam spans | runs cut at the faces of axis-aligned rectangular columns and at the centre of round / rotated / odd columns; a beam ending on another beam stops at its face; at an X crossing the shallower beam is split | `split.*`, `split.irregular_support_to_centre` |
 | Beam marks | client mark kept (`MB-300X750`), else `B{n}-{w}X{d}` per floor; at the span centroid, text along the beam; centreline on `CH-S-BEAM-CL` | `marks.beam`, `numbering.keep_client_beam_marks`, `placement.beam_mark_rotate`, `beam_centreline` |
@@ -60,7 +61,7 @@ represents several levels gets one row per level with the same `floor_id`:
 | File | Purpose |
 |---|---|
 | `<stem>.template.dxf` | the template drawing; every entity carries XDATA `C2B` with `id=`, `mark=`, `client=` for the round trip (utility 4) |
-| `<stem>.normalized.json` | normalised model, schema 0.6.0 (stacks, spans, panels, footings, grids, levels, mark map; each element carries `mark` and, where the drawing splits it, `mark_lines`) |
+| `<stem>.normalized.json` | normalised model, schema 0.7.0 (stacks, spans, panels, footings, grids, levels, mark map; each element carries `mark` and, where the drawing splits it, `mark_lines`) |
 | `<stem>.schedules.xlsx` | column schedule (stack × floor), beams, slabs, footings, grids, mark map, diagnostics |
 | `<stem>.template-spec.yaml` | the spec used, ready to edit |
 

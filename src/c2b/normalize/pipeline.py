@@ -12,7 +12,8 @@ from shapely.strtree import STRtree
 from ..diagnostics import DiagnosticsCollector
 from ..geometry import classify_polygon, rectangle_polygon
 from ..schema import Point2, Project
-from .geometry import Support, fit_arcs, lattice_panels, poly_from_points, representative_point, ring_points, text_fits
+from .geometry import (Support, box_centre, fit_arcs, fit_text_height, lattice_panels, poly_from_points,
+                       representative_point, ring_points, text_fits)
 from ..tags import parse_depth, parse_tag
 from .model import (MarkMap, NBeam, NColumn, NFloor, NFold, NFooting, NGrid, NJoint, NLevel, NOpening, NPanel, NPile, NStair, NWall, NormalizedProject)
 from .naming import normalise_floor_name, split_mark_size, title_from_level_name
@@ -185,26 +186,38 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
                 if rot <= -90.0:
                     rot += 180.0
             place = spec.placement.column_mark
-            fits = text_fits(mark, text.mark_height, text.width_factor, outline, rot)
             minx, miny, maxx, maxy = outline.bounds
-            base, size = split_mark_size(mark)
-            lines: list[str] = []
-            if c.wall_like and spec.placement.wall_mark == "beside" and size:
-                # A 200 mm wall cannot hold its mark, and rotating it inside runs the text over the
-                # beams alongside. The client writes it beside the wall on two lines, so do we --
-                # decided here, not in the writer, so the workbook and Revit place it there too.
-                # The size is copied verbatim: the drawn text must read back as this same mark.
-                lines = [base, size]
+            centre = box_centre(outline)
+            # answer 7: the mark sits on the bounding-box centre, and shrinks to stay inside its
+            # member rather than overflowing onto the beams alongside. A smaller mark that reads
+            # is worth more than a full-height one lying across its neighbours.
+            ladder = text.column_mark_heights or [text.mark_height]
+            base_txt, size_txt = split_mark_size(mark)
+            drawn, lines = mark, []
+            if spec.placement.column_mark_fit == "fixed":
+                height = max(ladder)
+            else:
+                height = fit_text_height(mark, ladder, text.width_factor, outline, rot, centre)
+                if size_txt and not text_fits(mark, height, text.width_factor, outline, rot, centre):
+                    # a 17-character mark will not go inside a 500 mm wall leg at any height a
+                    # drafter can read. The base alone does, as it does on a short beam span; the
+                    # size stays in the schedule and in the XDATA utility 4 reads back.
+                    h2 = fit_text_height(base_txt, ladder, text.width_factor, outline, rot, centre)
+                    if text_fits(base_txt, h2, text.width_factor, outline, rot, centre):
+                        drawn, lines, height = base_txt, [base_txt], h2
+            fits = text_fits(drawn, height, text.width_factor, outline, rot, centre)
+            if c.wall_like and spec.placement.wall_mark == "beside" and size_txt:
+                lines = [base_txt, size_txt]
                 gap = spec.placement.wall_mark_gap_mm + text.mark_height
                 if (maxy - miny) >= (maxx - minx):        # wall up the page: mark to its right
                     mp = (maxx + gap, (miny + maxy) / 2)
                 else:                                      # wall across the page: mark above it
                     mp = ((minx + maxx) / 2, maxy + gap)
-                rot = 0.0
+                rot, height = 0.0, max(ladder)
             elif place == "centre" or (place == "auto" and fits):
-                mp = representative_point(outline)
+                mp = centre
                 if not fits:
-                    diag.info("MARK_FIT", f"Mark '{mark}' overflows column {c.id}; placed at its centre anyway", floor_id=f.id, element_id=c.id, location=mp)
+                    diag.info("MARK_FIT", f"Mark '{drawn}' does not fit inside column {c.id} even at {height:.0f} mm text; placed at its centre anyway", floor_id=f.id, element_id=c.id, location=mp)
             else:
                 mp = ((minx + maxx) / 2, maxy + spec.placement.column_mark_gap_mm)
                 rot = 0.0
@@ -220,7 +233,7 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
             np_.columns.append(NColumn(id=cid, floor_id=f.id, stack_id=stack.id, mark=mark, mark_lines=lines or [mark], shape=c.shape, center=c.center,
                                        width_mm=c.width_mm, depth_mm=c.depth_mm, rotation_deg=c.rotation_deg, diameter_mm=c.diameter_mm,
                                        outline=_pts(ring_points(outline)), stops_here=stops, starts_here=starts, wall_like=c.wall_like,
-                                       size_source=c.size_source, mark_position=_pt(mp), mark_rotation_deg=round(rot, 3), client_mark=c.mark,
+                                       size_source=c.size_source, mark_position=_pt(mp), mark_rotation_deg=round(rot, 3), mark_height_mm=round(height, 2), client_mark=c.mark,
                                        source_ids=[c.id], source_handles=c.source_handles))
             np_.mark_map.append(MarkMap(element_id=cid, floor_id=f.id, kind="column", mark=mark, client_mark=c.mark, client_tags=c.tags))
 

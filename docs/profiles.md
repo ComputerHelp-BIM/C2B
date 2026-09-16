@@ -50,6 +50,24 @@ tolerances:
 `hidden` (skip), `stop`/`start`/`stub`/`podium` (columns), `fold`/`sunk`/`drop`/`projection`
 (slabs, footings), `non_structural`/`retaining` (walls), `hatch`.
 
+## Which witness wins: tag or outline
+
+When the client's tag and their own outline disagree about a size, `size_sources` decides which
+is believed. `tag` (the default) takes the tag or schedule and falls back to the outline; `outline`
+measures the drawing and keeps the tag for the mark alone. Neither is right for every client --
+a firm that dimensions carefully wants the outline, one that keeps a maintained schedule wants
+the tag -- and the disagreement is reported either way, as `COLUMN_SIZE_MISMATCH`.
+
+```yaml
+size_sources:
+  column: tag        # or: outline
+  beam: tag
+  slab: tag
+  footing: tag
+```
+
+In the drafter's window this is the **Column size from** box; only columns act on it so far.
+
 ## Tolerances worth knowing
 
 | Key | Default | Meaning |

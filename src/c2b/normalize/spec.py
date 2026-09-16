@@ -25,6 +25,9 @@ class TextSpec(BaseModel):
     font: str = "JetBrainsMono-VariableFont_wght.ttf"
     fallback_font: str = "arial.ttf"
     mark_height: float = 125.0
+    #: answer 7: column marks step down this ladder to stay inside their member. Standard
+    #: heights only -- a drawing whose every mark is a different size cannot be re-styled.
+    column_mark_heights: list[float] = [100.0, 75.0, 50.0]
     note_height: float = 250.0
     title_height: float = 500.0
     width_factor: float = 0.6         # approximate glyph width / height, used for fit checks
@@ -68,8 +71,9 @@ class Placement(BaseModel):
     column_mark: Literal["above", "centre", "auto"] = "centre"     # answer 1C: always inside
     column_mark_gap_mm: float = 120.0       # gap between column top edge and mark centre line (for "above")
     column_mark_rotate: Literal["none", "long-side"] = "long-side"  # answer 7: text runs along the longer side
-    wall_mark: Literal["beside", "inside"] = "beside"   # a 200 x 1500 wall cannot hold its mark inside, as the client's own drawings show
-    wall_mark_gap_mm: float = 200.0                     # gap from the wall face to the mark
+    wall_mark: Literal["beside", "inside"] = "inside"   # answer 7: on the bounding-box centre, like every other column
+    wall_mark_gap_mm: float = 200.0                     # gap from the wall face to the mark (for "beside")
+    column_mark_fit: Literal["shrink", "fixed"] = "shrink"   # answer 7: shrink the text rather than overflow the member
     beam_mark_shorten: bool = True                      # a span too short for the full mark shows the mark alone, the size staying in the schedule
     beam_mark: Literal["centre"] = "centre"
     beam_mark_rotate: bool = True           # answer 7B: text runs along the beam

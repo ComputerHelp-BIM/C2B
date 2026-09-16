@@ -33,7 +33,15 @@ def extract_columns(ctx: FloorContext) -> list[Column]:
         s = shapes[i]
         return max(tol.column_tag_radius_min_mm, tol.column_tag_radius_factor * min(s.width, s.depth), 0.5 * max(s.width, s.depth), 4 * tag.height)
 
-    assigned, unassigned = associate_tags(polys, tags, radius)
+    def size_matches(i: int, tag: TagCand) -> bool | None:
+        """Does the size on this tag describe this column as drawn?"""
+        w, d = tag.parsed.width_mm, tag.parsed.depth_mm
+        if not (w and d):
+            return None
+        s_ = shapes[i]
+        return _sizes_match((w, d), (s_.width, s_.depth), tol.size_mismatch_tol_mm)
+
+    assigned, unassigned = associate_tags(polys, tags, radius, size_match_fn=size_matches)
     columns: list[Column] = []
     no_size_ids: list[str] = []
     for i, o in enumerate(outlines):
@@ -76,6 +84,14 @@ def extract_columns(ctx: FloorContext) -> list[Column]:
                 width, depth = ctx.layer_size(o.layer)  # type: ignore[misc]
                 size_source = "layer"
 
+        if ctx.size_sources.column == "outline" and size_source in ("tag", "schedule", "block", "layer"):
+            # answer 5: the drawing wins, and the tag is kept for the mark alone. The size the
+            # client stated is still reported where it differs, so neither reading is lost.
+            if s.shape == "circle":
+                dia = round(s.diameter or 0, 1)
+            else:
+                width, depth = drawn_w, drawn_d
+            size_source = "geometry"
         if size_source == "unknown":
             if s.shape == "circle":
                 dia = round(s.diameter or 0, 1)

@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from .. import __version__
 from ..schema import Diagnostic, Point2, TagRef
 
-NORMALIZED_SCHEMA_VERSION = "0.6.0"
+NORMALIZED_SCHEMA_VERSION = "0.7.0"
 
 
 class NFloor(BaseModel):
@@ -74,6 +74,7 @@ class NColumn(BaseModel):
     size_source: str = "unknown"
     mark_position: Point2
     mark_rotation_deg: float = 0.0
+    mark_height_mm: float | None = None    # shrunk to fit this member; None means the spec height
     client_mark: str | None = None
     source_ids: list[str] = Field(default_factory=list)
     source_handles: list[str] = Field(default_factory=list)

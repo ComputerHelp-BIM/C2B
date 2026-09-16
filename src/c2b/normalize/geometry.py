@@ -270,11 +270,39 @@ def representative_point(poly: Polygon) -> Pt:
     return (q.x, q.y)
 
 
-def text_fits(text: str, height: float, width_factor: float, poly: Polygon, rotation_deg: float = 0.0) -> bool:
+def text_fits(text: str, height: float, width_factor: float, poly: Polygon, rotation_deg: float = 0.0,
+              centre: Pt | None = None) -> bool:
     w = len(text) * height * width_factor
-    c = representative_point(poly)
+    c = centre if centre is not None else representative_point(poly)
     box = rectangle_polygon(c, w * 1.1, height * 1.3, rotation_deg)
     return poly.contains(box)
+
+
+def fit_text_height(text: str, heights: list[float], width_factor: float, poly: Polygon,
+                    rotation_deg: float = 0.0, centre: Pt | None = None) -> float:
+    """The largest of the drawing's standard text heights at which this mark fits inside ``poly``.
+
+    Heights are chosen from a ladder, not computed freely: a drawing whose every mark is a
+    slightly different size looks wrong and cannot be edited or re-styled as a set. Falls back to
+    the smallest height when even that overflows -- the mark is still drawn, because a drafter
+    needs to see it to correct it.
+    """
+    ladder = sorted((h for h in heights if h > 0), reverse=True) or [1.0]
+    for h in ladder:
+        if text_fits(text, h, width_factor, poly, rotation_deg, centre):
+            return h
+    return ladder[-1]
+
+
+def box_centre(poly: Polygon) -> Pt:
+    """The centre of the bounding box, or a point inside the shape when that centre is not.
+
+    A rectangular column or wall leg wants its mark on the box centre. An L or T shape has a box
+    centre out in the notch, where the text would sit on nothing.
+    """
+    minx, miny, maxx, maxy = poly.bounds
+    c = ((minx + maxx) / 2, (miny + maxy) / 2)
+    return c if poly.contains(Point(c)) else representative_point(poly)
 
 
 def fit_arcs(ring: list[Pt], circles: list[tuple[Pt, float]], tol: float) -> tuple[list[Pt], list[float]]:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -133,6 +133,21 @@ class Tolerances(BaseModel):
     large_coord_mm: float = 500000.0
 
 
+class SizeSources(BaseModel):
+    """Which witness wins, per element, when the client's tag and their outline disagree.
+
+    ``tag`` takes the tag or schedule and falls back to the outline; ``outline`` measures the
+    drawing and keeps the tag for the mark alone. Neither is right for every client -- a firm
+    that dimensions carefully wants the outline, one that keeps a maintained schedule wants the
+    tag -- so it is a setting, defaulting to the tag as the client's stated intent.
+    """
+
+    column: Literal["tag", "outline"] = "tag"
+    beam: Literal["tag", "outline"] = "tag"
+    slab: Literal["tag", "outline"] = "tag"
+    footing: Literal["tag", "outline"] = "tag"
+
+
 class Profile(BaseModel):
     name: str = "auto"
     description: str | None = None
@@ -140,6 +155,7 @@ class Profile(BaseModel):
     layers: dict[str, LayerRule] = Field(default_factory=dict)
     floor: FloorSettings = Field(default_factory=FloorSettings)
     tolerances: Tolerances = Field(default_factory=Tolerances)
+    size_sources: SizeSources = Field(default_factory=SizeSources)
     explode_blocks: bool = True
     max_block_depth: int = 4
 

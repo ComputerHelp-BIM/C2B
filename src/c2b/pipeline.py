@@ -167,7 +167,8 @@ def extract(path: str | Path, user_profile: Profile | None = None, units_overrid
 
     for frame in frames:
         localise(frame)
-        ctx = FloorContext(frame=frame, roles=roles, rules=rules, tol=tol, diag=diag, schedules=sched_index)
+        ctx = FloorContext(frame=frame, roles=roles, rules=rules, tol=tol, diag=diag, schedules=sched_index,
+                           size_sources=profile.size_sources)
         project.grids.extend(extract_grids(ctx))
         project.columns.extend(extract_columns(ctx))
         project.beams.extend(extract_beams(ctx))

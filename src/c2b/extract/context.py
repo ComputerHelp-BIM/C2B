@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from ..diagnostics import DiagnosticsCollector
 from ..dxfio import Prim
 from ..floors import FloorFrame
-from ..profile import LayerRule, Tolerances
+from ..profile import LayerRule, SizeSources, Tolerances
 from ..schedules import ScheduleIndex
 from ..schema import Point2, TagRef
 
@@ -30,6 +30,7 @@ class FloorContext:
     tol: Tolerances
     diag: DiagnosticsCollector
     schedules: ScheduleIndex
+    size_sources: SizeSources = field(default_factory=SizeSources)
     by_geom_role: dict[str, list[Prim]] = field(default_factory=dict)
     by_text_role: dict[str, list[Prim]] = field(default_factory=dict)
     assigned_tag_handles: set[str] = field(default_factory=set)

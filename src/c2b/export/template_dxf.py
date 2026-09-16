@@ -191,7 +191,7 @@ class TemplateWriter:
             # the normaliser decided the text, its lines and where it sits; XDATA keeps the full
             # mark so utility 4 recovers it even when the drawing shows it on two lines
             self._mtext("column_mark", "\\P".join(c.mark_lines or [c.mark]), g(c.floor_id, c.mark_position),
-                        spec.text.mark_height, 5, rotation=c.mark_rotation_deg, id=c.id, mark=c.mark)
+                        c.mark_height_mm or spec.text.mark_height, 5, rotation=c.mark_rotation_deg, id=c.id, mark=c.mark)
             if spec.hatch.hatch_all_columns or c.stops_here:
                 stop_rings.setdefault(c.floor_id, []).append(pts if c.shape != "circle" else _circle_ring(g(c.floor_id, c.center), (c.diameter_mm or 300) / 2))
         for fid, rings in stop_rings.items():
