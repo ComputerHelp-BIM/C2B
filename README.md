@@ -11,7 +11,7 @@ Version `0.13.0` (tool) — extraction schema `0.7.0`, normalised schema `0.10.0
 ## Pipeline
 
 | Step | Utility | Status |
-|---|---|---|
+| --- | --- | --- |
 | 1 | **Extract + check**: client DXF → canonical JSON, Excel review workbook, review DXF, diagnostics | `c2b extract`, v0.1.0 |
 | 2 | **Normalise**: column stacks, beam spans at supports, slab panels, template marks → template DXF + schedules | `c2b normalize`, v0.5.0 |
 | 3 | **Round trip**: template DXF → JSON + Excel again, verified against the normalised model | `c2b verify`, v0.6.0 |
@@ -104,7 +104,7 @@ convention is configured, and `docs/round-trip.md` for the verification.
 `c2b extract` writes, for `client.dxf`:
 
 | File | Purpose |
-|---|---|
+| --- | --- |
 | `client.c2b.json` | canonical data, schema-versioned; input for every later step |
 | `client.review.xlsx` | review workbook: Summary, Floors, Layers, Grids, Columns, Beams, Slabs, Footings, Openings, Walls, Schedules, Unassigned tags, Diagnostics |
 | `client.review.dxf` | the extracted elements drawn back in the client's coordinates on `C2B-*` layers with element ids; overlay it on the original |
@@ -126,7 +126,7 @@ convention is configured, and `docs/round-trip.md` for the verification.
 All codes are listed in `src/c2b/diagnostics.py` with their meaning. The most common:
 
 | Code | Meaning |
-|---|---|
+| --- | --- |
 | `UNITS_GUESSED` | no `$INSUNITS`; confirm with `--units` |
 | `LAYER_UNMAPPED` | a layer with geometry but no role |
 | `COLUMN_NO_SIZE` / `BEAM_NO_DEPTH` / `FOOTING_NO_SIZE` / `SLAB_NO_THICKNESS` | missing data |
@@ -138,7 +138,7 @@ All codes are listed in `src/c2b/diagnostics.py` with their meaning. The most co
 
 ## Repository layout
 
-```
+```Text
 src/c2b/
   schema.py        canonical models (pydantic)        docs/schema.md
   profile.py       layer roles, tolerances, YAML       docs/profiles.md
