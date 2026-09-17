@@ -4,7 +4,8 @@ Answers 2, 3 and 4 on columns:
 
 * the template models the column *below* a floor level, so of the outlines the client draws on
   one plan only some belong to that floor;
-* an L, T, C or F shaped wall is marked and sized leg by leg, so each leg is its own element;
+* an L, T, C or F shaped wall is marked and sized leg by leg, so each leg is its own element,
+  and the legs butt against each other rather than overlapping at the junction;
 * an untagged stub column is ``SC{n}`` -- not ``ST``, which is the stair mark -- and any other
   untagged column takes its stack's mark
   from whichever floor the client did tag, falling back to the next free number.
@@ -134,7 +135,11 @@ def test_each_leg_of_a_shaped_wall_is_its_own_element_with_its_own_mark(project)
     # width/depth follow the plan orientation; the mark keeps the client's b x D order
     assert sorted((legs[0].width_mm, legs[0].depth_mm)) == [200.0, 2000.0]
     assert sorted((legs[1].width_mm, legs[1].depth_mm)) == [200.0, 1300.0]
-    assert all(c.size_source == "tag" for c in legs), "each leg took its own tag"
+    # the big leg keeps its tagged length; the small one was cut back to butt against it, so its
+    # built length comes from the drawing -- and lands on what the client already dimensioned
+    assert legs[0].size_source == "tag"
+    assert legs[1].size_source == "geometry"
+    assert [c.mark for c in legs] == ["SW1", "SW2"], "a cut leg keeps its own name"
 
 
 def test_an_untagged_stub_column_is_numbered_in_its_own_series(project):

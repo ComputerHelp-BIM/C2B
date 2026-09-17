@@ -15,6 +15,7 @@ from .extract.context import FloorContext
 from .extract.footings import extract_footings
 from .extract.grids import extract_grids
 from .extract.legend import legend_zones, parse_legend, regions_from_hatches
+from .geometry import wraps_a_text
 from .extract.openings import extract_openings, extract_stairs, extract_walls
 from .extract.slabs import extract_slabs
 from .floors import FloorFrame, detect_floors, localise
@@ -212,9 +213,14 @@ def extract(path: str | Path, user_profile: Profile | None = None, units_overrid
             for a, b in zip(coords[:-1], coords[1:]):
                 if ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5 >= 50.0:
                     project.slab_edges.append(SlabEdge(floor_id=frame.id, start=Point2(x=a[0], y=a[1]), end=Point2(x=b[0], y=b[1]), source_layer=p_.layer, source_handle=p_.handle))
+        # a box drawn round a slab tag is annotation, not an outline: read as one it closes a
+        # small panel of its own inside the bay it labels, and the two overlap completely
+        slab_tags = ctx.texts("SLAB_TAG")
         for p_ in ctx.geoms("SLAB", "polygon"):
             if p_.geom.area < 1e5 or p_.layer in step_layers:
-                continue   # text boxes, hatch swatches, and level changes inside a closed bay
+                continue   # hatch swatches and level changes inside a closed bay
+            if wraps_a_text(p_.geom, slab_tags, tol.text_box_area_ratio):
+                continue
             coords = list(p_.geom.exterior.coords)
             for a, b in zip(coords[:-1], coords[1:]):
                 project.slab_edges.append(SlabEdge(floor_id=frame.id, start=Point2(x=a[0], y=a[1]), end=Point2(x=b[0], y=b[1]), source_layer=p_.layer, source_handle=p_.handle))

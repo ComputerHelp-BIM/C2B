@@ -51,6 +51,11 @@ def parse_pcc_safe(text: str):
 def _tagged_size(c) -> tuple[float, float] | None:
     """Size in the order the client's tag states it, else (short, long) from the resolved size."""
     from ..tags import parse_tag
+    if c.size_source == "geometry" and c.width_mm and c.depth_mm:
+        # the drawing is the authority here -- a leg cut back to butt against a larger one, or a
+        # member the client never tagged -- so the mark states what is built, not what the tag
+        # said before the cut
+        return (min(c.width_mm, c.depth_mm), max(c.width_mm, c.depth_mm))
     for t in c.tags:
         pt = parse_tag(t.text)
         if pt.width_mm and pt.depth_mm:

@@ -13,6 +13,31 @@ importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes
 values.
 
+## [0.13.1] - 2026-09-17
+
+### Fixed
+
+- **Slab panels overlapping completely.** A box the client draws round a slab tag is a closed
+  polyline that looks exactly like a small slab, and read as one it closed a little panel of its
+  own inside the bay it labels -- 50 pairs of panels sitting on top of each other on Test17, all
+  of them 845 x 496 boxes round a `300THK. SLAB` tag. An outline that fits the text inside it
+  that tightly is a box round that text, not a member. **Overlapping panel pairs: 50 → 0.**
+- **Wall legs overlapping at their junctions.** Each leg runs the full width of the wall, so at
+  a corner or a T the two shared that square and the smaller pushed into the larger by its own
+  width. The larger member now keeps its full length and the smaller is cut back to meet its
+  face. Test17's `T1SW135` wall comes out 200X5700, 200X2100 and 200X2300, against the client's
+  own dimensions. **Overlapping column pairs: 71 → 9**, the nine being members crossing at their
+  middles rather than meeting at an end, which are left for a human.
+- A cut member takes its size from the drawing rather than its tag, since the tag states the
+  length before the cut; it keeps its name. Test17 round trip: 535 → 504 warnings.
+
+### Changed
+
+- Junction trimming shortens a member along its own axis instead of subtracting one shape from
+  the other. The client's rectangles are a fraction of a degree off square, so a boolean
+  difference leaves a hairline sliver along the shared face and the remainder stops being a
+  rectangle at all -- which is why the first attempt cut only some of the legs.
+
 ## [0.13.0] - 2026-09-17
 
 Beam depths. Extraction schema `0.6.0` → `0.7.0`, normalised schema `0.9.0` →

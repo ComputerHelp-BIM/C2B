@@ -27,6 +27,7 @@ class Outline:
     block_size: tuple[float, float] | None = None
     block_path: tuple[str, ...] = ()
     priority: int = 0
+    trimmed: bool = False          # a wall leg cut back at a junction; its drawn size is the built one
     merged_handles: list[str] = field(default_factory=list)
 
 

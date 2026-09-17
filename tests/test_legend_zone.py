@@ -88,3 +88,52 @@ def test_a_cut_out_swatch_is_not_an_opening(project):
 
 def test_the_legend_band_is_reported(project):
     assert any(d.code == "LEGEND_ZONE" for d in project.diagnostics)
+
+
+def test_a_box_round_a_slab_tag_is_not_a_slab_outline(tmp_path):
+    """A drafter boxing a tag leaves a closed polyline that looks exactly like a small slab.
+
+    Read as one it closes a little panel of its own inside the bay it labels, and the two overlap
+    completely -- 50 such pairs on Test17. What gives the box away is how tightly it fits the
+    words: a real slab holding its own tag is orders of magnitude larger than the text.
+    """
+    from shapely.geometry import Polygon
+
+    from c2b.geometry import wraps_a_text
+    from c2b.dxfio import iter_prims, load_document, modelspace_extent, read_meta
+    from c2b.units import resolve_units
+
+    path = tmp_path / "tagbox.dxf"
+    doc = ezdxf.new("R2018")
+    doc.header["$INSUNITS"] = 4
+    msp = doc.modelspace()
+    for name in ("Boundary", "Origin", "SLAB THK.", "G-ANNO-TEXT"):
+        doc.layers.add(name)
+    msp.add_lwpolyline([(-3000, -3000), (20000, -3000), (20000, 15000), (-3000, 15000)],
+                       close=True, dxfattribs={"layer": "Boundary"})
+    msp.add_point((0, 0), dxfattribs={"layer": "Origin"})
+    msp.add_text("GROUND FLOOR LEVEL", dxfattribs={"layer": "G-ANNO-TEXT", "height": 400}).set_placement((8000, -2500))
+    # the client's box: 845 x 496 round a two-line tag of height 162
+    msp.add_lwpolyline([(0, 0), (845, 0), (845, 496), (0, 496)], close=True, dxfattribs={"layer": "SLAB THK."})
+    msp.add_text("300THK.\nSLAB", dxfattribs={"layer": "SLAB THK.", "height": 162}).set_placement((60, 100))
+    # a real slab holding the same tag, two orders of magnitude bigger
+    msp.add_lwpolyline([(4000, 0), (10000, 0), (10000, 5000), (4000, 5000)], close=True, dxfattribs={"layer": "SLAB THK."})
+    msp.add_text("300THK.\nSLAB", dxfattribs={"layer": "SLAB THK.", "height": 162}).set_placement((6800, 2400))
+    doc.saveas(str(path))
+
+    d = load_document(path)
+    res = resolve_units(read_meta(d, str(path)).insunits, modelspace_extent(d))
+    prims, _ = iter_prims(d, res.scale_to_mm)
+    texts = [p for p in prims if p.text and p.layer == "SLAB THK."]
+    boxes = [p for p in prims if p.kind == "polygon" and p.layer == "SLAB THK."]
+    assert len(boxes) == 2 and texts
+
+    small = min(boxes, key=lambda p: p.geom.area)
+    big = max(boxes, key=lambda p: p.geom.area)
+    assert wraps_a_text(small.geom, texts), "the box round the tag was not recognised"
+    assert not wraps_a_text(big.geom, texts), "a real slab was mistaken for a text box"
+
+    edges = extract(path).project.slab_edges
+    from_box = [e for e in edges if max(abs(e.start.x), abs(e.end.x)) <= 900]
+    assert not from_box, "the tag box was read as a slab outline"
+    assert edges, "the real slab outline was lost too"

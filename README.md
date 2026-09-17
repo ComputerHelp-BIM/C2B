@@ -9,7 +9,7 @@ schema with diagnostics, and normalising them into the firm's template drawing
 (`CH-` layers, `C12-300X900` marks, spans between supports, slab panels, level
 frame).
 
-Version `0.13.0` (tool) — extraction schema `0.7.0`, normalised schema `0.10.0`.
+Version `0.13.1` (tool) — extraction schema `0.7.0`, normalised schema `0.10.0`.
 See [CHANGELOG.md](CHANGELOG.md).
 
 ## Pipeline
@@ -184,7 +184,7 @@ profiles/          client profiles (YAML)
 samples/           client drawings (git-ignored)
 ```
 
-## Known limits of v0.13.0
+## Known limits of v0.13.1
 
 - Cantilever slabs, chajjas and balconies need the client's slab edge lines;
   without them a

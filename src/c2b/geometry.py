@@ -584,3 +584,72 @@ def split_rectilinear(poly: Polygon, min_side: float = 100.0, area_tol: float = 
     if len(legs) < 2 or unary_union(legs).area < (1 - area_tol) * p.area:
         return [poly]                                   # the legs do not account for the shape
     return [rotate(leg, angle, origin=origin) for leg in legs]
+
+
+def wraps_a_text(poly: Polygon, texts, max_area_ratio: float = 3.0) -> bool:
+    """Is this outline just a box drawn round one of these texts?
+
+    A drafter boxing a slab tag leaves a closed polyline that looks exactly like a small slab.
+    What gives it away is how tightly it fits the words: a real slab containing its own tag is
+    orders of magnitude larger than the text, a box round it only a little larger.
+    """
+    if poly is None or poly.is_empty or poly.area <= 0:
+        return False
+    for t in texts:
+        if not poly.contains(Point(t.rep_point())):
+            continue
+        h = t.text_height or 0.0
+        if h <= 0:
+            continue
+        lines = (t.text or "").split("\n")
+        est = (max((len(l) for l in lines), default=0) * h * 0.7) * (len(lines) * h)
+        if est > 0 and poly.area <= max_area_ratio * est:
+            return True
+    return False
+
+
+def shorten_to_clear(rect: Polygon, other: Polygon, min_len: float = 1.0, eps: float = 2.0) -> Polygon | None:
+    """Pull a rectangle back along its own length until it no longer overlaps ``other``.
+
+    Subtracting one from the other is no good: the client's rectangles are a fraction of a degree
+    off square, so a boolean difference leaves a hairline sliver along the shared face and the
+    remainder is no longer a rectangle at all. Shortening along the member's own axis is what a
+    drafter does, and it always leaves a rectangle.
+
+    Returns ``None`` when the overlap is in the middle of the rectangle rather than at one end --
+    that is not a junction and is left for a human -- or when nothing usable would be left.
+    """
+    inter = rect.intersection(other)
+    if inter.is_empty or inter.area <= 0:
+        return rect
+    mrr = rect.minimum_rotated_rectangle
+    if mrr.geom_type != "Polygon":
+        return None
+    ring = list(mrr.exterior.coords)[:4]
+    edges = [(ring[i], ring[(i + 1) % 4]) for i in range(4)]
+    (ax, ay), (bx, by) = max(edges, key=lambda e: math.dist(e[0], e[1]))
+    length = math.hypot(bx - ax, by - ay) or 1.0
+    u = ((bx - ax) / length, (by - ay) / length)
+    n = (-u[1], u[0])
+
+    def spread(points):
+        ts = [p[0] * u[0] + p[1] * u[1] for p in points]
+        os_ = [p[0] * n[0] + p[1] * n[1] for p in points]
+        return min(ts), max(ts), min(os_), max(os_)
+
+    t0, t1, o0, o1 = spread(ring)
+    pts = (list(inter.exterior.coords) if inter.geom_type == "Polygon"
+           else [c for g in getattr(inter, "geoms", []) if g.geom_type == "Polygon" for c in g.exterior.coords])
+    if not pts:
+        return rect
+    i0, i1, _a, _b = spread(pts)
+    if i0 <= t0 + eps:
+        t0 = i1
+    elif i1 >= t1 - eps:
+        t1 = i0
+    else:
+        return None
+    if t1 - t0 < min_len:
+        return None
+    return Polygon([(t * u[0] + o * n[0], t * u[1] + o * n[1])
+                    for t, o in ((t0, o0), (t1, o0), (t1, o1), (t0, o1))])

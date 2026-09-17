@@ -107,6 +107,26 @@ both run to the outside face, which is how the client dimensions them and how
 the walls meet in
 the model. A shape that is not rectilinear is left whole.
 
+## Members butt, they do not overlap
+
+Each leg of a shaped wall runs the full width of the wall, so at a corner or a T the two share
+that square and the junction comes out doubled. The larger member is the one the client
+dimensions, so it keeps its full length and the smaller is cut back to meet its face -- which is
+the overlap, usually the larger member's width. This runs across the whole floor, because a C or
+F shaped wall is as often drawn as several polylines as one.
+
+A cut member is no longer the length its own tag states, so it takes its size from the drawing
+and keeps its name (`COLUMN_LEG_TRIMMED`). Where the overlap is in the *middle* of a member
+rather than at one end, both ends stick out: that is a crossing, not a junction, and it is left
+for a human.
+
+## A box round a tag is not an outline
+
+A drafter boxing a slab tag leaves a closed polyline that looks exactly like a small slab; read
+as one it closes a little panel of its own inside the bay it labels. What gives it away is how
+tightly it fits the words, which `text_box_area_ratio` sets: a real slab holding its own tag is
+orders of magnitude larger than the text, a box round it only a little larger.
+
 ## Sizes written on a dimension
 
 A drafter who overrides a dimension's text with a size is stating that member's

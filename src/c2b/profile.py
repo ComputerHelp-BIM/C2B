@@ -128,6 +128,7 @@ class Tolerances(BaseModel):
     footing_min_side_mm: float = 300.0
     opening_min_area_mm2: float = 40000.0
     dimension_tag_height_mm: float = 125.0  # assumed text height for a dimension override that states no height
+    text_box_area_ratio: float = 3.0        # an outline this close in area to the text inside it is a box round that text
     size_mismatch_tol_mm: float = 26.0
     schedule_row_tol_factor: float = 0.6
     z_tol_mm: float = 0.5

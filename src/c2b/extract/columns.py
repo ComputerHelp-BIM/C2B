@@ -5,11 +5,15 @@ from dataclasses import replace
 
 from shapely.strtree import STRtree
 
-from ..geometry import classify_polygon, is_wall_like, nearest_grid_intersection_label, split_rectilinear
+from ..geometry import (classify_polygon, is_wall_like, nearest_grid_intersection_label, shorten_to_clear,
+                        split_rectilinear)
 from ..schema import Column
 from .associate import TagCand, associate_tags, make_tag_cands, merge_parsed
 from .context import FloorContext, outline_points, pt, tag_ref
 from .outlines import Outline, collect_outlines
+
+#: overlaps smaller than this are drafting noise, not a junction
+_TRIM_MIN_AREA_MM2 = 100.0
 
 
 def _sizes_match(a: tuple[float, float], b: tuple[float, float], tol: float) -> bool:
@@ -53,6 +57,48 @@ def _this_floors_columns(ctx: FloorContext, outlines: list[Outline]) -> list[Out
     return keep
 
 
+def _trim_junctions(ctx: FloorContext, outlines: list[Outline]) -> list[Outline]:
+    """Butt the members of a wall against each other instead of letting them overlap.
+
+    Each leg runs the full width of the wall, so at a corner or a T the two share that square.
+    Drawn as they are, the smaller leg pushes into the larger by its width and the junction comes
+    out doubled. The larger member is the one the client dimensions, so it stays whole and the
+    smaller is cut back to meet its face -- which is the overlap, usually the larger's width.
+
+    This runs across the whole floor, not within one outline's legs: a C or F shaped wall is as
+    often drawn as several separate polylines as one, and the legs overlap just the same.
+
+    A cut member is no longer the length its own tag states, so it is flagged and takes its size
+    from the drawing instead; the mark keeps its name.
+    """
+    if len(outlines) < 2:
+        return outlines
+    order = sorted(range(len(outlines)), key=lambda i: -outlines[i].poly.area)
+    polys = [o.poly for o in outlines]
+    tree = STRtree(polys)
+    out: list[Outline] = [None] * len(outlines)   # type: ignore[list-item]
+    settled: dict[int, object] = {}
+    trimmed = 0
+    for i in order:
+        g, cut = polys[i], False
+        for k in tree.query(g, predicate="intersects"):
+            j = int(k)
+            if j == i or j not in settled:
+                continue                          # only the members already settled may cut
+            other = settled[j]
+            if not g.intersects(other) or g.intersection(other).area <= _TRIM_MIN_AREA_MM2:
+                continue
+            d = shorten_to_clear(g, other, min_len=ctx.tol.column_min_side_mm)
+            if d is not None and d is not g and d.area > 0:
+                g, cut = d, True
+        settled[i] = g
+        out[i] = replace(outlines[i], poly=g, trimmed=outlines[i].trimmed or cut)
+        trimmed += 1 if cut else 0
+    if trimmed:
+        ctx.diag.info("COLUMN_LEG_TRIMMED", f"{trimmed} wall leg(s) cut back to butt against the larger member at a junction; their size is taken from the drawing, not their tag", floor_id=ctx.floor_id)
+    return [o for o in out if o is not None and o.poly.area > 0]
+
+
 def _split_legs(ctx: FloorContext, outlines: list[Outline]) -> list[Outline]:
     """Answer 2: each leg of an L, T, C or F shaped wall is its own element.
 
@@ -82,7 +128,7 @@ def extract_columns(ctx: FloorContext) -> list[Column]:
     )
     if not outlines:
         return []
-    outlines = _split_legs(ctx, _this_floors_columns(ctx, outlines))
+    outlines = _trim_junctions(ctx, _split_legs(ctx, _this_floors_columns(ctx, outlines)))
     if not outlines:
         return []
 
@@ -148,7 +194,11 @@ def extract_columns(ctx: FloorContext) -> list[Column]:
                 width, depth = ctx.layer_size(o.layer)  # type: ignore[misc]
                 size_source = "layer"
 
-        if ctx.size_sources.column == "outline" and size_source in ("tag", "schedule", "block", "layer"):
+        if o.trimmed and size_source in ("tag", "schedule", "block", "layer") and s.shape != "circle":
+            # this leg was cut back to butt against a larger one, so its tag's length is the
+            # length before the cut; what is built is what is drawn. The mark keeps its name.
+            width, depth, size_source = drawn_w, drawn_d, "geometry"
+        elif ctx.size_sources.column == "outline" and size_source in ("tag", "schedule", "block", "layer"):
             # answer 5: the drawing wins, and the tag is kept for the mark alone. The size the
             # client stated is still reported where it differs, so neither reading is lost.
             if s.shape == "circle":
