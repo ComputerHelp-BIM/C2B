@@ -1,10 +1,13 @@
 # Canonical schema v0.7.0
 
-Written by `c2b extract` as `<stem>.c2b.json`. All lengths are millimetres, all angles
-degrees, all element coordinates are **floor-local** (the floor `Origin` point is 0,0).
-Every element keeps `source_handles` (DXF entity handles) so it can be traced back.
+Written by `c2b extract` as `<stem>.c2b.json`. All lengths are millimetres, all
+angles
+degrees, all element coordinates are **floor-local** (the floor `Origin` point
+is 0,0).
+Every element keeps `source_handles` (DXF entity handles) so it can be traced
+back.
 
-```
+```text
 Project
 ├─ schema_version, generator, generated_at, units ("mm"), profile_name
 ├─ drawing        file, dxf_version, insunits, unit_name, unit_scale_to_mm, unit_source, unit_confidence, layouts, extents
@@ -28,20 +31,30 @@ Project
 
 ## Field conventions
 
-- `size_source` / `depth_source` / `thickness_source`: `tag`, `schedule`, `layer`, `block`,
-  `geometry`, `default`, `unknown`. Anything other than `tag`/`schedule` deserves a look.
-- `width_mm` × `depth_mm` for rectangles follow the drawn orientation: `width_mm` is the
-  extent along the element's local x axis, `rotation_deg` (−45, 45] rotates that axis.
-  `drawn_*` are what the geometry measures; `width_mm`/`depth_mm` are what the tag or
+- `size_source` / `depth_source` / `thickness_source`: `tag`, `schedule`,
+  `layer`, `block`,
+  `geometry`, `default`, `unknown`. Anything other than `tag`/`schedule`
+  deserves a look.
+- `width_mm` × `depth_mm` for rectangles follow the drawn orientation:
+  `width_mm` is the
+  extent along the element's local x axis, `rotation_deg` (−45, 45] rotates that
+  axis.
+  `drawn_*` are what the geometry measures; `width_mm`/`depth_mm` are what the
+  tag or
   schedule says (drawn values when nothing else exists).
-- `wall_like` on a column: long/short ratio ≥ 4 and long side ≥ 1 m. Such elements are
-  kept as columns (that is how the drawings tag them) and flagged for the Revit step,
+- `wall_like` on a column: long/short ratio ≥ 4 and long side ≥ 1 m. Such
+  elements are
+  kept as columns (that is how the drawings tag them) and flagged for the Revit
+  step,
   where they will become structural walls.
 - `modifier` on columns: `start`, `stop`, `stub`, `podium` (from layer names).
   On slabs: `drop`, `fold`, `projection`, `sunk`.
-- `grid_ref`: nearest grid intersection ("3/B") within 600 mm, when both axes have grids.
-- Beams: `start`/`end` are the centreline over the paired length; `outline` is the plan
-  rectangle; `n_edge_parts` says how many line pieces were merged (high numbers = beam
+- `grid_ref`: nearest grid intersection ("3/B") within 600 mm, when both axes
+  have grids.
+- Beams: `start`/`end` are the centreline over the paired length; `outline` is
+  the plan
+  rectangle; `n_edge_parts` says how many line pieces were merged (high numbers
+  = beam
   crossed many others = check it).
 
 ## Versioning rules

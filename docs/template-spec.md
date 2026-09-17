@@ -1,14 +1,16 @@
 # Template spec (utility 3)
 
-`c2b normalize` turns an extraction JSON into the firm's template conventions and writes
+`c2b normalize` turns an extraction JSON into the firm's template conventions
+and writes
 the template DXF. Every convention is a field of `TemplateSpec`
-(`src/c2b/normalize/spec.py`), saved next to the output as `<stem>.template-spec.yaml`.
+(`src/c2b/normalize/spec.py`), saved next to the output as
+`<stem>.template-spec.yaml`.
 Defaults reproduce `CH-TEMPLATE-REMARKED.dxf`.
 
 ## What the normaliser does
 
 | Step | Rule (default) | Spec field |
-|---|---|---|
+| --- | --- | --- |
 | Column stacks | columns matched floor to floor by overlap / centre distance (300 mm), numbered once for the whole building; client marks win, generated numbers fill the gaps, row by row from the bottom row (`row-major`) | `numbering.columns`, `numbering.keep_client_marks`, `stack_match_tol_mm` |
 | Column marks | `C{n}-{w}X{d}` / `C{n}-{dia}DIA` in the client's b x D order, inside the column, text along the longer side | `marks.column`, `placement.column_mark`, `placement.column_mark_rotate` |
 | Mark size | every mark -- column, beam, slab, footing, stair -- steps down a ladder of standard heights (50, 40, 30, 20, 10 mm) until it fits inside its own member; a mark too long even at the smallest shows its base alone, the size staying in the schedule. Heights come from a ladder, never a freely computed size, so the drawing can be re-styled as a set. The whole mark is kept in XDATA, so utility 4 recovers it either way | `text.mark_heights`, `placement.column_mark_fit` |
@@ -22,12 +24,20 @@ Defaults reproduce `CH-TEMPLATE-REMARKED.dxf`.
 | Footings | `F{n}-{thk}THK`; a raft `RF{n}-{thk}THK` is what the client calls RF / RAFT / MAT; folds and sunk areas inside a raft go to the raft layers with the raft mark | `raft_by_client`, `raft_min_area_m2`, `marks.footing*` |
 | Grids | lines extended 1500 mm past the outermost member, bubble r=300 at the start end | `placement.grid_*` |
 
-A grid label names one line on a floor. Text repeated on most of a floor's bubbles is a
-qualifier (a tower prefix such as `T1`, a sheet code) and names nothing, so it is ignored
-(`GRID_LABEL_QUALIFIER`). Where several lines are within reach of one bubble -- a grid line
-and the dimension string running past it -- the line with the bubble off its own end wins,
-and the others are dropped. A line's length only decides its fate when it owns no bubble at
+A grid label names one line on a floor. Text repeated on most of a floor's
+bubbles is a
+qualifier (a tower prefix such as `T1`, a sheet code) and names nothing, so it
+is ignored
+(`GRID_LABEL_QUALIFIER`). Where several lines are within reach of one bubble --
+a grid line
+and the dimension string running past it -- the line with the bubble off its own
+end wins,
+and the others are dropped. A line's length only decides its fate when it owns
+no bubble at
 all, so an 800 mm stub the client bubbled is still a grid.
+
+| Area | Rule | Spec field |
+| --- | --- | --- |
 | Frames | client Boundary kept, extended 5000 mm downward for title, client notes (verbatim), generator note, legend | `frame.*`, `client_notes` |
 | Levels | elevation frame left of the plans: level lines, `NN NAME LVL.` marks, dimensions between levels | `frame.level_*`, `marks.level` |
 | Legend | copied from the seed template into every plan frame | `legend_from_seed` |
@@ -44,22 +54,25 @@ all, so an 800 mm stub the client bubbled is still a grid.
 
 ## Levels workbook
 
-`<stem>.levels.xlsx` (written by `extract`) lists the plan floors. Fill `elevation_mm`
-(or `floor_to_floor_mm`) and optionally `revit_level_name`. When the client drawing has a
+`<stem>.levels.xlsx` (written by `extract`) lists the plan floors. Fill
+`elevation_mm`
+(or `floor_to_floor_mm`) and optionally `revit_level_name`. When the client
+drawing has a
 section or elevation with level texts ("GROUND FLOOR LVL. +2.500"), the matching
-elevations are pre-filled and marked "please confirm"; every hint is listed on the
+elevations are pre-filled and marked "please confirm"; every hint is listed on
+the
 "Level hints" sheet. A typical-floor plan that
 represents several levels gets one row per level with the same `floor_id`:
 
 | floor_id | floor_name | order | elevation_mm | revit_level_name |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | L05 | 3rd to 7th Floor Typical Level | 4 | 12450 | 3RD FLOOR LVL. |
 | L05 | 3rd to 7th Floor Typical Level | 5 | 15400 | 4TH FLOOR LVL. |
 
 ## Outputs of `c2b normalize`
 
 | File | Purpose |
-|---|---|
+| --- | --- |
 | `<stem>.template.dxf` | the template drawing; every entity carries XDATA `C2B` with `id=`, `mark=`, `client=` for the round trip (utility 4) |
 | `<stem>.normalized.json` | normalised model, schema 0.10.0 (stacks, spans, panels, footings, grids, levels, mark map; each element carries `mark` and, where the drawing splits it, `mark_lines`) |
 | `<stem>.schedules.xlsx` | column schedule (stack × floor), beams, slabs, footings, grids, mark map, diagnostics |
@@ -69,7 +82,9 @@ represents several levels gets one row per level with the same `floor_id`:
 
 ```bash
 python tools/compare_with_template.py out/Test10/Test10.template.dxf samples/CH-TEMPLATE-REMARKED.dxf
-```
+```text
 
-reports, frame by frame, entity counts per layer and the share of reference outlines
-(columns, beams, slabs, footings, raft) that have a generated outline with IoU ≥ 0.6.
+reports, frame by frame, entity counts per layer and the share of reference
+outlines
+(columns, beams, slabs, footings, raft) that have a generated outline with IoU ≥
+0.6.
