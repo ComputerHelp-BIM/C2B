@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from .. import __version__
 from ..schema import Diagnostic, Point2, TagRef
 
-NORMALIZED_SCHEMA_VERSION = "0.9.0"
+NORMALIZED_SCHEMA_VERSION = "0.10.0"
 
 
 class NFloor(BaseModel):
@@ -103,6 +103,7 @@ class NBeam(BaseModel):
     support_end: str | None = None
     size_source: str = "unknown"
     depth_source: str = "unknown"
+    depth_rule: str | None = None          # the schedule stated a rule: slab_thickness | layout
     mark_position: Point2
     mark_rotation_deg: float = 0.0
     client_mark: str | None = None

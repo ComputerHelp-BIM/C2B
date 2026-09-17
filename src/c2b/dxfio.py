@@ -246,11 +246,19 @@ def _entity_to_prims(e, layer: str, scale: float, block_path: tuple[str, ...]) -
             if poly is not None:
                 prims.append(Prim("solid", layer, handle, poly, closed=True, extra={"dxftype": t}))
         elif t == "DIMENSION":
-            try:
-                loc = _xy(e.dxf.defpoint, scale)
-            except Exception:
-                loc = (0.0, 0.0)
-            prims.append(Prim("dimension", layer, handle, Point(loc), text=e.dxf.get("text", ""), extra={"dxftype": t, "measurement": e.dxf.get("actual_measurement", None)}))
+            # the text mid-point, not the definition point: where a drafter overrides a dimension
+            # with a member's size, that text is the tag and its position is what places it
+            loc = None
+            for attr in ("text_midpoint", "defpoint"):
+                try:
+                    loc = _xy(e.dxf.get(attr), scale)
+                    break
+                except Exception:
+                    continue
+            height = _dim_text_height(e, scale)
+            prims.append(Prim("dimension", layer, handle, Point(loc or (0.0, 0.0)), text=e.dxf.get("text", ""),
+                              text_height=height, text_center=loc,
+                              extra={"dxftype": t, "measurement": e.dxf.get("actual_measurement", None)}))
         elif t in ("LEADER", "MLEADER", "MULTILEADER"):
             return prims
         else:
@@ -260,6 +268,31 @@ def _entity_to_prims(e, layer: str, scale: float, block_path: tuple[str, ...]) -
     for p in prims:
         p.block_path = block_path
     return prims
+
+
+
+def _dim_text_height(e, scale: float) -> float:
+    """A dimension's text height in millimetres, from its style and any override.
+
+    Without it an overridden dimension read as a size tag has no reach at all, because how far a
+    tag may sit from its member is measured in text heights.
+    """
+    try:
+        txt = e.dxf.get("dimtxt", None)
+        if txt is None and e.doc is not None:
+            style = e.doc.dimstyles.get(e.dxf.get("dimstyle", "Standard"))
+            txt = style.dxf.get("dimtxt", None)
+        factor = e.dxf.get("dimscale", None)
+        if factor is None and e.doc is not None:
+            try:
+                factor = e.doc.dimstyles.get(e.dxf.get("dimstyle", "Standard")).dxf.get("dimscale", None)
+            except Exception:
+                factor = None
+        if txt:
+            return float(txt) * float(factor or 1.0) * scale
+    except Exception:
+        pass
+    return 0.0
 
 
 def iter_prims(doc, scale: float, explode_blocks: bool = True, max_depth: int = 4) -> tuple[list[Prim], list[dict]]:

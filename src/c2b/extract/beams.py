@@ -52,8 +52,13 @@ def extract_beams(ctx: FloorContext) -> list[Beam]:
             else:
                 segs.extend(_segments_from_prim(p))
 
-    merged = merge_collinear(segs, angle_tol=0.5, offset_tol=tol.beam_merge_offset_mm, gap_tol=tol.beam_merge_gap_mm)
-    rects, unpaired = pair_parallel(merged, tol.beam_min_width_mm, tol.beam_max_width_mm, tol.beam_min_overlap_mm, tol.beam_angle_tol_deg)
+    # nothing is merged across an expansion joint: the two beams either side of one are two
+    # beams, and a 175 mm joint is well inside the 800 mm the merge would otherwise bridge
+    joints = [p.geom for p in ctx.geoms("JOINT", "line", "polyline") if p.geom.length > 0]
+    merged = merge_collinear(segs, angle_tol=0.5, offset_tol=tol.beam_merge_offset_mm,
+                             gap_tol=tol.beam_merge_gap_mm, barriers=joints or None)
+    rects, unpaired = pair_parallel(merged, tol.beam_min_width_mm, tol.beam_max_width_mm, tol.beam_min_overlap_mm,
+                                    tol.beam_angle_tol_deg, barriers=joints or None)
     # a pair whose overlap is short but whose width matches a beam is a bracket, not noise
     rects = [r for r in rects if r.length >= min(tol.beam_min_length_mm, tol.beam_stub_min_length_mm)]
 
@@ -94,6 +99,7 @@ def extract_beams(ctx: FloorContext) -> list[Beam]:
         drawn_w = round(r.width, 1)
         width = depth = depth_alt = None
         size_source = depth_source = "unknown"
+        depth_rule: str | None = None
 
         if len(sizes) > 1:
             ctx.diag.warning("BEAM_MULTI_SIZE", f"Beam {bid} has conflicting size tags along its length: {sizes}; first one used (split the beam at supports in the next step)", floor_id=ctx.floor_id, element_id=bid, location=r.start)
@@ -105,6 +111,11 @@ def extract_beams(ctx: FloorContext) -> list[Beam]:
             if sched and isinstance(sched.get("width"), (int, float)) and isinstance(sched.get("depth"), (int, float)):
                 width, depth = float(sched["width"]), float(sched["depth"])
                 size_source = depth_source = "schedule"
+            elif sched and isinstance(sched.get("width"), (int, float)) and sched.get("depth_rule"):
+                # "300XSLB THK." -- the width is real, the depth is a rule resolved once the
+                # slabs around this beam are known, which is the normaliser's business
+                width, size_source = float(sched["width"]), "schedule"
+                depth_rule = str(sched["depth_rule"])
             elif merged_tag.mark and len(ctx.schedules):
                 ctx.note_missing_mark("beam", merged_tag.mark, bid)
             if size_source == "unknown":
@@ -136,7 +147,7 @@ def extract_beams(ctx: FloorContext) -> list[Beam]:
             id=bid, floor_id=ctx.floor_id, mark=merged_tag.mark, start=pt(r.start), end=pt(r.end), length_mm=round(r.length, 1),
             width_mm=width, depth_mm=depth, depth_alt_mm=depth_alt, drawn_width_mm=drawn_w, angle_deg=round(r.angle_deg, 3),
             inverted=merged_tag.inverted, sunk_mm=merged_tag.sunk_mm, outline=outline_points(polys[i]),
-            size_source=size_source, depth_source=depth_source, tags=[tag_ref(pr) for t in my_tags for pr in t.prims],
+            size_source=size_source, depth_source=depth_source, depth_rule=depth_rule, tags=[tag_ref(pr) for t in my_tags for pr in t.prims],
             source_layer=layer, source_kind=kind, source_handles=handles, n_edge_parts=n_parts,
             confidence="high" if kind != "paired_lines" or n_parts <= 4 else "medium",
         ))

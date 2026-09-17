@@ -317,7 +317,7 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
             np_.beams.append(NBeam(id=bid, floor_id=f.id, run_id=r.id, span_index=i, mark=mark, start=_pt(p1), end=_pt(p2), length_mm=round(s["t2"] - s["t1"], 1),
                                    width_mm=w, depth_mm=d, depth_alt_mm=b.depth_alt_mm, depth_tip_mm=tip, cantilever=free_end, angle_deg=round(r.axis.angle, 3), outline=_pts(ring_points(outline)),
                                    inverted=b.inverted, support_start=s["support_start"], support_end=s["support_end"], size_source=b.size_source,
-                                   depth_source=b.depth_source, mark_position=_pt(mp), mark_rotation_deg=rot, client_mark=b.mark, source_handles=b.source_handles))
+                                   depth_source=b.depth_source, depth_rule=b.depth_rule, mark_position=_pt(mp), mark_rotation_deg=rot, client_mark=b.mark, source_handles=b.source_handles))
             np_.mark_map.append(MarkMap(element_id=bid, floor_id=f.id, kind="beam", mark=mark, client_mark=b.mark, client_tags=b.tags))
 
     # ---- openings -----------------------------------------------------------
@@ -592,6 +592,33 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
         stray = [s for s in tags if s.id not in used_tags]
         if stray:
             diag.info("PANEL_TAG_OUTSIDE", f"{len(stray)} slab tag(s) lie in no panel (edge strips, cantilevers or stairs), e.g. {', '.join(s.tags[0].text for s in stray[:4] if s.tags)}", floor_id=f.id)
+
+    # ---- hidden beams: "300XSLB THK." is as deep as the slab it sits in -----------------
+    # A concealed beam is buried in the slab, flush top and bottom, so its depth is the slab's.
+    # Which slab can only be answered once the panels exist, so the schedule carries the rule
+    # this far and it is settled here. Where the slabs either side differ, the thicker wins.
+    for f in floors_sorted:
+        panels_f = [(p_, poly_from_points(p_.outline)) for p_ in np_.panels
+                    if p_.floor_id == f.id and p_.kind in ("slab", "cantilever") and p_.thickness_mm]
+        panels_f = [(p_, pp) for p_, pp in panels_f if pp is not None]
+        tree = STRtree([pp for _p, pp in panels_f]) if panels_f else None
+        for b in np_.beams:
+            if b.floor_id != f.id or b.depth_mm or b.depth_rule != "slab_thickness":
+                continue
+            bp = poly_from_points(b.outline)
+            if bp is None or tree is None:
+                continue
+            touching = bp.buffer(spec.panels.hidden_beam_reach_mm)
+            thick = [panels_f[int(k)][0].thickness_mm for k in tree.query(touching, predicate="intersects")
+                     if panels_f[int(k)][1].intersects(touching)]
+            if not thick:
+                diag.warning("BEAM_NO_SLAB", f"Hidden beam {b.id} ({b.mark}) takes the slab thickness, but no slab around it has one", floor_id=f.id, element_id=b.id, location=(b.start.x, b.start.y))
+                continue
+            b.depth_mm = float(max(thick))
+            b.depth_source = "slab"
+            b.top_offset_mm = 0.0            # flush with the slab, top and bottom
+            if "X?" in b.mark:
+                b.mark = b.mark.replace("X?", f"X{b.depth_mm:.0f}")
 
     # ---- beam level offsets (answer 15C): inverted beams sit above the slab -------------
     for f in floors_sorted:

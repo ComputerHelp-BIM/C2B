@@ -151,6 +151,7 @@ class Beam(BaseModel):
     outline: list[Point2] = Field(default_factory=list)
     size_source: SizeSource = "unknown"
     depth_source: SizeSource = "unknown"
+    depth_rule: str | None = None        # schedule stated a rule, not a number: slab_thickness | layout
     tags: list[TagRef] = Field(default_factory=list)
     source_layer: str
     source_kind: str                     # paired_lines | polyline | block

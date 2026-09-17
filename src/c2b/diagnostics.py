@@ -32,6 +32,7 @@ CODES: dict[str, str] = {
     "COLUMN_LEGS_SPLIT": "Shaped wall split into its legs so each can carry its own mark",
     "COLUMN_MULTI_SIZE": "Column has conflicting size tags",
     "BEAM_NO_DEPTH": "Beam depth unknown (no tag, schedule, layer size or note default)",
+    "BEAM_NO_SLAB": "Hidden beam takes the slab thickness, but no slab around it has one",
     "BEAM_NO_WIDTH_TAG": "Beam width taken from drawn edges only",
     "BEAM_WIDTH_MISMATCH": "Beam tag width differs from drawn width",
     "BEAM_MULTI_SIZE": "Beam has conflicting size tags along its length",

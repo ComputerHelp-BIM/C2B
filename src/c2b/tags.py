@@ -384,3 +384,16 @@ def parse_symbolic_size(name: str) -> tuple[float, str] | None:
     if rule in ("SLBTHK", "SLABTHK"):
         return (w, DEPTH_RULE_SLAB)
     return (w, DEPTH_RULE_LAYOUT)
+
+
+_RE_MTEXT_FMT = re.compile(r"\\[A-Za-z][^;\\]*;|[{}]|\\[PXpx]|%%[UuOoDd]")
+
+
+def strip_mtext_codes(text: str) -> str:
+    """Drop the inline formatting a drafter leaves in an override, keeping the words.
+
+    ``{\\H0.666667x;200x400}`` is a size written at two-thirds height; the size is what matters.
+    """
+    out = _RE_MTEXT_FMT.sub(" ", text or "")
+    out = out.strip().strip("()[]").strip()
+    return re.sub(r"\s+", " ", out)

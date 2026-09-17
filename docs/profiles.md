@@ -90,6 +90,36 @@ size the client wrote on it (`COLUMN_LEGS_SPLIT`). The legs **overlap at the cor
 both run to the outside face, which is how the client dimensions them and how the walls meet in
 the model. A shape that is not rectilinear is left whole.
 
+## Sizes written on a dimension
+
+A drafter who overrides a dimension's text with a size is stating that member's section:
+`{\H0.666667x;200x400}` on the dimension across a beam is how this client gives a stepped beam
+its two depths. Such an override is read as a beam size tag at the dimension's text position; an
+override with no size in it (`175mm\XEXPANSION JOINT`) is an ordinary annotation and is left
+alone. Test17 carries 512 of them. `dimension_tag_height_mm` is the text height assumed when the
+dimension states none, since how far a tag may sit from its member is measured in text heights.
+
+## A depth the schedule states as a rule
+
+Two of Test17's beam schedule rows give a rule rather than a number:
+
+| Row | Meaning |
+|---|---|
+| `300XSLB THK.` | a concealed beam, as deep as the slab it sits in and flush with it top and bottom |
+| `200XAS/LAYOUT` | the plan says -- usually a dimension override |
+
+The row is kept with its width and a `depth_rule`. `slab_thickness` is settled in the normaliser,
+once the panels around the beam exist; where the slabs either side differ, the thicker wins.
+`hidden_beam_reach_mm` sets how far around the beam a slab counts as the one it sits in, and
+`BEAM_NO_SLAB` reports a hidden beam with no slab thickness around it.
+
+## Expansion joints
+
+Lines on a layer with the `JOINT` role are barriers: no beam is merged along one or paired
+across one. A joint is around 175 mm wide, beams merge across gaps up to 800 mm, and two 200 mm
+beams either side of a joint present their outer faces 575 mm apart -- a perfectly plausible beam
+width -- so without this the client's two beams come out as one wrong beam straddling the joint.
+
 ## Which witness wins: tag or outline
 
 When the client's tag and their own outline disagree about a size, `size_sources` decides which

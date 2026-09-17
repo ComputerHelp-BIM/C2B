@@ -12,6 +12,7 @@ import shapely
 from shapely.affinity import rotate
 from shapely.geometry import LineString, Point, Polygon, box
 from shapely.ops import polygonize, unary_union
+from shapely.strtree import STRtree
 
 Pt = tuple[float, float]
 
@@ -245,8 +246,22 @@ def _unproject(t: float, o: float, u: Pt, n: Pt) -> Pt:
     return (u[0] * t + n[0] * o, u[1] * t + n[1] * o)
 
 
-def merge_collinear(segments: list[Segment], angle_tol: float = 0.5, offset_tol: float = 2.0, gap_tol: float = 0.0) -> list[Segment]:
-    """Merge collinear segments that overlap or lie within ``gap_tol`` of each other."""
+def merge_collinear(segments: list[Segment], angle_tol: float = 0.5, offset_tol: float = 2.0, gap_tol: float = 0.0,
+                    barriers=None) -> list[Segment]:
+    """Merge collinear segments that overlap or lie within ``gap_tol`` of each other.
+
+    ``barriers`` are lines nothing may be merged across. An expansion joint is 175 mm wide and
+    the merge gap is 800, so without them the beams either side of a joint join into one beam
+    running through it -- and the two the client drew are replaced by a single wrong one.
+    """
+    barrier_tree = STRtree(list(barriers)) if barriers else None
+
+    def blocked(a: Pt, b: Pt) -> bool:
+        if barrier_tree is None:
+            return False
+        gap = LineString([a, b])
+        return any(barriers[int(k)].intersects(gap) for k in barrier_tree.query(gap, predicate="intersects"))
+
     buckets: dict[int, list[Segment]] = {}
     for s in segments:
         if s.length <= 1e-6:
@@ -277,7 +292,8 @@ def merge_collinear(segments: list[Segment], angle_tol: float = 0.5, offset_tol:
                 if cur is None:
                     cur = [o, t1, t2, [s]]
                     continue
-                if t1 <= cur[2] + gap_tol:
+                if t1 <= cur[2] + gap_tol and not (t1 > cur[2] and blocked(_unproject(cur[2], cur[0], u, n),
+                                                                           _unproject(t1, o, u, n))):
                     cur[2] = max(cur[2], t2)
                     cur[3].append(s)
                     cur[0] = (cur[0] * (len(cur[3]) - 1) + o) / len(cur[3])
@@ -315,12 +331,17 @@ class PairedRect:
         return rectangle_polygon((cx, cy), self.length, self.width, self.angle_deg)
 
 
+#: How close a beam face has to be to a joint line to count as lying on it.
+_BARRIER_EPS_MM = 2.0
+
+
 def pair_parallel(
     segments: list[Segment],
     min_width: float,
     max_width: float,
     min_overlap: float,
     angle_tol: float = 1.0,
+    barriers=None,
 ) -> tuple[list[PairedRect], list[Segment]]:
     """Pair parallel segments into rectangles (beam plan outlines).
 
@@ -328,7 +349,35 @@ def pair_parallel(
     each other, then accepted greedily while tracking which parts of each edge
     have already been used. Returns the rectangles and the segments that were
     never used (for diagnostics).
+
+    ``barriers`` are lines no pair may span. Two 200 mm beams either side of a 175 mm expansion
+    joint present their outer faces 575 mm apart, which is a perfectly plausible beam width: the
+    pair is taken and the client's two beams come out as one wrong one straddling the joint.
     """
+    barrier_tree = STRtree(list(barriers)) if barriers else None
+
+    def spans_barrier(o1: float, o2: float, t1: float, t2: float, u: Pt, n: Pt) -> bool:
+        """Would a beam of these two faces straddle, or be, an expansion joint?
+
+        A face that merely *touches* a joint line is the beam alongside it and is fine; what is
+        not is a pair reaching over one, or a pair that is the gap itself with a joint line for
+        each of its faces.
+        """
+        if barrier_tree is None:
+            return False
+        mid = 0.5 * (t1 + t2)
+        a, b = _unproject(mid, o1, u, n), _unproject(mid, o2, u, n)
+        across = LineString([a, b])
+        if across.length <= 2 * _BARRIER_EPS_MM:
+            return False
+        inner = LineString([across.interpolate(_BARRIER_EPS_MM), across.interpolate(across.length - _BARRIER_EPS_MM)])
+        hits = [barriers[int(k)] for k in barrier_tree.query(across, predicate="intersects")]
+        if any(bar.intersects(inner) for bar in hits):
+            return True                                   # reaches over a joint
+        pa, pb = Point(a), Point(b)
+        return (any(bar.distance(pa) <= _BARRIER_EPS_MM for bar in hits)
+                and any(bar.distance(pb) <= _BARRIER_EPS_MM for bar in hits))   # is the gap itself
+
     buckets: dict[int, list[Segment]] = {}
     for s in segments:
         if s.length <= 1e-6:
@@ -355,6 +404,8 @@ def pair_parallel(
                     continue
                 overlap = min(ei, ej) - max(si, sj)
                 if overlap < max(min_overlap, 0.0):
+                    continue
+                if spans_barrier(oi, oj, max(si, sj), min(ei, ej), u, n):
                     continue
                 cover = min(overlap / (ei - si), overlap / (ej - sj))
                 score = w / (0.5 + cover)

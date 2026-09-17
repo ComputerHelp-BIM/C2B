@@ -8,6 +8,36 @@ The canonical JSON schema carries its own version (`schema_version` in every out
 A MAJOR bump of the schema means downstream utilities (DXF writer, Revit importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes values.
 
+## [0.13.0] - 2026-09-17
+
+Beam depths. Extraction schema `0.6.0` → `0.7.0`, normalised schema `0.9.0` → `0.10.0`
+(new fields, no breaking change). **Test17 spans with no depth: 575 → 136.**
+
+### Added
+
+- **A size written on a dimension is a size.** A drafter who overrides a dimension's text with a
+  section -- `{\H0.666667x;200x400}` across the beam -- is stating that member's size, and it is
+  how this client gives a stepped beam its two depths. Those overrides are now read as beam size
+  tags at the dimension's text position. An override with no size in it
+  (`175mm\XEXPANSION JOINT`) is an ordinary annotation and is left alone. Test17 has 512 of
+  them, every one previously discarded; beams sized from a tag went 475 → 896.
+- **`300XSLB THK.` is resolved.** A concealed beam is as deep as the slab it sits in, flush top
+  and bottom. Which slab can only be answered once the panels exist, so the schedule carries the
+  rule that far and the normaliser settles it; where the slabs either side differ, the thicker
+  wins. Test17: 229 hidden beams sized from their slab, none left unresolved.
+
+### Fixed
+
+- **Beams straddling an expansion joint.** A joint is 175 mm wide, beams merge across gaps up to
+  800 mm, and two 200 mm beams either side of one present their outer faces 575 mm apart -- a
+  perfectly plausible beam width. So the client's two beams came out as a single wrong beam
+  through the joint, and the B6s beside it were replaced by a B1 running across. Lines on a
+  `JOINT` layer are now barriers: nothing is merged along one or paired across one, and a pair
+  whose two faces are both joint lines (the gap itself) is rejected too.
+- **A dimension's tag sat at its definition point and carried no text height**, so an overridden
+  dimension read as a size tag had no reach at all. It now uses the text mid-point and the height
+  from its own style, falling back to `dimension_tag_height_mm`.
+
 ## [0.12.1] - 2026-09-17
 
 Hatching, from a look at the generated plans. Normalised schema `0.8.0` → `0.9.0`
