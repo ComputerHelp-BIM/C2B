@@ -16,7 +16,7 @@ import json
 import os
 import traceback
 
-from Autodesk.Revit.DB import (BuiltInParameter, Curve, CurveArray, CurveLoop, ElementId, Floor, FilteredElementCollector,
+from Autodesk.Revit.DB import (BuiltInParameter, CurveArray, CurveLoop, Floor, FilteredElementCollector,
                                FamilySymbol, FloorType, Grid, Level, Line, Structure, Transaction, UnitUtils, Wall, WallType,
                                XYZ)
 from pyrevit import forms, revit, script
@@ -84,12 +84,45 @@ def types_by_name(cls):
     return found
 
 
-def set_param(element, name, value_mm):
+def set_length(element, name, value_mm):
     p = element.LookupParameter(name)
     if p is None or p.IsReadOnly:
         return False
     p.Set(mm(value_mm))
     return True
+
+
+# Which of the plan's candidate parameter names this model actually has. The firm's template
+# and its shared parameter file disagree on the names (ID / CH-ID, S_ScheduleMark /
+# CH-ScheduleMark), so the plan lists every candidate and this records which ones took. A name
+# that never takes is a parameter nobody bound: the value would have vanished silently.
+param_hits = {}
+param_misses = {}
+
+
+def set_text(element, names, value):
+    """Write a text value to every named parameter the element has. Returns how many took."""
+    if value is None:
+        return 0
+    taken = 0
+    for name in names or []:
+        p = element.LookupParameter(name)
+        if p is None or p.IsReadOnly or p.StorageType.ToString() != "String":
+            param_misses[name] = param_misses.get(name, 0) + 1
+            continue
+        p.Set(str(value))
+        param_hits[name] = param_hits.get(name, 0) + 1
+        taken += 1
+    return taken
+
+
+def stamp(element, action, plan):
+    """Mark, C2B id and note, written to every name the model carries them under."""
+    set_text(element, plan.get("mark_params"), action.get("mark"))
+    set_text(element, plan.get("id_params"), action.get("id"))
+    comment = plan.get("comment_param")
+    if comment and action.get("comment"):
+        set_text(element, [comment], action.get("comment"))
 
 
 def ensure_symbol(action, symbols):
@@ -105,7 +138,7 @@ def ensure_symbol(action, symbols):
         source = pool.get(action.get("base_type")) or list(pool.values())[0]
         symbol = source.Duplicate(wanted)
         for name, value in (action.get("params") or {}).items():
-            if not set_param(symbol, name, value):
+            if not set_length(symbol, name, value):
                 note("param", "%s: could not set '%s' on type %s" % (action["id"], name, wanted))
         pool[wanted] = symbol
         note("created", "type %s : %s" % (family, wanted))
@@ -113,6 +146,27 @@ def ensure_symbol(action, symbols):
         symbol.Activate()
         doc.Regenerate()
     return symbol
+
+
+def set_structure_thickness(type_element, thickness_mm):
+    """Set a system type's thickness: the core layer of its compound structure.
+
+    A duplicated floor or wall type keeps the thickness of the type it was copied from, so a
+    type named "175 THK. RCC SLAB" would be 150 thick unless this runs. A type with several
+    layers has only its core layer resized -- a finish on a slab is not structure and is not
+    the dimension the drawing states.
+    """
+    try:
+        structure = type_element.GetCompoundStructure()
+        if structure is None:
+            return False
+        index = structure.GetFirstCoreLayerIndex() if structure.LayerCount > 1 else 0
+        structure.SetLayerWidth(index, mm(thickness_mm))
+        type_element.SetCompoundStructure(structure)
+        return True
+    except Exception as ex:
+        note("param", "could not set the thickness of %s: %s" % (type_element.Name, ex))
+        return False
 
 
 def ensure_system_type(action, pool, cls):
@@ -125,7 +179,11 @@ def ensure_system_type(action, pool, cls):
         return None
     new = source.Duplicate(wanted)
     pool[wanted] = new
-    note("created", "%s type %s (thickness must be set once in the project)" % (cls.__name__, wanted))
+    thickness = action.get("thickness_mm")
+    if thickness and set_structure_thickness(new, thickness):
+        note("created", "%s type %s, %.0f mm thick" % (cls.__name__, wanted, thickness))
+    else:
+        note("created", "%s type %s (COPY OF %s: check its thickness)" % (cls.__name__, wanted, source.Name))
     return new
 
 
@@ -195,8 +253,7 @@ def main():
                     from Autodesk.Revit.DB import ElementTransformUtils
                     axis = Line.CreateBound(point(action["point"]), point(action["point"], mm(1000.0)))
                     ElementTransformUtils.RotateElement(doc, inst.Id, axis, rotation * 3.141592653589793 / 180.0)
-                if action.get("mark"):
-                    inst.get_Parameter(BuiltInParameter.ALL_MODEL_MARK).Set(action["mark"])
+                stamp(inst, action, plan)
                 tally(kind)
             elif kind == "beam":
                 symbol = ensure_symbol(action, symbols)
@@ -209,9 +266,10 @@ def main():
                     p = inst.get_Parameter(bip)
                     if p is not None and not p.IsReadOnly:
                         p.Set(mm(offset))
-                if action.get("mark"):
-                    inst.get_Parameter(BuiltInParameter.ALL_MODEL_MARK).Set(action["mark"])
+                stamp(inst, action, plan)
                 tally("beams")
+            # a raft, pile cap or pit comes with an outline and is built as a slab; an isolated
+            # footing comes with a point and is built from its family, in the branch below
             elif kind in ("floor", "pcc", "footing") and action.get("loops"):
                 ftype = ensure_system_type(action, floor_types, FloorType)
                 if ftype is None or level is None:
@@ -228,16 +286,14 @@ def main():
                 p = floor.get_Parameter(BuiltInParameter.FLOOR_HEIGHTABOVELEVEL_PARAM)
                 if p is not None and not p.IsReadOnly:
                     p.Set(mm(action.get("top_offset_mm", 0.0) + action.get("base_offset_mm", 0.0)))
-                if action.get("mark"):
-                    floor.get_Parameter(BuiltInParameter.ALL_MODEL_MARK).Set(action["mark"])
+                stamp(floor, action, plan)
                 tally("floors" if kind == "floor" else kind)
             elif kind == "footing":
                 symbol = ensure_symbol(action, symbols)
                 if symbol is None or level is None:
                     continue
                 inst = doc.Create.NewFamilyInstance(point(action["point"]), symbol, level, Structure.StructuralType.Footing)
-                if action.get("mark"):
-                    inst.get_Parameter(BuiltInParameter.ALL_MODEL_MARK).Set(action["mark"])
+                stamp(inst, action, plan)
                 tally("footings")
             elif kind == "wall":
                 wtype = ensure_system_type(action, wall_types, WallType)
@@ -251,6 +307,7 @@ def main():
                 if top is not None:
                     wall.get_Parameter(BuiltInParameter.WALL_HEIGHT_TYPE).Set(top.Id)
                     wall.get_Parameter(BuiltInParameter.WALL_TOP_OFFSET).Set(mm(action.get("top_offset_mm", 0.0)))
+                stamp(wall, action, plan)
                 tally("walls")
             elif kind == "shaft" and action.get("loops"):
                 ring = loop_from(action["loops"][0])
@@ -278,6 +335,16 @@ def main():
         output.print_md("### %d types created" % len(created))
         for _kind, message in created[:100]:
             output.print_md("* %s" % message)
+
+    # which of the candidate parameter names exist here. A name with no writes at all is one
+    # nobody bound in this template: anything C2B meant for it never arrived.
+    output.print_md("### Where the marks went")
+    for name in (plan.get("mark_params") or []) + (plan.get("id_params") or []):
+        hits = param_hits.get(name, 0)
+        if hits:
+            output.print_md("* `%s` - written on %d elements" % (name, hits))
+        else:
+            output.print_md("* `%s` - **not in this model**, nothing was written to it" % name)
 
 
 try:

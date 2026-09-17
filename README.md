@@ -9,7 +9,7 @@ schema with diagnostics, and normalising them into the firm's template drawing
 (`CH-` layers, `C12-300X900` marks, spans between supports, slab panels, level
 frame).
 
-Version `0.13.2` (tool) — extraction schema `0.7.0`, normalised schema `0.10.0`.
+Version `0.14.0` (tool) — extraction schema `0.7.1`, normalised schema `0.10.1`.
 See [CHANGELOG.md](CHANGELOG.md).
 
 ## Pipeline
@@ -19,7 +19,7 @@ See [CHANGELOG.md](CHANGELOG.md).
 | 1 + 2 | **Extract + check**: client DXF → canonical JSON, Excel review workbook, review DXF, diagnostics | `c2b extract`, since v0.1.0 |
 | 3 | **Normalise**: column stacks, beam spans at supports, slab panels, template marks → template DXF + schedules | `c2b normalize`, since v0.5.0 |
 | 4 | **Round trip**: template DXF → JSON + Excel again, verified against the normalised model | `c2b verify`, since v0.6.0 |
-| 5 | **Revit importer**: JSON → build plan → native columns, beams, floors, foundations | `c2b revit-plan` + pyRevit, since v0.8.0 |
+| 5 | **Revit importer**: JSON → build plan, checked against the Revit template → native columns, beams, floors, foundations | `c2b revit-plan` + pyRevit, since v0.8.0 |
 | 6 | Cross-check: quantities, supports, continuity | next |
 
 The original plan had utility 2 as a separate "drawing checker" before
@@ -191,18 +191,21 @@ src/c2b/
                      footings.py   footings, rafts, PCC, pile caps, lift pits
                      common.py     shared conversions and mark formatting
   roundtrip/       utility 4: read the template DXF back, diff it     docs/round-trip.md
-  revit/           utility 5 (in progress): element → family mapping, build plan
+  revit/           utility 5: element → family mapping, build plan, template check    revit/README.md
+                     template.py   the Revit template description and shared parameter file, read
   export/          JSON, Excel, review DXF, report, level schedule, template DXF, schedules workbook
   gui/             Tk window (app.py) over a Tk-free runner (runner.py)
   cli.py           typer CLI
 tools/             compare_with_template.py (IoU check against the reference), compare_floor.py,
                    audit_client.py, render_dxf.py
 tests/             unit tests + synthetic end-to-end drawing + sample integration
+templates/         the firm's Revit template described in markdown, and its shared parameters
+                   (the DXF template itself is not committed)
 profiles/          client profiles (YAML)
 samples/           client drawings (git-ignored)
 ```
 
-## Known limits of v0.13.2
+## Known limits of v0.14.0
 
 - Cantilever slabs, chajjas and balconies need the client's slab edge lines;
   without them a
@@ -228,6 +231,11 @@ samples/           client drawings (git-ignored)
   meeting at an end — a corner or a T — are trimmed, because there the client's
   intent is
   unambiguous; a crossing is not.
+- The Revit importer has still not been run against a live model. The plan is checked
+  against the
+  template before it runs (`c2b revit-plan --template`), so family, type and parameter names
+  are
+  known to be right, but the API calls themselves are unproven.
 - Rotated floor plans (true north) are read as drawn; no per-floor rotation yet.
 - Schedule tables drawn as real `TABLE` entities are not read (text grids are).
 - Everything is rule based. Ambiguous cases are reported, not guessed.

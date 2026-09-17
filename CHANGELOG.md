@@ -13,6 +13,63 @@ importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes
 values.
 
+## [0.14.0] - 2026-09-17
+
+Utility 5 against the firm's real Revit template. Every family name, type-name pattern and
+dimension parameter in the mapping now exists in **R25_TEMPLATE**, and a plan can be checked
+against that template before Revit is opened.
+
+### Added (0.14.0)
+
+- **The Revit template is read outside Revit.** A `.rvt` is a compound binary, so the mapping
+  used to be names typed from memory. `c2b revit-plan --template <template>.md` reads the
+  markdown the firm's *Extract Template* tool writes -- 260 families, 654 types, every type's
+  driving dimensions, the levels, the grids and every parameter the model binds -- and answers
+  three questions that otherwise surface halfway through a Revit run: which types the template
+  already carries, whether every family the plan names is actually loaded, and whether the
+  marks will survive.
+- **Where a mark goes is now checked, not assumed.** R25_TEMPLATE binds `ID` and
+  `S_ScheduleMark`; the firm's shared parameter file defines `CH-ID` and `CH-ScheduleMark`.
+  They are not the same names. Revit accepts a write to a parameter nobody bound, drops the
+  value and leaves a model that looks finished, so C2B writes every name that exists on the
+  element and the Revit run reports which ones took. `--shared-params` reads the shared
+  parameter file as well, because "not bound in this template" and "does not exist anywhere"
+  look identical in Revit and have different fixes.
+- **Types the template does not carry are created by duplication** -- and a duplicated system
+  type is now given its thickness. A floor type named `175 THK. RCC SLAB` duplicated from
+  `150 THK. RCC SLAB` was 150 thick, and nothing said so.
+- **Two-depth beams reach the right family.** A mark like `B5-200X900/600` goes to
+  `CH-Concrete-Step-Beam-Bottom` with `W`/`H`/`H1` set; inverted, it goes to the `-Top` family;
+  a tapered cantilever goes to the tapered pair. Rectangular beams are unaffected.
+- **Shear wall legs: `wall_like_as`.** A leg is a column in the drawing and in the schedule and
+  C2B split it as one, so it stays a Structural Column by default, one Revit element per tagged
+  leg. `wall_like_as: wall` models them as Basic Walls instead, along the leg's own longer side,
+  and `wall_like_min_thickness_mm` keeps the thin ones as columns.
+- **A type that is legitimate but odd is flagged rather than changed.** Test10's `CH-12300 X 300`
+  is a 12 m shear wall leg modelled as a column, and its `CH-14700 X 30750 X 750` is a 452 m2
+  raft the client never marked RF/RAFT/MAT. Both follow the firm's own rules; both are worth a
+  glance before Revit makes the type.
+
+### Fixed (0.14.0)
+
+- **A mark read as a diameter.** `T1SW136d` is tower 1, shear wall 136, leg d. The tag parser
+  read `136d` as a 136 mm diameter, gave the leg no width and no depth, and dropped it: thirteen
+  of Test17's shear wall legs, on every floor they appear. `C_600D` is still a 600 dia column --
+  the difference is that its digits do not run on from letters. A drawn rectangle now also
+  refuses a tag diameter outright, whatever the tag says. **Test17 columns with no size: 13 → 0**,
+  and 148 Revit actions that were being skipped are back.
+
+### Changed (0.14.0)
+
+- The mapping defaults are R25_TEMPLATE's names, not Autodesk's sample families, so on that
+  template nothing needs editing before a first run.
+- `templates/` now holds the template description and the shared parameter file. They are text,
+  they are the contract the plan is checked against, and they belong in the repository; the DXF
+  template itself still does not.
+- Build plan version `0.2.0`: the plan carries the mark and id parameter names and the template
+  check. Extraction schema `0.7.1` and normalised schema `0.10.1`: no field changed, but the
+  thirteen columns above now carry the sizes their tags always stated.
+
 ## [0.13.2] - 2026-09-17
 
 No change to what the tool produces: Test17 re-extracts and re-normalises to

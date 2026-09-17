@@ -3,6 +3,11 @@
 The firm's Revit template decides the family names, so they live in a YAML file rather than
 in code. ``c2b revit-plan --write-mapping`` writes a starting point that a Revit user edits
 once per template.
+
+The defaults below are read off **R25_TEMPLATE** (`templates/R25_TEMPLATE.template.md`):
+every family name, type-name pattern and dimension parameter here exists in that template.
+``c2b revit-plan --template <md>`` checks a plan against it and reports anything missing
+before Revit is opened.
 """
 from __future__ import annotations
 
@@ -12,23 +17,29 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, Field
 
+# Revit gives every instance these; they are never project parameters, so a digest will not
+# list them and a "not bound" report must not claim they are missing.
+REVIT_BUILTIN_PARAMS = {"Mark", "Comments", "Type Mark", "Type Comments", "Description"}
+
 
 class TypeRule(BaseModel):
     """One Revit family and how its types are named and sized."""
 
-    family: str                                   # family name in the project, e.g. "M_Concrete-Rectangular-Column"
-    type_name: str = "{w:.0f} x {d:.0f}mm"        # type name built from the size; created by duplication when missing
+    family: str                                   # family name in the project, e.g. "CH-Concrete-Rectangular-Column"
+    type_name: str = "CH-{w:.0f} X {d:.0f}"       # type name built from the size; created by duplication when missing
     width_param: str | None = "b"                 # type parameter that holds the width
     depth_param: str | None = "h"                 # type parameter that holds the depth
+    depth_alt_param: str | None = None            # second depth, for a stepped or tapered member
     diameter_param: str | None = None
     thickness_param: str | None = None
     create_missing_types: bool = True             # duplicate the nearest type and set the parameters
-    fallback_type: str | None = None              # used when a type cannot be created
+    fallback_type: str | None = None              # the type duplicated to make a missing one
 
 
 class SystemTypeRule(BaseModel):
     """A system family (floor, wall, foundation slab): types are picked by name, never created by parameter."""
 
+    family: str = ""                              # for the template check; Revit finds system types by name alone
     type_name: str = "{thk:.0f}mm"
     create_missing_types: bool = True
     base_type: str | None = None                  # the type duplicated to make a missing one
@@ -36,7 +47,7 @@ class SystemTypeRule(BaseModel):
 
 
 class RevitMapping(BaseModel):
-    name: str = "CH structural template"
+    name: str = "CH structural template (R25)"
     revit_version: str = "2025"
     units: Literal["mm"] = "mm"
     level_prefix: str = ""                        # prepended to the level names from the workbook
@@ -44,26 +55,74 @@ class RevitMapping(BaseModel):
     create_grids: bool = True
     grid_prefix: str = ""
 
-    column: TypeRule = Field(default_factory=lambda: TypeRule(family="M_Concrete-Rectangular-Column"))
+    # -- where the mark and the C2B id are written --------------------------
+    # Every name that exists on the element is written, and the run reports which ones took.
+    # R25_TEMPLATE binds "ID" and "S_ScheduleMark"; the firm's shared parameter file defines
+    # "CH-ID" and "CH-ScheduleMark". Until those two agree, writing both is what survives.
+    mark_params: list[str] = Field(default_factory=lambda: ["S_ScheduleMark", "CH-ScheduleMark", "Mark"])
+    id_params: list[str] = Field(default_factory=lambda: ["ID", "CH-ID"])
+    comment_param: str | None = "Comments"
+
+    # -- structural columns --------------------------------------------------
+    column: TypeRule = Field(default_factory=lambda: TypeRule(
+        family="CH-Concrete-Rectangular-Column", type_name="CH-{w:.0f} X {d:.0f}",
+        width_param="b", depth_param="h", fallback_type="CH-300 X 600"))
     column_round: TypeRule = Field(default_factory=lambda: TypeRule(
-        family="M_Concrete-Round-Column", type_name="{dia:.0f}mm", width_param=None, depth_param=None, diameter_param="b"))
-    beam: TypeRule = Field(default_factory=lambda: TypeRule(family="M_Concrete-Rectangular Beam"))
+        family="CH-Concrete-Round-Column", type_name="CH-{dia:.0f}",
+        width_param=None, depth_param=None, diameter_param="b", fallback_type="CH-300"))
+
+    # -- structural framing --------------------------------------------------
+    beam: TypeRule = Field(default_factory=lambda: TypeRule(
+        family="CH-Concrete-Rectangular-Beam", type_name="CH-{w:.0f} X {d:.0f}",
+        width_param="b", depth_param="h", fallback_type="CH-300 X 600"))
+    # A beam the drawing gives two depths (B5-200X900/600). A normal beam hangs below the slab,
+    # so its top is flush and the step is underneath -> "Bottom"; an inverted beam steps up -> "Top".
+    beam_step: TypeRule = Field(default_factory=lambda: TypeRule(
+        family="CH-Concrete-Step-Beam-Bottom", type_name="CH-{w:.0f} X {d:.0f}/{d2:.0f}",
+        width_param="W", depth_param="H", depth_alt_param="H1", fallback_type="CH-200 X 450/700"))
+    beam_step_inverted: TypeRule = Field(default_factory=lambda: TypeRule(
+        family="CH-Concrete-Step-Beam-Top", type_name="CH-{w:.0f} X {d:.0f}/{d2:.0f}",
+        width_param="W", depth_param="H", depth_alt_param="H1", fallback_type="CH-200 X 550/600"))
+    beam_taper: TypeRule = Field(default_factory=lambda: TypeRule(
+        family="CH-Concrete-Tapered-Beam-Bottom", type_name="CH-{w:.0f} X {d:.0f}/{d2:.0f}",
+        width_param="W", depth_param="H", depth_alt_param="H1", fallback_type="CH-300 X 750/1000"))
+    beam_taper_inverted: TypeRule = Field(default_factory=lambda: TypeRule(
+        family="CH-Concrete-Tapered-Beam-Top", type_name="CH-{w:.0f} X {d:.0f}/{d2:.0f}",
+        width_param="W", depth_param="H", depth_alt_param="H1", fallback_type="CH-300 X 750/1000"))
+    two_depth_beam: Literal["step", "taper"] = "step"     # what a mark like 200X900/600 means on this client's drawings
+
+    # -- foundations ---------------------------------------------------------
     footing: TypeRule = Field(default_factory=lambda: TypeRule(
-        family="M_Footing-Rectangular", type_name="{w:.0f} x {d:.0f} x {thk:.0f}mm", width_param="Width", depth_param="Length", thickness_param="Thickness"))
+        family="CH-Concrete-Rectangular-Footing", type_name="CH-{w:.0f} X {d:.0f} X {thk:.0f}",
+        width_param="Width", depth_param="Length", thickness_param="Foundation Thickness",
+        fallback_type="CH-1200 X 1800 X 600"))
     pile: TypeRule = Field(default_factory=lambda: TypeRule(
-        family="M_Concrete-Round-Column", type_name="{dia:.0f}mm", width_param=None, depth_param=None, diameter_param="b"))
+        family="CH-Concrete-Round-Column", type_name="CH-{dia:.0f}",
+        width_param=None, depth_param=None, diameter_param="b", fallback_type="CH-300"))
 
-    floor: SystemTypeRule = Field(default_factory=lambda: SystemTypeRule(type_name="RCC {thk:.0f}mm", base_type="Generic 150mm"))
-    ramp_floor: SystemTypeRule = Field(default_factory=lambda: SystemTypeRule(type_name="RCC RAMP {thk:.0f}mm", base_type="Generic 150mm"))
-    raft: SystemTypeRule = Field(default_factory=lambda: SystemTypeRule(type_name="RAFT {thk:.0f}mm", base_type="Generic 300mm"))
-    pcc: SystemTypeRule = Field(default_factory=lambda: SystemTypeRule(type_name="PCC {thk:.0f}mm", base_type="Generic 100mm"))
-    wall: SystemTypeRule = Field(default_factory=lambda: SystemTypeRule(type_name="RCC {thk:.0f}mm", base_type="Generic - 200mm"))
+    # -- system families -----------------------------------------------------
+    floor: SystemTypeRule = Field(default_factory=lambda: SystemTypeRule(
+        family="Floor", type_name="{thk:.0f} THK. RCC SLAB", base_type="150 THK. RCC SLAB"))
+    ramp_floor: SystemTypeRule = Field(default_factory=lambda: SystemTypeRule(
+        family="Floor", type_name="{thk:.0f} THK. RCC RAMP", base_type="150 THK. RCC SLAB"))
+    raft: SystemTypeRule = Field(default_factory=lambda: SystemTypeRule(
+        family="Foundation Slab", type_name="CH-FOOTING-{thk:.0f}", base_type="CH-FOOTING-600"))
+    pcc: SystemTypeRule = Field(default_factory=lambda: SystemTypeRule(
+        family="Foundation Slab", type_name="CH-PCC-{thk:.0f}", base_type="CH-SLAB-150"))
+    wall: SystemTypeRule = Field(default_factory=lambda: SystemTypeRule(
+        family="Basic Wall", type_name="CH-SHEAR-WALL-{thk:.0f}", base_type="CH-SHEAR-WALL-300"))
 
-    # what to build
+    # -- what to build -------------------------------------------------------
     build: dict[str, bool] = Field(default_factory=lambda: {
         "levels": True, "grids": True, "columns": True, "beams": True, "floors": True,
         "foundations": True, "pcc": True, "piles": True, "walls": True, "shafts": True, "stairs": False,
     })
+    # A leg of a shaped wall is a column in the drawing and in the schedule, and C2B split it as
+    # one, so it is a Structural Column by default -- one Revit element per tagged leg. Switch to
+    # "wall" when the client wants shear walls modelled as walls; "wall_like_min_thickness_mm"
+    # then keeps the thin ones as columns.
+    wall_like_as: Literal["column", "wall"] = "column"
+    wall_like_min_thickness_mm: float = 0.0
     structural_only: bool = True                  # skip non-structural walls
     shaft_from: list[str] = Field(default_factory=lambda: ["LIFT", "SHAFT", "STAIR"])   # cut-out labels that become shafts
     column_top_attachment: Literal["level", "beam_soffit"] = "level"
@@ -76,5 +135,21 @@ class RevitMapping(BaseModel):
 
     def save(self, path: str | Path) -> None:
         header = ("# C2B -> Revit mapping. Edit the family and type names to match your Revit template,\n"
-                  "# then keep this file with the project. 'c2b revit-plan --mapping <this file>' uses it.\n")
+                  "# then keep this file with the project. 'c2b revit-plan --mapping <this file>' uses it.\n"
+                  "# Check it against the template first: 'c2b revit-plan <json> --template <template>.md'\n")
         Path(path).write_text(header + yaml.safe_dump(self.model_dump(mode="json"), sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+    # -- rules by name, for the template check -------------------------------
+    def loadable_rules(self) -> dict[str, TypeRule]:
+        return {n: getattr(self, n) for n in
+                ("column", "column_round", "beam", "beam_step", "beam_step_inverted",
+                 "beam_taper", "beam_taper_inverted", "footing", "pile")}
+
+    def system_rules(self) -> dict[str, SystemTypeRule]:
+        return {n: getattr(self, n) for n in ("floor", "ramp_floor", "raft", "pcc", "wall")}
+
+    def beam_rule_for(self, inverted: bool, tapered: bool) -> TypeRule:
+        """Which framing family a two-depth beam belongs to."""
+        if tapered or self.two_depth_beam == "taper":
+            return self.beam_taper_inverted if inverted else self.beam_taper
+        return self.beam_step_inverted if inverted else self.beam_step

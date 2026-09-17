@@ -145,9 +145,14 @@ a floor, a location and an element id, in both the workbook and the report.
 ## 8. Into Revit (utility 5)
 
 ```bash
-c2b revit-plan out\TowerA\TowerA.normalized.json --write-mapping   # first time: set your family names
-c2b revit-plan out\TowerA\TowerA.normalized.json
+c2b revit-plan out\TowerA\TowerA.normalized.json --template templates\R25_TEMPLATE.template.md ^
+                                                 --shared-params templates\CH-shared-parameters.txt
 ```
+
+The defaults already match **R25_TEMPLATE**, so nothing needs editing for that template. The
+`--template` check answers, before Revit is opened, which family types are already there and
+which will be created, and whether the marks C2B writes will survive. Add `--write-mapping`
+to write the mapping file out and change a family or type name.
 
 Check `TowerA.revit.xlsx`, sheet **Types to create**, then in Revit press **C2B
 → Import C2B

@@ -175,7 +175,9 @@ def extract_columns(ctx: FloorContext) -> list[Column]:
                 ctx.diag.info("COLUMN_MULTI_SIZE", f"Wall {cid} carries {len(sizes)} size tags of equal thickness {sizes}; leg matching the drawn length used", floor_id=ctx.floor_id, element_id=cid, location=s.center)
             else:
                 ctx.diag.warning("COLUMN_MULTI_SIZE", f"Column {cid} has conflicting size tags: {sizes}", floor_id=ctx.floor_id, element_id=cid, location=s.center)
-        if merged.diameter_mm is not None:
+        if merged.diameter_mm is not None and s.shape != "rect":
+            # a drawn rectangle is not round whatever a tag says, and a tag that looks like a
+            # diameter on a rectangle is a misread mark
             dia, size_source = merged.diameter_mm, "tag"
         elif merged.width_mm is not None:
             width, depth, size_source = merged.width_mm, merged.depth_mm, "tag"

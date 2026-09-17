@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from .. import __version__
 from ..schema import Diagnostic, Point2, TagRef
 
-NORMALIZED_SCHEMA_VERSION = "0.10.0"
+NORMALIZED_SCHEMA_VERSION = "0.10.1"
 
 
 class NFloor(BaseModel):

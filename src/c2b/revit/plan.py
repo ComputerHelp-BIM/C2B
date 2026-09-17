@@ -16,9 +16,67 @@ from .. import __version__
 from ..diagnostics import DiagnosticsCollector
 from ..normalize.model import NormalizedProject
 from ..schema import Diagnostic
-from .mapping import RevitMapping
+from .mapping import REVIT_BUILTIN_PARAMS, RevitMapping
+from .template import SharedParam, TemplateDigest
 
-REVIT_PLAN_VERSION = "0.1.0"
+REVIT_PLAN_VERSION = "0.2.0"
+
+
+class TypeNeed(BaseModel):
+    """One family type the plan needs, and whether the template already has it."""
+
+    category: str
+    family: str
+    type_name: str
+    count: int = 0
+    exists: bool = False
+    will_create: bool = False          # created in Revit by duplicating base_type
+    base_type: str | None = None
+    params: dict[str, float] = Field(default_factory=dict)
+    note: str | None = None            # why this type is worth a second look before it is created
+
+
+class ParamCheck(BaseModel):
+    """One parameter C2B writes to, and whether this template will keep the value."""
+
+    name: str
+    bound: bool = False            # the template binds it, so a write survives
+    defined: bool = False          # the shared parameter file defines it
+    builtin: bool = False          # Revit gives it to every instance
+    advice: str = ""
+
+    @property
+    def survives(self) -> bool:
+        return self.bound or self.builtin
+
+
+class TemplateCheck(BaseModel):
+    """What a plan asks of a Revit template, answered before Revit is opened."""
+
+    template_name: str = ""
+    template_file: str = ""
+    types: list[TypeNeed] = Field(default_factory=list)
+    missing_families: list[str] = Field(default_factory=list)
+    params: list[ParamCheck] = Field(default_factory=list)
+    new_levels: list[str] = Field(default_factory=list)
+
+    @property
+    def bound_params(self) -> list[str]:
+        return [p.name for p in self.params if p.survives]
+
+    @property
+    def unbound_params(self) -> list[str]:
+        return [p.name for p in self.params if not p.survives]
+
+    def summary(self) -> dict[str, int]:
+        return {"types_needed": len(self.types),
+                "types_present": sum(1 for t in self.types if t.exists),
+                "types_to_create": sum(1 for t in self.types if t.will_create),
+                "types_to_look_at": sum(1 for t in self.types if t.note),
+                "missing_families": len(self.missing_families),
+                "params_that_survive": len(self.bound_params),
+                "params_that_vanish": len(self.unbound_params),
+                "new_levels": len(self.new_levels)}
 
 
 class RevitLevel(BaseModel):
@@ -47,6 +105,7 @@ class RevitAction(BaseModel):
     rotation_deg: float = 0.0
     loops: list[list[list[float]]] = Field(default_factory=list)  # [outer, hole, hole...] each a list of [x, y]
     height_mm: float | None = None
+    thickness_mm: float | None = None      # system types (floor, wall, raft, PCC) are duplicated, then set to this
     mark: str | None = None
     comment: str | None = None
 
@@ -59,6 +118,10 @@ class RevitPlan(BaseModel):
     source_file: str
     mapping_name: str
     project_base_point: list[float] = Field(default_factory=lambda: [0.0, 0.0])
+    mark_params: list[str] = Field(default_factory=list)     # every name the mark is written to
+    id_params: list[str] = Field(default_factory=list)       # every name the C2B element id is written to
+    comment_param: str | None = None
+    template_check: TemplateCheck | None = None              # what the Revit template does and does not carry
     levels: list[RevitLevel] = Field(default_factory=list)
     actions: list[RevitAction] = Field(default_factory=list)
     diagnostics: list[Diagnostic] = Field(default_factory=list)
@@ -90,7 +153,9 @@ def _loop(points, ox: float, oy: float) -> list[list[float]]:
 def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsCollector | None = None) -> RevitPlan:
     """Model + mapping -> an ordered build plan. Coordinates become project coordinates (floor origin applied)."""
     diag = diag or DiagnosticsCollector()
-    plan = RevitPlan(source_file=np_.source_file, mapping_name=mapping.name)
+    plan = RevitPlan(source_file=np_.source_file, mapping_name=mapping.name,
+                     mark_params=list(mapping.mark_params), id_params=list(mapping.id_params),
+                     comment_param=mapping.comment_param)
     step = mapping.round_sizes_to_mm
 
     # ---- levels ------------------------------------------------------------
@@ -112,7 +177,6 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
     for f in np_.floors:
         if f.id not in floor_levels:
             diag.warning("REVIT_FLOOR_NO_LEVEL", f"Floor {f.id} '{f.name}' has no level in the workbook; its elements are skipped", floor_id=f.id)
-    {l.id: i for i, l in enumerate(levels)}
     level_above = {l.id: (levels[i + 1].id if i + 1 < len(levels) else None) for i, l in enumerate(levels)}
     origin = {f.id: (f.origin.x, f.origin.y) for f in np_.floors}
 
@@ -135,10 +199,27 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
     if mapping.build.get("columns"):
         for c in np_.columns:
             ox, oy = origin.get(c.floor_id, (0.0, 0.0))
+            as_wall = (mapping.wall_like_as == "wall" and c.wall_like and c.shape == "rect"
+                       and min(c.width_mm or 0, c.depth_mm or 0) >= mapping.wall_like_min_thickness_mm)
             for lid in levels_for(c.floor_id):
                 top = level_above.get(lid)
                 if top is None:
                     diag.info("REVIT_COLUMN_NO_TOP", f"Column {c.mark} on the highest level has no level above; it is skipped", element_id=c.id)
+                    continue
+                if as_wall:
+                    # a leg modelled as a wall: it runs along its own longer side, and the
+                    # shorter side is the wall thickness
+                    long_mm, thk = max(c.width_mm, c.depth_mm), _round(min(c.width_mm, c.depth_mm), step)
+                    ang = c.rotation_deg + (0.0 if c.width_mm >= c.depth_mm else 90.0)
+                    half = long_mm / 2.0
+                    ux, uy = math.cos(math.radians(ang)), math.sin(math.radians(ang))
+                    plan.actions.append(RevitAction(
+                        id=f"{c.id}@{lid}", kind="wall", category="Walls", family=mapping.wall.family,
+                        type_name=_fmt(mapping.wall.type_name, thk=thk), base_type=mapping.wall.base_type,
+                        level_id=lid, top_level_id=top,
+                        start=[c.center.x + ox - ux * half, c.center.y + oy - uy * half],
+                        end=[c.center.x + ox + ux * half, c.center.y + oy + uy * half],
+                        thickness_mm=thk, mark=c.mark, comment=f"wall-like leg, stack {c.stack_id}"))
                     continue
                 if c.shape == "circle" and c.diameter_mm:
                     rule = mapping.column_round
@@ -147,7 +228,7 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
                     params = {rule.diameter_param: dia} if rule.diameter_param else {}
                 else:
                     rule = mapping.column
-                    w, d = _round(c.width_mm or c.drawn_width_mm if hasattr(c, "drawn_width_mm") else c.width_mm, step), _round(c.depth_mm, step)
+                    w, d = _round(c.width_mm, step), _round(c.depth_mm, step)
                     if not w or not d:
                         diag.warning("REVIT_NO_SIZE", f"Column {c.mark} ({c.id}) has no size; it is skipped", floor_id=c.floor_id, element_id=c.id)
                         continue
@@ -161,21 +242,32 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
 
     # ---- beams -------------------------------------------------------------
     if mapping.build.get("beams"):
-        rule = mapping.beam
         for b in np_.beams:
             ox, oy = origin.get(b.floor_id, (0.0, 0.0))
             w, d = _round(b.width_mm, step), _round(b.depth_mm, step)
             if not w or not d:
                 diag.warning("REVIT_NO_SIZE", f"Beam {b.mark} ({b.id}) has no depth; it is skipped", floor_id=b.floor_id, element_id=b.id)
                 continue
+            # a beam the drawing gives two depths is a different family: stepped, or tapered
+            # when the second depth is at a free end
+            d2 = _round(b.depth_tip_mm or b.depth_alt_mm, step)
+            if d2 and d2 != d:
+                rule = mapping.beam_rule_for(b.inverted, tapered=b.depth_tip_mm is not None)
+                type_name = _fmt(rule.type_name, w=w, d=d, d2=d2)
+                params = {k: v for k, v in ((rule.width_param, w), (rule.depth_param, d), (rule.depth_alt_param, d2)) if k}
+            else:
+                rule = mapping.beam
+                type_name = _fmt(rule.type_name, w=w, d=d)
+                params = {k: v for k, v in ((rule.width_param, w), (rule.depth_param, d)) if k}
+            note = "inverted" if b.inverted else ("cantilever" if b.cantilever else None)
+            if b.depth_rule:
+                note = f"{note}, depth from {b.depth_rule}" if note else f"depth from {b.depth_rule}"
             for lid in levels_for(b.floor_id):
                 plan.actions.append(RevitAction(
                     id=f"{b.id}@{lid}", kind="beam", category="Structural Framing", family=rule.family,
-                    type_name=_fmt(rule.type_name, w=w, d=d), base_type=rule.fallback_type,
-                    params={k: v for k, v in ((rule.width_param, w), (rule.depth_param, d)) if k},
+                    type_name=type_name, base_type=rule.fallback_type, params=params,
                     level_id=lid, start=[b.start.x + ox, b.start.y + oy], end=[b.end.x + ox, b.end.y + oy],
-                    top_offset_mm=b.top_offset_mm, mark=b.mark,
-                    comment="inverted" if b.inverted else ("cantilever" if b.cantilever else None)))
+                    top_offset_mm=b.top_offset_mm, mark=b.mark, comment=note))
 
     # ---- floors (slab, cantilever, ramp) -----------------------------------
     if mapping.build.get("floors"):
@@ -193,7 +285,7 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
                 plan.actions.append(RevitAction(
                     id=f"{p.id}@{lid}", kind="floor", category="Floors", type_name=_fmt(rule.type_name, thk=thk),
                     base_type=rule.base_type, params={}, level_id=lid, top_offset_mm=p.top_offset_mm,
-                    loops=loops, height_mm=thk, mark=p.mark,
+                    loops=loops, height_mm=thk, thickness_mm=thk, mark=p.mark,
                     comment=f"{p.kind}" + (f", sunk {p.sunk_mm:.0f}" if p.sunk_mm else "") + (f", {p.slope_ratio} {p.direction or ''}" if p.slope_ratio else "")))
 
     # ---- foundations, PCC, piles -------------------------------------------
@@ -214,7 +306,7 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
                 plan.actions.append(RevitAction(
                     id=x.id, kind="footing", category="Structural Foundations", type_name=_fmt(rule.type_name, thk=thk),
                     base_type=rule.base_type, level_id=lid, loops=[_loop(x.outline, ox, oy)], height_mm=thk,
-                    base_offset_mm=-(x.pit_depth_mm or 0.0), mark=x.mark, comment=x.kind))
+                    thickness_mm=thk, base_offset_mm=-(x.pit_depth_mm or 0.0), mark=x.mark, comment=x.kind))
             else:
                 rule = mapping.footing
                 w, d = _round(x.width_mm, step), _round(x.depth_mm, step)
@@ -231,7 +323,7 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
                 plan.actions.append(RevitAction(
                     id=f"{x.id}-PCC", kind="pcc", category="Structural Foundations", type_name=_fmt(mapping.pcc.type_name, thk=pthk),
                     base_type=mapping.pcc.base_type, level_id=lid, loops=[_loop(x.pcc_outline, ox, oy)], height_mm=pthk,
-                    base_offset_mm=-((thk or 0.0) + (x.pit_depth_mm or 0.0)), mark="PCC", comment=f"under {x.mark}"))
+                    thickness_mm=pthk, base_offset_mm=-((thk or 0.0) + (x.pit_depth_mm or 0.0)), mark="PCC", comment=f"under {x.mark}"))
     if mapping.build.get("piles"):
         rule = mapping.pile
         for pl in np_.piles:
@@ -264,7 +356,7 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
                 plan.actions.append(RevitAction(
                     id=f"{w.id}@{lid}", kind="wall", category="Walls", type_name=_fmt(rule.type_name, thk=thk),
                     base_type=rule.base_type, level_id=lid, top_level_id=top, top_offset_mm=w.top_offset_mm,
-                    start=start, end=end, mark=w.mark, comment="RCC wall"))
+                    start=start, end=end, thickness_mm=thk, mark=w.mark, comment="RCC wall"))
 
     # ---- shafts (lift, stair, duct cut-outs that run through) ---------------
     if mapping.build.get("shafts"):
@@ -284,3 +376,101 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
     plan.diagnostics = diag.items
     plan.recount()
     return plan
+
+
+# A size beyond which a type is worth a human's glance before Revit creates it. These are not
+# limits -- the plan still carries the element -- they are the sizes at which the firm's own
+# classification rules produce something a modeller would not expect to see in that family.
+_ODD_ABOVE_MM = {"Structural Columns": 3000.0, "Structural Framing": 2500.0}
+_ODD_FOOTING_AREA_M2 = 40.0
+
+
+def _odd_note(category: str, params: dict[str, float], family: str) -> str | None:
+    """Say why a type looks wrong for its family, or nothing."""
+    sizes = sorted((v for v in params.values() if v), reverse=True)
+    if not sizes:
+        return None
+    if category == "Structural Foundations" and len(sizes) >= 2 and sizes[0] * sizes[1] / 1e6 >= _ODD_FOOTING_AREA_M2:
+        return (f"{sizes[0] / 1000:.1f} x {sizes[1] / 1000:.1f} m is a raft, not an isolated footing; "
+                "the client did not mark it RF/RAFT/MAT, so C2B kept it a footing")
+    limit = _ODD_ABOVE_MM.get(category)
+    if limit and sizes[0] > limit:
+        if category == "Structural Columns":
+            return (f"{sizes[0]:.0f} mm long: this is a wall leg modelled as a column "
+                    "(set wall_like_as: wall in the mapping to model it as a wall instead)")
+        return f"{sizes[0]:.0f} mm is deeper than a beam usually is; check the tag it came from"
+    return None
+
+
+def check_against_template(plan: RevitPlan, mapping: RevitMapping, digest: TemplateDigest,
+                           shared: dict[str, SharedParam] | None = None) -> TemplateCheck:
+    """Answer, before Revit is opened, what this plan asks of the template and what is missing.
+
+    A family that is not in the template cannot have a type duplicated inside it, so every
+    element needing it is unbuildable until someone loads the family -- that is worth knowing
+    now rather than halfway through a run. A mark written to a parameter the template does not
+    bind is worse: Revit accepts the write, drops the value, and the model looks finished.
+    """
+    check = TemplateCheck(template_name=digest.name, template_file=digest.source_file)
+
+    # -- the types the plan needs, counted --------------------------------
+    base_for: dict[str, str | None] = {}
+    for rule in list(mapping.loadable_rules().values()) + list(mapping.system_rules().values()):
+        base = getattr(rule, "fallback_type", None) or getattr(rule, "base_type", None)
+        if rule.family:
+            base_for.setdefault(rule.family, base)
+
+    needs: dict[tuple[str, str], TypeNeed] = {}
+    for a in plan.actions:
+        if a.kind in ("grid", "shaft") or not a.type_name:
+            continue
+        family = a.family or _system_family(a, mapping)
+        if not family:
+            continue
+        key = (family, a.type_name)
+        need = needs.get(key)
+        if need is None:
+            fam = digest.family(family)
+            exists = bool(fam and a.type_name in fam.type_names())
+            need = needs[key] = TypeNeed(
+                category=a.category, family=family, type_name=a.type_name, exists=exists,
+                will_create=not exists and fam is not None,
+                base_type=a.base_type or base_for.get(family), params=a.params,
+                note=_odd_note(a.category, a.params, family))
+            if fam is None and family not in check.missing_families:
+                check.missing_families.append(family)
+        need.count += 1
+    check.types = sorted(needs.values(), key=lambda t: (t.category, t.family, t.type_name))
+
+    # -- where the marks go ------------------------------------------------
+    # with no actions there is no category to check against, so ask whether the template binds
+    # the name at all rather than declaring every name unbound
+    categories = ({a.category for a in plan.actions} - {"Grids", "Shaft Openings"}) or {None}
+    for name in list(plan.mark_params) + list(plan.id_params) + ([plan.comment_param] if plan.comment_param else []):
+        pc = ParamCheck(name=name, builtin=name in REVIT_BUILTIN_PARAMS,
+                        bound=any(digest.binds(name, c) for c in categories),
+                        defined=bool(shared and name in shared))
+        if pc.builtin:
+            pc.advice = "a Revit built-in: always there"
+        elif pc.bound:
+            pc.advice = "bound in the template; the value survives"
+        elif pc.defined:
+            pc.advice = ("defined in the shared parameter file but not bound in the template -- "
+                         "add it as a project parameter, or C2B's write is dropped")
+        else:
+            pc.advice = ("neither defined in the shared parameter file nor bound in the template -- "
+                         "it is a name nothing carries, so remove it from the mapping")
+        check.params.append(pc)
+
+    # -- levels ------------------------------------------------------------
+    have = digest.level_names()
+    check.new_levels = [lv.name for lv in plan.levels if lv.name not in have]
+    return check
+
+
+def _system_family(action: RevitAction, mapping: RevitMapping) -> str | None:
+    """A system-family action carries no family name; its kind says which rule made it."""
+    rule = {"floor": mapping.floor, "wall": mapping.wall, "pcc": mapping.pcc}.get(action.kind)
+    if action.kind == "footing" and not action.family:
+        rule = mapping.raft
+    return rule.family if rule else None

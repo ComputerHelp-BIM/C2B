@@ -368,13 +368,18 @@ def revit_plan(
     normalized: Path = typer.Argument(..., exists=True, help="<stem>.normalized.json from normalize (or .reread.json after drafter edits)"),
     mapping: Optional[Path] = typer.Option(None, "--mapping", "-m", help="Revit family mapping YAML (default: next to the file, else built-in)"),
     out: Path = typer.Option(None, "--out", "-o", help="Output folder (default: next to the JSON)"),
+    template: Optional[Path] = typer.Option(None, "--template", "-t", exists=True,
+                                            help="Revit template description (.md from Extract Template): checks the plan against it"),
+    shared_params: Optional[Path] = typer.Option(None, "--shared-params", exists=True,
+                                                 help="Revit shared parameter file, so an unbound name can be told from a name that does not exist"),
     write_mapping: bool = typer.Option(False, "--write-mapping", help="Write a starting mapping file and stop"),
 ) -> None:
     """Utility 5, step 1: turn the model into a Revit build plan and a workbook of what will be created."""
     from .export.revit_excel import write_revit_workbook
     from .normalize.model import NormalizedProject
     from .revit.mapping import RevitMapping
-    from .revit.plan import build_plan
+    from .revit.plan import build_plan, check_against_template
+    from .revit.template import parse_shared_parameters, parse_template_md
 
     stem = normalized.name.replace(".normalized.json", "").replace(".reread.json", "").replace(".json", "")
     out = out or normalized.parent
@@ -390,11 +395,26 @@ def revit_plan(
         typer.secho(f"No mapping found, so a starting one was written to {mapping_path.name}. Check the family names in it.", fg=typer.colors.YELLOW)
     model = NormalizedProject.model_validate_json(normalized.read_text(encoding="utf-8"))
     plan = build_plan(model, rm)
+    if template is not None:
+        digest = parse_template_md(template)
+        shared = parse_shared_parameters(shared_params) if shared_params else None
+        plan.template_check = check_against_template(plan, rm, digest, shared)
     (out / f"{stem}.revit.json").write_text(plan.model_dump_json(indent=2), encoding="utf-8")
     write_revit_workbook(plan, out / f"{stem}.revit.xlsx")
     errors = [d for d in plan.diagnostics if d.severity == "ERROR"]
     for kind, n in sorted(plan.counts.items()):
         typer.echo(f"  {kind:12s} {n}")
+    if plan.template_check is not None:
+        c = plan.template_check
+        s = c.summary()
+        typer.echo(f"\n  against {c.template_name}: {s['types_present']} of {s['types_needed']} types already there, "
+                   f"{s['types_to_create']} to create, {s['new_levels']} levels to create")
+        for fam in c.missing_families:
+            typer.secho(f"  family not in the template: {fam} - load it, or nothing using it can be built", fg=typer.colors.RED)
+        for pc in [x for x in c.params if not x.survives]:
+            typer.secho(f"  {pc.name}: {pc.advice}", fg=typer.colors.YELLOW)
+        for t in [x for x in c.types if x.note]:
+            typer.secho(f"  worth a look: {t.type_name} x{t.count} - {t.note}", fg=typer.colors.YELLOW)
     if errors:
         for d in errors[:5]:
             typer.secho(f"  {d.code}: {d.message}", fg=typer.colors.RED)

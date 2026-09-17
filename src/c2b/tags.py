@@ -73,7 +73,10 @@ RE_SIZE = re.compile(
     rf"(?P<w>{LENGTH})\s*[xX×*]\s*(?P<d>{LENGTH})(?:\s*/\s*(?P<d2>{LENGTH}))?",
 )
 # 600D, 600 DIA, Ø600, %%C600, DIA 600
-RE_DIA = re.compile(rf"(?:(?P<a>{_NUM})\s*(?:MM)?\s*(?:D|DIA\.?|Ø)(?![A-Z])|(?:Ø|DIA\.?)\s*(?P<b>{_NUM}))", re.I)
+# The number must not run on from letters: "C_600D" is a 600 dia column, but "T1SW136d" is a
+# mark -- tower 1, shear wall 136, leg d -- and reading its digits as a diameter cost Test17
+# thirteen shear wall legs, which came out round-ish and sizeless.
+RE_DIA = re.compile(rf"(?:(?<![A-Z0-9])(?P<a>{_NUM})\s*(?:MM)?\s*(?:D|DIA\.?|Ø)(?![A-Z])|(?:Ø|DIA\.?)\s*(?P<b>{_NUM}))", re.I)
 # 150 THK., 1200MM THK, 150THK
 RE_THK = re.compile(rf"(?P<t>{_NUM})\s*(?:MM)?\s*(?:THK|THICK|TH)\b\.?", re.I)
 RE_FOLD = re.compile(rf"(?P<f>{_NUM})\s*(?:MM)?\s*FOLD", re.I)

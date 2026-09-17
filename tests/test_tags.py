@@ -92,3 +92,31 @@ def test_parse_symbolic_size():
     assert parse_symbolic_size("200X650") is None      # an ordinary size; the numeric parser has it
     assert parse_symbolic_size("SB") is None
     assert parse_symbolic_size("") is None
+
+
+def test_a_mark_is_not_a_diameter():
+    """"C_600D" is a 600 dia column; "T1SW136d" is tower 1, shear wall 136, leg d.
+
+    Reading the second as a diameter gave thirteen of Test17's shear wall legs a 136 mm
+    diameter, no width and no depth, and dropped every one of them from the Revit model.
+    """
+    from c2b.tags import parse_tag
+
+    assert parse_tag("C_600D").diameter_mm == 600
+    assert parse_tag("900 DIA").diameter_mm == 900
+    assert parse_tag("1200D").diameter_mm == 1200
+    # the digits run on from the letters, so they belong to the mark
+    for mark in ("T1SW136d", "T1SW135a", "T1SW1200d", "B6D"):
+        assert parse_tag(mark).diameter_mm is None, mark
+
+
+def test_a_rectangle_does_not_take_a_tag_diameter():
+    """Defence in depth: whatever a tag says, a drawn rectangle is not round."""
+    import ast
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parent.parent / "src" / "c2b" / "extract" / "columns.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    tests = [ast.unparse(n.test) for n in ast.walk(tree) if isinstance(n, ast.If)]
+    assert any("merged.diameter_mm is not None" in t and "shape != 'rect'" in t for t in tests), \
+        "the tag diameter is accepted without checking the drawn shape"
