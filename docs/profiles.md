@@ -61,7 +61,7 @@ which:
 | (none) | `S-COLUMN` | the column under this floor |
 | `stop` | `S-COLUM_STOP` | a column running up from below that ends here — this floor's column |
 | `start` | `S-COLUMN_START` | a column beginning here, so nothing stands under this floor; not drawn on it |
-| `stub` | `S.STUB COL` | a stub column; marked `ST1`, `ST2`, … and sized from its own outline when untagged |
+| `stub` | `S.STUB COL` | a stub column; marked `SC1`, `SC2`, … and sized from its own outline when untagged |
 
 Where a `stop` outline and a plain one are drawn over each other, the plain one is the floor
 above's column and is dropped for this floor. Reported as `COLUMN_ABOVE_FLOOR` and

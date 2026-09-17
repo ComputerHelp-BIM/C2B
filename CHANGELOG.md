@@ -8,6 +8,23 @@ The canonical JSON schema carries its own version (`schema_version` in every out
 A MAJOR bump of the schema means downstream utilities (DXF writer, Revit importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes values.
 
+## [0.11.1] - 2026-09-17
+
+### Fixed
+
+- **The Run button was off the window.** Adding the "Column size from" box in 0.10.0 put it in
+  the same frame as the buttons, and that frame sits in one cell of the entry grid -- so the
+  wider box pushed Run and "Re-check an edited template DXF" past the window edge, with nothing
+  to scroll or wrap them back into view. The buttons now have their own strip on the window,
+  where no option box can reach them, and the option labels are short enough to leave room.
+- **Untagged stub columns are `SC1`, `SC2`, … not `ST`.** `ST` is already the stair mark
+  (`marks.stair` is `ST{n}-{thk}THK`), so the two series would have collided.
+- A "Column size from" choice saved by an older build no longer reads as the *opposite* setting.
+  The window stores the label it showed, and an earlier build's label ("tag or schedule
+  (client's intent)") did not match the current first option, so it fell through to "outline" --
+  sizing every column off the drawing instead of the client's tag. Labels now map to values
+  explicitly, and one we no longer offer falls back to the default.
+
 ## [0.11.0] - 2026-09-16
 
 Each leg of a shaped wall is now its own element, and only the outlines that belong to a floor

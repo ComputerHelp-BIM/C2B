@@ -91,7 +91,7 @@ class Numbering(BaseModel):
     beams_per_floor: bool = True
     slabs_per_floor: bool = True
     footings_per_floor: bool = True
-    stub_prefix: str = "ST"                 # answer 2: an untagged stub column is ST1, ST2, ... sized from its outline
+    stub_prefix: str = "SC"                 # an untagged stub column is SC1, SC2, ... sized from its outline ("ST" is the stair mark)
 
 
 class SplitRules(BaseModel):

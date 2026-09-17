@@ -5,7 +5,8 @@ Answers 2, 3 and 4 on columns:
 * the template models the column *below* a floor level, so of the outlines the client draws on
   one plan only some belong to that floor;
 * an L, T, C or F shaped wall is marked and sized leg by leg, so each leg is its own element;
-* an untagged stub column is ``ST{n}``, and any other untagged column takes its stack's mark
+* an untagged stub column is ``SC{n}`` -- not ``ST``, which is the stair mark -- and any other
+  untagged column takes its stack's mark
   from whichever floor the client did tag, falling back to the next free number.
 """
 from __future__ import annotations
@@ -137,13 +138,15 @@ def test_each_leg_of_a_shaped_wall_is_its_own_element_with_its_own_mark(project)
 
 
 def test_an_untagged_stub_column_is_numbered_in_its_own_series(project):
+    """SC, not ST: ``marks.stair`` is already ``ST{n}-{thk}THK``."""
     spec = TemplateSpec()
     levels = [LevelRow("L01", "GROUND FLOOR LEVEL", 0, 0.0, None, "GROUND FLOOR LVL."),
               LevelRow("L02", "FIRST FLOOR LEVEL", 1, 3000.0, None, "FIRST FLOOR LVL.")]
     np_ = normalize(project, spec, levels, source_file="life.dxf")
     stubs = [c for c in np_.columns if c.center.x > 8000]
     assert stubs, "the stub columns were dropped"
-    assert all(c.mark.startswith("ST") for c in stubs), [c.mark for c in stubs]
+    assert all(c.mark.startswith("SC") for c in stubs), [c.mark for c in stubs]
+    assert not any(c.mark.startswith("ST") for c in stubs), "ST would collide with the stair mark"
     assert all(c.mark.endswith("200X450") for c in stubs), "sized from its own outline"
 
 

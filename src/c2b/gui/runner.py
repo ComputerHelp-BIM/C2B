@@ -13,6 +13,23 @@ from typing import Callable
 Progress = Callable[[str, str], None]        # (level, message): level in info | step | good | warn | bad
 
 
+#: What the drafter picks in the window -> the value the extractor takes. The label is what the
+#: settings file stores, so this mapping is also what protects a saved choice from a relabelling:
+#: an unknown label falls back to the default rather than silently meaning the other option.
+COLUMN_SIZE_FROM = {"tag or schedule": "tag", "drawn outline": "outline"}
+COLUMN_SIZE_DEFAULT = "tag or schedule"
+
+
+def column_size_value(label: str | None) -> str:
+    """The extractor's value for a picked label, defaulting to the client's stated size."""
+    return COLUMN_SIZE_FROM.get(label or "", COLUMN_SIZE_FROM[COLUMN_SIZE_DEFAULT])
+
+
+def column_size_label(saved: str | None) -> str | None:
+    """A label remembered from a previous run, or None when it is not one we offer now."""
+    return saved if saved in COLUMN_SIZE_FROM else None
+
+
 @dataclass
 class JobSettings:
     drawing: Path

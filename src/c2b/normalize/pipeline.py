@@ -152,7 +152,7 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
                 st.mark_base = st.client_marks[0]
                 continue
             if st.kind == "stub":
-                # answer 2: an untagged stub column is ST{n}, sized from its own outline
+                # an untagged stub column is SC{n}, sized from its own outline ("ST" belongs to stairs)
                 st.mark_base = f"{spec.numbering.stub_prefix}{nxt_stub}"
                 nxt_stub += 1
                 continue

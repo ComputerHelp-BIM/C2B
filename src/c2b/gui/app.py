@@ -20,11 +20,11 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from .. import __version__
-from .runner import JobResult, JobSettings, run_job, run_verify
+from .runner import (COLUMN_SIZE_DEFAULT, COLUMN_SIZE_FROM, JobResult, JobSettings, column_size_label,
+                     column_size_value, run_job, run_verify)
 
 SETTINGS_FILE = Path.home() / ".c2b" / "gui.json"
 UNITS = ("read from drawing", "mm", "cm", "m", "in", "ft")
-COLUMN_SIZE_FROM = ("tag or schedule (client's intent)", "drawn outline (measure the drawing)")
 COLORS = {"step": "#1F4E78", "good": "#1E7B34", "warn": "#9A6700", "bad": "#B42318", "info": "#333333"}
 
 
@@ -53,7 +53,7 @@ class C2BWindow(tk.Tk):
         self.worker: threading.Thread | None = None
         self.vars = {k: tk.StringVar() for k in ("drawing", "seed", "profile", "levels", "out", "units", "col_size")}
         self.vars["units"].set(UNITS[0])
-        self.vars["col_size"].set(COLUMN_SIZE_FROM[0])
+        self.vars["col_size"].set(COLUMN_SIZE_DEFAULT)
         self._build()
         self._load_settings()
         self.after(80, self._drain)
@@ -78,16 +78,22 @@ class C2BWindow(tk.Tk):
         self._row(top, 3, "Level heights", "levels", lambda: self._pick_file("levels", [("Level workbook", "*.xlsx")]), "optional: the filled levels workbook")
         self._row(top, 4, "Save results in", "out", self._pick_out, "leave empty to write next to the drawing")
 
-        units = ttk.Frame(top)
-        units.grid(row=5, column=1, sticky="w", pady=(6, 0))
-        ttk.Label(units, text="Units:").pack(side="left")
-        ttk.Combobox(units, textvariable=self.vars["units"], values=UNITS, width=18, state="readonly").pack(side="left", padx=(6, 18))
-        ttk.Label(units, text="Column size from:").pack(side="left")
-        ttk.Combobox(units, textvariable=self.vars["col_size"], values=COLUMN_SIZE_FROM, width=26,
-                     state="readonly").pack(side="left", padx=(6, 18))
-        self.run_btn = ttk.Button(units, text="Run", style="Run.TButton", command=self.start)
+        opts = ttk.Frame(top)
+        opts.grid(row=5, column=1, columnspan=3, sticky="w", pady=(6, 0))
+        ttk.Label(opts, text="Units:").pack(side="left")
+        ttk.Combobox(opts, textvariable=self.vars["units"], values=UNITS, width=16, state="readonly").pack(side="left", padx=(6, 18))
+        ttk.Label(opts, text="Column size from:").pack(side="left")
+        ttk.Combobox(opts, textvariable=self.vars["col_size"], values=list(COLUMN_SIZE_FROM), width=16,
+                     state="readonly").pack(side="left", padx=(6, 8))
+        ttk.Label(opts, text="what the client stated, or the drawing measured", foreground="#6B6B6B").pack(side="left")
+
+        # The buttons get their own strip on the window rather than a cell of the entry grid:
+        # inside the grid a wider option box pushes them past the window edge and out of sight.
+        run_row = ttk.Frame(self, padding=(14, 10, 14, 0))
+        run_row.pack(fill="x")
+        self.run_btn = ttk.Button(run_row, text="Run", style="Run.TButton", command=self.start)
         self.run_btn.pack(side="left")
-        self.verify_btn = ttk.Button(units, text="Re-check an edited template DXF", command=self.start_verify)
+        self.verify_btn = ttk.Button(run_row, text="Re-check an edited template DXF", command=self.start_verify)
         self.verify_btn.pack(side="left", padx=8)
 
         self.progress = ttk.Progressbar(self, mode="determinate", maximum=3)
@@ -166,7 +172,7 @@ class C2BWindow(tk.Tk):
             out_dir=Path(self.vars["out"].get()) if self.vars["out"].get().strip() else None,
             seed=self._path("seed"), spec=None, profile=self._path("profile"), levels=self._path("levels"),
             units=None if units == UNITS[0] else units,
-            column_size_from="tag" if self.vars["col_size"].get() == COLUMN_SIZE_FROM[0] else "outline",
+            column_size_from=column_size_value(self.vars["col_size"].get()),
         )
         self.status.configure(text="Working…  a large drawing can take a minute.")
         self.worker = threading.Thread(target=self._work, args=(run_job, (settings,)), daemon=True)
@@ -249,8 +255,11 @@ class C2BWindow(tk.Tk):
         try:
             data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
             for key in ("seed", "profile", "out", "units", "col_size"):
-                if data.get(key):
-                    self.vars[key].set(data[key])
+                if not data.get(key):
+                    continue
+                if key == "col_size" and column_size_label(data[key]) is None:
+                    continue        # a label from an older build: keep the default
+                self.vars[key].set(data[key])
         except Exception:
             pass
 
