@@ -14,7 +14,7 @@ from __future__ import annotations
 import ezdxf
 import pytest
 
-from c2b.export.template_dxf import TemplateWriter, write_template_dxf
+from c2b.export.template_dxf import write_template_dxf
 from c2b.normalize.model import NFloor, NormalizedProject, NPanel
 from c2b.normalize.spec import TemplateSpec
 from c2b.schema import Point2

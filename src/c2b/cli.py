@@ -1,7 +1,6 @@
 """Command line interface: ``c2b inspect | profile suggest | extract | render``."""
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Optional
 
@@ -51,9 +50,6 @@ def doctor(selftest: bool = typer.Option(True, "--selftest/--no-selftest", help=
     ok = True
     typer.echo(f"c2b            {__version__} (extraction schema {SCHEMA_VERSION})")
     typer.echo(f"python         {platform.python_version()} on {platform.system()} {platform.release()}")
-    if sys.version_info < (3, 11):
-        typer.secho("  python 3.11 or newer is required", fg=typer.colors.RED)
-        ok = False
     for mod in ("ezdxf", "shapely", "pydantic", "openpyxl", "typer", "yaml"):
         try:
             m = __import__(mod)
@@ -77,7 +73,6 @@ def doctor(selftest: bool = typer.Option(True, "--selftest/--no-selftest", help=
     if selftest:
         typer.echo("\nSelf-test: demo drawing -> extract -> normalize -> verify")
         from .demo import build_demo_drawing
-        from .export.jsonout import read_json
         from .export.template_dxf import write_template_dxf
         from .normalize.pipeline import normalize as run_normalize
         from .normalize.spec import TemplateSpec
@@ -139,7 +134,7 @@ def run(
         dxf, converted = ensure_dxf(drawing, out)
     except RuntimeError as ex:
         typer.secho(str(ex), fg=typer.colors.RED)
-        raise typer.Exit(2)
+        raise typer.Exit(2) from None
     if converted:
         typer.echo(f"Converted {drawing.name} to {dxf.name}")
 
@@ -168,7 +163,7 @@ def run(
         write_levels_template(project, levels_path)
         typer.secho(f"     fill {levels_path.name} with the floor elevations and run again for the elevation frame", fg=typer.colors.YELLOW)
 
-    typer.secho(f"2/3  Normalising to the template", bold=True)
+    typer.secho("2/3  Normalising to the template", bold=True)
     tspec = TemplateSpec.load(spec) if spec else TemplateSpec()
     np_ = run_normalize(project, tspec, level_rows, source_file=dxf.name, level_reference=level_ref)
     (out / f"{stem}.normalized.json").write_text(np_.model_dump_json(indent=2), encoding="utf-8")
@@ -178,7 +173,7 @@ def run(
     s2 = np_.summary
     typer.echo(f"     stacks {s2.stacks} | columns {s2.columns} | spans {s2.beams} | panels {s2.panels} | footings {s2.footings} | levels {s2.levels} | {s2.errors} errors, {s2.warnings} warnings")
 
-    typer.secho(f"3/3  Verifying the round trip", bold=True)
+    typer.secho("3/3  Verifying the round trip", bold=True)
     drawing_model = read_template(template, tspec)
     (out / f"{stem}.reread.json").write_text(drawing_model.model_dump_json(indent=2), encoding="utf-8")
     write_normalized_workbook(drawing_model, out / f"{stem}.reread.xlsx")
@@ -188,7 +183,7 @@ def run(
     color = typer.colors.GREEN if res.ok() else (typer.colors.RED if res.errors else typer.colors.YELLOW)
     typer.secho(f"     {'identical' if res.ok() else 'differences'}: {res.errors} errors, {res.warnings} warnings", fg=color)
 
-    typer.secho(f"\nDone. Open these next:", bold=True)
+    typer.secho("\nDone. Open these next:", bold=True)
     typer.echo(f"  {out / f'{stem}.template.dxf'}       the drawing in your template")
     typer.echo(f"  {out / f'{stem}.review.xlsx'}        what was read from the client drawing, with diagnostics")
     typer.echo(f"  {out / f'{stem}.schedules.xlsx'}     column / beam / slab / footing schedules")

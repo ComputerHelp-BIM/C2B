@@ -5,17 +5,32 @@ The ``C2B`` XDATA supplies identity and the few values a drawing cannot carry.
 """
 from __future__ import annotations
 
+import itertools
 import math
 from pathlib import Path
 
 import ezdxf
-from shapely.geometry import LineString, Point, Polygon
+from shapely.geometry import Point, Polygon
 
 from ..diagnostics import DiagnosticsCollector
 from ..geometry import classify_polygon, is_wall_like
-from ..normalize.geometry import poly_from_points, ring_points
-from ..normalize.model import (NBeam, NColumn, NFloor, NFold, NFooting, NGrid, NJoint, NLevel, NOpening, NPanel, NPile,
-                               NStair, NWall, NormalizedProject)
+from ..normalize.geometry import ring_points
+from ..normalize.model import (
+    NBeam,
+    NColumn,
+    NFloor,
+    NFold,
+    NFooting,
+    NGrid,
+    NJoint,
+    NLevel,
+    NOpening,
+    NormalizedProject,
+    NPanel,
+    NPile,
+    NStair,
+    NWall,
+)
 from ..normalize.spec import TemplateSpec
 from ..schema import Point2
 from .marks import TemplateMark, parse_template_mark
@@ -122,7 +137,7 @@ class TemplateReader:
         out = [(e, (e.dxf.start.x, e.dxf.start.y), (e.dxf.end.x, e.dxf.end.y)) for e in msp.query(f'LINE[layer=="{name}"]')]
         for e in msp.query(f'LWPOLYLINE[layer=="{name}"]'):
             pts = list(e.get_points("xy"))
-            for a, b in zip(pts[:-1], pts[1:]):
+            for a, b in itertools.pairwise(pts):
                 out.append((e, (a[0], a[1]), (b[0], b[1])))
         return out
 
@@ -139,7 +154,6 @@ class TemplateReader:
         level_lines = self._lines(msp, "level")
 
         plans: list[tuple[Polygon, tuple[float, float], NFloor]] = []
-        elevation_frame: Polygon | None = None
         index = 0
         for e, frame in sorted(frames, key=lambda fr: fr[1].bounds[0]):
             has_levels = any(frame.contains(Point(a)) for _, a, _ in level_lines)
@@ -154,7 +168,6 @@ class TemplateReader:
             if origin is None:
                 origin = next((o for _, o in origins if frame.contains(Point(o))), None)
             if has_levels and origin is None and not xd_frame.get("floor"):
-                elevation_frame = frame
                 continue
             index += 1
             if origin is None:
@@ -438,7 +451,7 @@ class TemplateReader:
         # ---- levels ----------------------------------------------------------
         lv_marks = self._texts(msp, "level_mark")
         rows = []
-        for e, a, b in level_lines:
+        for e, a, _b in level_lines:
             xd = self._xdata(e)
             mk = min(lv_marks, key=lambda m: abs(m[2][1] - a[1]) + abs(m[2][0] - a[0]), default=None)
             name = mk[1].strip() if mk else ""

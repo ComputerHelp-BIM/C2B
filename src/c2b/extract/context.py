@@ -3,15 +3,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
+from shapely.geometry import Point
+
 from ..diagnostics import DiagnosticsCollector
 from ..dxfio import Prim
 from ..floors import FloorFrame
-from shapely.geometry import Point
-
 from ..profile import LayerRule, SizeSources, Tolerances
-from ..tags import parse_size_from_name, strip_mtext_codes
 from ..schedules import ScheduleIndex
 from ..schema import Point2, TagRef
+from ..tags import parse_size_from_name, strip_mtext_codes
 
 
 class IdGen:

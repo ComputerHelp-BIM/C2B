@@ -161,7 +161,7 @@ def snap_endpoints(lines: list[LineString], tol: float) -> list[LineString]:
         c = [(x, y) for x, y, *_ in l.coords]
         c[0] = target[2 * k]
         c[-1] = target[2 * k + 1]
-        if len(c) >= 2 and math.dist(c[0], c[-1]) > 1e-9 or len(c) > 2:
+        if (len(c) >= 2 and math.dist(c[0], c[-1]) > 1e-9) or len(c) > 2:
             out.append(LineString(c))
     return out
 
@@ -228,8 +228,8 @@ class Segment:
 
 
 def _angle_bucket(angle_deg: float, tol: float) -> int:
-    n = int(round(180.0 / tol))
-    return int(round(angle_deg / tol)) % n
+    n = round(180.0 / tol)
+    return round(angle_deg / tol) % n
 
 
 def _frame(angle_deg: float) -> tuple[Pt, Pt]:
@@ -425,7 +425,7 @@ def pair_parallel(
             taken += max(0.0, min(b, t2) - max(a, t1))
         return 1.0 - taken / total
 
-    for score, w, t1, t2, o, a, b, u, n, ang, cover in candidates:
+    for score, w, t1, t2, o, a, b, u, n, ang, _cover in candidates:
         if free_fraction(a, t1, t2) < 0.5 or free_fraction(b, t1, t2) < 0.5:
             continue
         consumed.setdefault(id(a), []).append((t1, t2))

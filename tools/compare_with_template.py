@@ -74,7 +74,7 @@ def main(gen_path, ref_path, tol=3000.0):
         for lay in layers:
             r = {k[1]: v for k, v in rc.items() if k[0] == lay}
             g = {k[1]: v for k, v in gc.items() if k[0] == lay}
-            print(f"   {lay:28s} {str(r):>28s} {str(g):>28s}")
+            print(f"   {lay:28s} {r!s:>28s} {g!s:>28s}")
         for lay in ("CH-S-COLUMN", "CH-S-BEAM", "CH-S-SLAB", "CH-S-FND", "CH-S-RAFT"):
             rp = [p for p in polys(ref, lay) if rf.contains(p.centroid)]
             gp = [p for p in polys(gen, lay) if gf.contains(p.centroid)]

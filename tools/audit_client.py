@@ -13,9 +13,7 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-import ezdxf
 from shapely.geometry import Point, Polygon
-from shapely.strtree import STRtree
 
 
 def poly_of(points):
@@ -121,10 +119,17 @@ def main(client_path: str, extract_path: str, normalized_path: str | None = None
               f"{len(cols):5d} {c_marked:4d}/{c_tags:<6d} "
               f"{len(beams):5d} {b_marked:4d}/{b_tags:<6d} "
               f"{p_all if normalized else len(slabs):5d} {p_thk if normalized else s_thk:4d}/{s_tags:<6d}")
-        totals["grids_out"] += len(grids); totals["grids_client"] += len(client_grid_labels[fid])
-        totals["cols_out"] += len(cols); totals["cols_marked"] += c_marked; totals["cols_tags"] += c_tags
-        totals["beams_out"] += len(beams); totals["beams_marked"] += b_marked; totals["beams_tags"] += b_tags
-        totals["panels"] += p_all; totals["panels_thk"] += p_thk; totals["slab_tags"] += s_tags
+        totals["grids_out"] += len(grids)
+        totals["grids_client"] += len(client_grid_labels[fid])
+        totals["cols_out"] += len(cols)
+        totals["cols_marked"] += c_marked
+        totals["cols_tags"] += c_tags
+        totals["beams_out"] += len(beams)
+        totals["beams_marked"] += b_marked
+        totals["beams_tags"] += b_tags
+        totals["panels"] += p_all
+        totals["panels_thk"] += p_thk
+        totals["slab_tags"] += s_tags
     print("-" * len(header))
     print(f"{'ALL':5s} {'':34s} {totals['grids_out']:5d}/{totals['grids_client']:<6d} "
           f"{totals['cols_out']:5d} {totals['cols_marked']:4d}/{totals['cols_tags']:<6d} "

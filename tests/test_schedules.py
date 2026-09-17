@@ -1,7 +1,8 @@
+from shapely.geometry import Point
+
 from c2b.diagnostics import DiagnosticsCollector
 from c2b.dxfio import Prim
 from c2b.schedules import ScheduleIndex, parse_schedules
-from shapely.geometry import Point
 
 
 def _t(text, x, y, h=250):

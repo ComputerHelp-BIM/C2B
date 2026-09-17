@@ -7,14 +7,16 @@ Usage: python tools/compare_floor.py <client.dxf> <template.dxf> <extract.json> 
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import ezdxf
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from ezdxf.addons.drawing import Frontend, RenderContext
-from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
 from ezdxf.addons.drawing.config import Configuration
+from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
 
 
 def draw(ax, path, window, title):
@@ -26,14 +28,15 @@ def draw(ax, path, window, title):
     ax.set_ylim(window[1], window[3])
     ax.set_title(title, fontsize=11, color="white")
     ax.set_facecolor("#20242A")
-    ax.set_xticks([]); ax.set_yticks([])
+    ax.set_xticks([])
+    ax.set_yticks([])
 
 
 def main(client, template, extract_json, floor_id, out, bays="3"):
     import json
-    project = json.loads(open(extract_json).read())
+    project = json.loads(Path(extract_json).read_text())
     floor = next(f for f in project["floors"] if f["id"] == floor_id)
-    ox, oy = floor["origin"]["x"], floor["origin"]["y"]
+    _ox, _oy = floor["origin"]["x"], floor["origin"]["y"]
     xs = [p["x"] for p in floor["boundary"]]
     ys = [p["y"] for p in floor["boundary"]]
     # a window of a few bays in the middle of the plan, in drawing coordinates

@@ -8,7 +8,6 @@ stepped beam gets its two depths.
 from __future__ import annotations
 
 import ezdxf
-import pytest
 from ezdxf.enums import TextEntityAlignment
 
 from c2b.normalize.pipeline import LevelRow, normalize

@@ -78,21 +78,21 @@ def _codes(model, path) -> set[str]:
 
 def test_detects_moved_column(model, template, tmp_path):
     def move(doc, msp):
-        e = list(msp.query(f'LWPOLYLINE[layer=="{SPEC.layer("column")}"]'))[0]
+        e = next(iter(msp.query(f'LWPOLYLINE[layer=="{SPEC.layer("column")}"]')))
         e.translate(500, 0, 0)
     assert "RT_MOVED" in _codes(model, _edit(template, tmp_path, move))
 
 
 def test_detects_deleted_beam(model, template, tmp_path):
     def delete(doc, msp):
-        msp.delete_entity(list(msp.query(f'LWPOLYLINE[layer=="{SPEC.layer("beam")}"]'))[0])
+        msp.delete_entity(next(iter(msp.query(f'LWPOLYLINE[layer=="{SPEC.layer("beam")}"]'))))
     codes = _codes(model, _edit(template, tmp_path, delete))
     assert "RT_MISSING" in codes and "RT_COUNT" in codes
 
 
 def test_detects_retyped_mark(model, template, tmp_path):
     def retype(doc, msp):
-        t = list(msp.query(f'MTEXT[layer=="{SPEC.layer("beam_mark")}"]'))[0]
+        t = next(iter(msp.query(f'MTEXT[layer=="{SPEC.layer("beam_mark")}"]')))
         t.text = "B99-230X1200"
     codes = _codes(model, _edit(template, tmp_path, retype))
     assert "RT_MARK_CHANGED" in codes
@@ -109,7 +109,7 @@ def test_detects_hand_added_column(model, template, tmp_path):
 
 def test_detects_resized_column(model, template, tmp_path):
     def resize(doc, msp):
-        e = list(msp.query(f'LWPOLYLINE[layer=="{SPEC.layer("column")}"]'))[0]
+        e = next(iter(msp.query(f'LWPOLYLINE[layer=="{SPEC.layer("column")}"]')))
         pts = [(x, y * 1.0) for x, y in e.get_points("xy")]
         minx = min(p[0] for p in pts)
         e.set_points([(minx + (p[0] - minx) * 1.5, p[1]) for p in pts], format="xy")

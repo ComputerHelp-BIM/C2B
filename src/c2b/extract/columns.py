@@ -5,8 +5,7 @@ from dataclasses import replace
 
 from shapely.strtree import STRtree
 
-from ..geometry import (classify_polygon, is_wall_like, nearest_grid_intersection_label, shorten_to_clear,
-                        split_rectilinear)
+from ..geometry import classify_polygon, is_wall_like, nearest_grid_intersection_label, shorten_to_clear, split_rectilinear
 from ..schema import Column
 from .associate import TagCand, associate_tags, make_tag_cands, merge_parsed
 from .context import FloorContext, outline_points, pt, tag_ref
@@ -151,7 +150,7 @@ def extract_columns(ctx: FloorContext) -> list[Column]:
         s_ = shapes[i]
         return _sizes_match((w, d), (s_.width, s_.depth), tol.size_mismatch_tol_mm)
 
-    assigned, unassigned = associate_tags(polys, tags, radius, size_match_fn=size_matches)
+    assigned, _unassigned = associate_tags(polys, tags, radius, size_match_fn=size_matches)
     columns: list[Column] = []
     no_size_ids: list[str] = []
     for i, o in enumerate(outlines):
@@ -226,9 +225,9 @@ def extract_columns(ctx: FloorContext) -> list[Column]:
             ctx.diag.warning("COLUMN_SIZE_MISMATCH", f"Column {cid} tagged dia {dia:.0f} but drawn dia {s.diameter:.0f}", floor_id=ctx.floor_id, element_id=cid, location=s.center)
 
         # rectangle drawn with a tag in the other orientation: align tag size to drawn axes
-        if s.shape == "rect" and width is not None and depth is not None and size_source in ("tag", "schedule"):
-            if abs(width - drawn_d) + abs(depth - drawn_w) < abs(width - drawn_w) + abs(depth - drawn_d):
-                width, depth = depth, width
+        if (s.shape == "rect" and width is not None and depth is not None and size_source in ("tag", "schedule")
+                and abs(width - drawn_d) + abs(depth - drawn_w) < abs(width - drawn_w) + abs(depth - drawn_d)):
+            width, depth = depth, width
 
         if merged.category_hint not in (None, "column", "wall"):
             ctx.diag.info("TAG_CATEGORY_MISMATCH", f"Column {cid} tag '{merged.text}' looks like a {merged.category_hint} mark", floor_id=ctx.floor_id, element_id=cid, location=s.center)

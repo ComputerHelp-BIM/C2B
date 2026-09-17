@@ -1,6 +1,7 @@
 """Beam extraction: pair parallel edge lines into centreline + width, then resolve sizes."""
 from __future__ import annotations
 
+import itertools
 import math
 
 from ..geometry import PairedRect, Segment, classify_polygon, merge_collinear, pair_parallel
@@ -13,7 +14,7 @@ from .outlines import _block_size
 def _segments_from_prim(p) -> list[Segment]:
     coords = list(p.geom.exterior.coords) if p.geom.geom_type == "Polygon" else list(p.geom.coords)
     out = []
-    for a, b in zip(coords[:-1], coords[1:]):
+    for a, b in itertools.pairwise(coords):
         s = Segment((a[0], a[1]), (b[0], b[1]), [p.handle], p.layer)
         if s.length > 1e-6:
             out.append(s)
@@ -87,7 +88,7 @@ def extract_beams(ctx: FloorContext) -> list[Beam]:
     def radius(i: int, tag: TagCand) -> float:
         return max(1.5 * items[i][0].width, tol.beam_tag_buffer_factor * tag.height)
 
-    assigned, unassigned = associate_tags(polys, tags, radius, angles=angles)
+    assigned, _unassigned = associate_tags(polys, tags, radius, angles=angles)
 
     beams: list[Beam] = []
     for i, (r, layer, handles, kind, bsize, n_parts) in enumerate(items):

@@ -8,8 +8,7 @@ from __future__ import annotations
 
 import math
 from collections import Counter
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 
@@ -55,7 +54,7 @@ class RevitAction(BaseModel):
 class RevitPlan(BaseModel):
     plan_version: str = REVIT_PLAN_VERSION
     generator: str = f"c2b {__version__}"
-    generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    generated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
     units: str = "mm"
     source_file: str
     mapping_name: str
@@ -113,7 +112,7 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
     for f in np_.floors:
         if f.id not in floor_levels:
             diag.warning("REVIT_FLOOR_NO_LEVEL", f"Floor {f.id} '{f.name}' has no level in the workbook; its elements are skipped", floor_id=f.id)
-    level_index = {l.id: i for i, l in enumerate(levels)}
+    {l.id: i for i, l in enumerate(levels)}
     level_above = {l.id: (levels[i + 1].id if i + 1 < len(levels) else None) for i, l in enumerate(levels)}
     origin = {f.id: (f.origin.x, f.origin.y) for f in np_.floors}
 

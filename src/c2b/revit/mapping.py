@@ -71,7 +71,7 @@ class RevitMapping(BaseModel):
     round_sizes_to_mm: float = 5.0                # sizes are rounded to this before naming a type
 
     @classmethod
-    def load(cls, path: str | Path) -> "RevitMapping":
+    def load(cls, path: str | Path) -> RevitMapping:
         return cls.model_validate(yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {})
 
     def save(self, path: str | Path) -> None:

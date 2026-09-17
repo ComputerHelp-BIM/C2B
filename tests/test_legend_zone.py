@@ -97,10 +97,9 @@ def test_a_box_round_a_slab_tag_is_not_a_slab_outline(tmp_path):
     completely -- 50 such pairs on Test17. What gives the box away is how tightly it fits the
     words: a real slab holding its own tag is orders of magnitude larger than the text.
     """
-    from shapely.geometry import Polygon
 
-    from c2b.geometry import wraps_a_text
     from c2b.dxfio import iter_prims, load_document, modelspace_extent, read_meta
+    from c2b.geometry import wraps_a_text
     from c2b.units import resolve_units
 
     path = tmp_path / "tagbox.dxf"

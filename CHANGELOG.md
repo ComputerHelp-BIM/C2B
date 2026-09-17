@@ -13,6 +13,92 @@ importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes
 values.
 
+## [0.13.2] - 2026-09-17
+
+No change to what the tool produces: Test17 re-extracts and re-normalises to
+the same JSON
+down to the generator's version stamp, and rounds trips to the same 0 errors /
+504 warnings.
+This release is the code and the documentation catching up with 0.12 and 0.13.
+
+### Changed (0.13.2)
+
+- **`normalize/pipeline.py` split into one module per phase**: `columns.py`,
+  `beams.py`,
+  `panels.py`, `footings.py` and a shared `common.py`, leaving `pipeline.py`
+  with the phase
+  order and the frame (801 → 257 lines). It had grown into a single 726-line
+  function where
+  a slab rule and a footing rule sat twenty lines apart, which is how the
+  floor-local
+  coordinate bug in 0.12.1 survived two runs. Each extraction was verified by
+  re-running
+  Test17 and diffing the output field by field; the only difference across the
+  whole file
+  is the generator's version stamp.
+- Every phase now takes the project, the model, the spec and the diagnostics
+  list
+  explicitly instead of closing over the pipeline's locals, so a phase can be
+  read — and
+  tested — on its own.
+
+### Added (0.13.2)
+
+- **ruff** configured in `pyproject.toml` (none had been). The ignores are
+  listed with the
+  reason for each: `B008` is typer's argument idiom, `E741` covers the `l`/`o`
+  names in the
+  geometry module where they mean line and offset, `RUF001` the en dashes in
+  the drawing
+  notes, `SIM108` an if/else whose branches each carry a comment.
+  `ruff check src tests tools` is clean.
+- What it found, none of which changes a result: three closures reading a
+  variable from the
+  loop around them (the row in the level reader, the regions and beam outlines
+  in the panel
+  builder) now bind it as a default argument, so a later edit cannot move the
+  call out of
+  the iteration and read the wrong floor's geometry — which is exactly the
+  shape of the bug
+  0.12.1 shipped; six loop variables that are never read, renamed; two pairs of
+  nested `if`s
+  merged; and `c2b run` raises its exit `from None`, since it has already
+  printed the
+  message and the traceback only hides it.
+
+### Documentation (0.13.2)
+
+- `docs/schema.md`: `Beam.depth_rule` was added to the schema in 0.13.0 but
+  never written
+  down; `source_layer` and `source_kind` were on every element and in no
+  document.
+- `docs/profiles.md`: the shaped-wall section still said the legs **overlap at
+  the corner**,
+  which 0.13.1 stopped being true two sections further down. A reader had two
+  contradictory
+  rules and no way to tell which was current.
+- `README.md`: the package layout predated `roundtrip/`, `revit/` and `gui/`
+  and described
+  `normalize/` as one module; the versioning note described two version numbers
+  where there
+  are three (tool, extraction schema, normalised schema) and did not say which
+  one a
+  downstream step should pin. Two limits worth knowing were missing: a beam mark
+  in no
+  schedule row keeps no depth, and members crossing at their middles are left
+  overlapping.
+  Its pipeline table also numbered the steps 1 to 5 while every other page
+  numbers the
+  utilities as the firm does, so the round trip was step 3 in one table and
+  utility 4 six
+  lines below it. The table now carries the firm's numbers, and says outright
+  that utility 2
+  folded into utility 1.
+- `QUICKSTART.md`: the "what to expect" figures were three releases old and
+  listed three of
+  the five client drawings. All five re-run: Test10, Test14, Test16, Test17,
+  Test18.
+
 ## [0.13.1] - 2026-09-17
 
 ### Fixed

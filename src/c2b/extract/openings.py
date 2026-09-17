@@ -1,6 +1,8 @@
 """Openings (cut-outs, shafts) and walls."""
 from __future__ import annotations
 
+import itertools
+
 from shapely.geometry import Point
 
 from ..geometry import classify_polygon
@@ -13,11 +15,13 @@ from .outlines import collect_outlines
 def _cross_openings(ctx: FloorContext, existing: list) -> list:
     """Openings drawn as an X cross: two diagonal lines crossing each other give the opening's bounding box."""
     import math
+
     from shapely.geometry import LineString, Polygon
+
     from .outlines import Outline
     diag = []
     for p in ctx.geoms("OPENING", "line"):
-        (x1, y1), (x2, y2) = list(p.geom.coords)[0][:2], list(p.geom.coords)[-1][:2]
+        (x1, y1), (x2, y2) = next(iter(p.geom.coords))[:2], list(p.geom.coords)[-1][:2]
         ang = math.degrees(math.atan2(y2 - y1, x2 - x1)) % 180.0
         if 10.0 < ang < 80.0 or 100.0 < ang < 170.0:
             diag.append((p, LineString([(x1, y1), (x2, y2)])))
@@ -109,7 +113,7 @@ def extract_stairs(ctx: FloorContext) -> list:
     lines = []
     for p in ctx.geoms("STAIR", "line", "polyline"):
         coords = list(p.geom.coords)
-        for a, b in zip(coords[:-1], coords[1:]):
+        for a, b in itertools.pairwise(coords):
             lines.append([Point2(x=a[0], y=a[1]), Point2(x=b[0], y=b[1])])
     if lines:
         c = (sum(l[0].x for l in lines) / len(lines), sum(l[0].y for l in lines) / len(lines))

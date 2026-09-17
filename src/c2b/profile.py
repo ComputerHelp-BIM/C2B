@@ -172,7 +172,7 @@ class Profile(BaseModel):
         return None
 
     @classmethod
-    def load(cls, path: str | Path) -> "Profile":
+    def load(cls, path: str | Path) -> Profile:
         data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
         return cls.model_validate(data)
 

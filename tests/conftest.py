@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from c2b.demo import build_demo_drawing
+
 SAMPLES = Path(__file__).resolve().parent.parent / "samples"
 
-
-from c2b.demo import build_demo_drawing
 
 @pytest.fixture(scope="session")
 def synthetic_dxf(tmp_path_factory) -> Path:

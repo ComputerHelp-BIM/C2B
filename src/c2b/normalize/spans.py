@@ -1,9 +1,7 @@
 """Beam runs -> spans between supports."""
 from __future__ import annotations
 
-from shapely.geometry import Polygon
-
-from ..schema import Beam, Project
+from ..schema import Project
 from .geometry import Axis, Run, Support, complement, crossing_cuts, poly_from_points, span_rectangle, support_cuts
 from .spec import TemplateSpec
 
@@ -31,7 +29,7 @@ def split_runs(runs: list[Run], supports: list[Support], spec: TemplateSpec, dia
             cuts, t_min, t_max = support_cuts(run, supports, rules.support_cover_ratio, rules.irregular_support_to_centre, rules.irregular_angle_tol_deg)
         cuts += crossing_cuts(run, runs, end_tol=max(run.width, 50.0), trim_at_faces=rules.trim_at_beam_faces, split_crossing_by=rules.split_crossing_by)
         free = complement([(c.t1, c.t2) for c in cuts], t_max, t_min)
-        for i, (t1, t2) in enumerate(free):
+        for _i, (t1, t2) in enumerate(free):
             length = t2 - t1
             # a marked bracket of 50 mm is a real member; a span of zero length never is
             if length <= 1.0 or (length < rules.min_span_mm and not getattr(run.payload, "mark", None)):

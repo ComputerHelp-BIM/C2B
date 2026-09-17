@@ -1,5 +1,4 @@
 """Utility 3 on the synthetic drawing: stacks, spans, panels, marks, template DXF."""
-from pathlib import Path
 
 import ezdxf
 import pytest
@@ -144,7 +143,7 @@ def test_template_dxf(normalized, tmp_path):
     assert len(cols) == normalized.summary.columns
     assert all(e.closed for e in msp.query(f'LWPOLYLINE[layer=="{spec.layer("beam")}"]'))
     # XDATA round trip
-    c = list(msp.query(f'LWPOLYLINE[layer=="{spec.layer("column")}"]'))[0]
+    c = next(iter(msp.query(f'LWPOLYLINE[layer=="{spec.layer("column")}"]')))
     xd = {t[1].split("=", 1)[0]: t[1].split("=", 1)[1] for t in c.get_xdata(spec.xdata_appid)}
     assert xd["id"].startswith("L0") and xd["mark"].startswith("C")
     assert len(list(msp.query(f'LINE[layer=="{spec.layer("level")}"]'))) == 2

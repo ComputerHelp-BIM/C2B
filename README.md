@@ -9,24 +9,26 @@ schema with diagnostics, and normalising them into the firm's template drawing
 (`CH-` layers, `C12-300X900` marks, spans between supports, slab panels, level
 frame).
 
-Version `0.13.1` (tool) — extraction schema `0.7.0`, normalised schema `0.10.0`.
+Version `0.13.2` (tool) — extraction schema `0.7.0`, normalised schema `0.10.0`.
 See [CHANGELOG.md](CHANGELOG.md).
 
 ## Pipeline
 
-| Step | Utility | Status |
+| Utility | What it does | Command |
 | --- | --- | --- |
-| 1 | **Extract + check**: client DXF → canonical JSON, Excel review workbook, review DXF, diagnostics | `c2b extract`, v0.1.0 |
-| 2 | **Normalise**: column stacks, beam spans at supports, slab panels, template marks → template DXF + schedules | `c2b normalize`, v0.5.0 |
-| 3 | **Round trip**: template DXF → JSON + Excel again, verified against the normalised model | `c2b verify`, v0.6.0 |
-| 4 | **Revit importer**: JSON → build plan → native columns, beams, floors, foundations | `c2b revit-plan` + pyRevit, v0.8.0 |
-| 5 | Cross-check: quantities, supports, continuity | next |
+| 1 + 2 | **Extract + check**: client DXF → canonical JSON, Excel review workbook, review DXF, diagnostics | `c2b extract`, since v0.1.0 |
+| 3 | **Normalise**: column stacks, beam spans at supports, slab panels, template marks → template DXF + schedules | `c2b normalize`, since v0.5.0 |
+| 4 | **Round trip**: template DXF → JSON + Excel again, verified against the normalised model | `c2b verify`, since v0.6.0 |
+| 5 | **Revit importer**: JSON → build plan → native columns, beams, floors, foundations | `c2b revit-plan` + pyRevit, since v0.8.0 |
+| 6 | Cross-check: quantities, supports, continuity | next |
 
-The original plan had a separate "drawing checker" before conversion. Checking a
-drawing
-*is* parsing it, so step 1 does both: the same run that extracts the data
-produces the
-error list, and the two can never disagree.
+The original plan had utility 2 as a separate "drawing checker" before
+conversion. Checking a
+drawing *is* parsing it, so utility 1 does both: the same run that extracts the
+data produces
+the error list, and the two can never disagree. The numbering is kept as the
+firm knows it,
+which is why there is no utility 2 of its own.
 
 ## What step 1 handles
 
@@ -165,26 +167,42 @@ common:
 
 ```Text
 src/c2b/
-  schema.py        canonical models (pydantic)        docs/schema.md
+  schema.py        canonical models (pydantic)         docs/schema.md
   profile.py       layer roles, tolerances, YAML       docs/profiles.md
+  diagnostics.py   every code with its meaning
   units.py         drawing units → mm
   tags.py          tag text parser
-  geometry.py      shapely helpers: outlines, line pairing, snapping
+  geometry.py      shapely helpers: outlines, line pairing, snapping, leg splitting
   dxfio.py         ezdxf → primitives (blocks exploded, Z flattened)
+  dwg.py           DWG → DXF via ODA File Converter / accoreconsole
   floors.py        Boundary/Origin floor detection, floor names
   schedules.py     text-grid schedule tables
-  extract/         grids, columns, beams, slabs, footings, openings/walls, tag association
-  pipeline.py      orchestration
-  normalize/       utility 3: spec, stacks, spans, panels, naming, pipeline   docs/template-spec.md
+  extract/         grids, columns, beams, slabs, footings, openings/walls, plus:
+                     context.py    per-floor tag pool, legend zones, dimension overrides
+                     associate.py  tag → element matching (bipartite, with augmenting)
+                     legend.py     the client's hatch legend → meanings
+                     outlines.py   closed shapes out of polylines, hatches, line loops
+  pipeline.py      utility 1 orchestration
+  normalize/       utility 3: spec, stacks, spans, naming, geometry, model    docs/template-spec.md
+                     pipeline.py   phase order and the floor/level frame
+                     columns.py    stacks → template columns and their marks
+                     beams.py      spans → template beams, depths, marks
+                     panels.py     slab panels, sunk areas, cut-outs, cantilevers
+                     footings.py   footings, rafts, PCC, pile caps, lift pits
+                     common.py     shared conversions and mark formatting
+  roundtrip/       utility 4: read the template DXF back, diff it     docs/round-trip.md
+  revit/           utility 5 (in progress): element → family mapping, build plan
   export/          JSON, Excel, review DXF, report, level schedule, template DXF, schedules workbook
+  gui/             Tk window (app.py) over a Tk-free runner (runner.py)
   cli.py           typer CLI
-tools/             compare_with_template.py (IoU check against the reference), render_dxf.py
+tools/             compare_with_template.py (IoU check against the reference), compare_floor.py,
+                   audit_client.py, render_dxf.py
 tests/             unit tests + synthetic end-to-end drawing + sample integration
 profiles/          client profiles (YAML)
 samples/           client drawings (git-ignored)
 ```
 
-## Known limits of v0.13.1
+## Known limits of v0.13.2
 
 - Cantilever slabs, chajjas and balconies need the client's slab edge lines;
   without them a
@@ -201,13 +219,30 @@ samples/           client drawings (git-ignored)
   between floors starts a new stack (reported as `STACK_ORPHAN`).
 - Beams drawn as single centrelines (no edges) are not paired; they show up as
   `BEAM_UNPAIRED_LINES`.
+- A beam mark the client's schedule does not carry, and that no tag or dimension
+  sizes, keeps
+  no depth (`BEAM_NO_DEPTH`): on Test17 that is marks B8 to B23 and LB1, 136
+  spans.
+- Two members that cross at their *middles* are left overlapping and reported.
+  Only members
+  meeting at an end — a corner or a T — are trimmed, because there the client's
+  intent is
+  unambiguous; a crossing is not.
 - Rotated floor plans (true north) are read as drawn; no per-floor rotation yet.
 - Schedule tables drawn as real `TABLE` entities are not read (text grids are).
 - Everything is rule based. Ambiguous cases are reported, not guessed.
 
 ## Versioning
 
-Semantic versioning on two things: the tool (`c2b.__version__`) and the JSON
-schema
-(`schema_version` in every output). Downstream steps pin the schema major
-version.
+Semantic versioning (`MAJOR.MINOR.PATCH`) on three things that move
+independently:
+
+| Version | Where | Bumped when |
+| --- | --- | --- |
+| tool | `c2b.__version__` | any release |
+| extraction schema | `c2b.SCHEMA_VERSION`, `schema_version` in `<stem>.c2b.json` | a field is added (MINOR), removed or redefined (MAJOR), or its values corrected (PATCH) |
+| normalised schema | `c2b.normalize.model.NORMALIZED_SCHEMA_VERSION`, `schema_version` in `<stem>.normalized.json` | same rules, for the template model |
+
+Downstream steps pin the MAJOR of the schema they read, not the tool version:
+the Revit
+importer reads the normalised schema, the round trip reads both.

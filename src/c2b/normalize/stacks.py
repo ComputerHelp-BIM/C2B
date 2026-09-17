@@ -38,7 +38,7 @@ def build_stacks(project: Project, floors_in_order: list[str], mode: str, tol_mm
     col_to_stack: dict[str, int] = {}
     prev_floor: str | None = None
     for fid in floors_in_order:
-        prev_stacks = [s for s in stacks if prev_floor in s["cols"]] if prev_floor else []
+        [s for s in stacks if prev_floor in s["cols"]] if prev_floor else []
         used: set[int] = set()
         for c in sorted(cols_by_floor[fid], key=lambda c: (c.center.x, c.center.y)):
             poly = Polygon([(p.x, p.y) for p in c.outline]) if len(c.outline) >= 3 else Point(c.center.x, c.center.y).buffer(150)

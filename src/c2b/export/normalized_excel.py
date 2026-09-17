@@ -6,7 +6,7 @@ from pathlib import Path
 from openpyxl import Workbook
 
 from ..normalize.model import NormalizedProject
-from .excel import _sheet, _SEV_FILL
+from .excel import _SEV_FILL, _sheet
 
 
 def write_normalized_workbook(np_: NormalizedProject, path: str | Path) -> Path:
@@ -30,7 +30,7 @@ def write_normalized_workbook(np_: NormalizedProject, path: str | Path) -> Path:
             c = col_by.get((fid, st.id))
             row.append("" if c is None else (f"D{c.diameter_mm:.0f}" if c.shape == "circle" and c.diameter_mm else f"{(c.width_mm or 0):.0f}x{(c.depth_mm or 0):.0f}") + (" STOP" if c.stops_here else ""))
         rows.append(row)
-    _sheet(wb, "Column schedule", ["Stack", "Mark", "Grid", "X", "Y", "Client marks"] + floors, rows)
+    _sheet(wb, "Column schedule", ["Stack", "Mark", "Grid", "X", "Y", "Client marks", *floors], rows)
     _sheet(wb, "Columns", ["Id", "Floor", "Stack", "Mark", "Client mark", "Shape", "X", "Y", "Width", "Depth", "Dia", "Rotation", "Stops", "Starts", "Wall-like", "Size source", "Source ids"],
            [[c.id, c.floor_id, c.stack_id, c.mark, c.client_mark, c.shape, c.center.x, c.center.y, c.width_mm, c.depth_mm, c.diameter_mm, c.rotation_deg, "yes" if c.stops_here else "", "yes" if c.starts_here else "", "yes" if c.wall_like else "", c.size_source, c.source_ids] for c in np_.columns])
     _sheet(wb, "Beams", ["Id", "Floor", "Mark", "Client mark", "Run", "Span", "Start X", "Start Y", "End X", "End Y", "Length", "Width", "Depth", "Tip depth", "Cantilever", "Inverted", "Top offset (mm)", "Support start", "Support end", "Depth source"],

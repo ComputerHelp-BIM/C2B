@@ -133,9 +133,11 @@ editing:
 
 | Drawing | Floors | Columns | Beam spans | Slab panels | Time |
 | --- | --- | --- | --- | --- | --- |
-| Test10 | 7 | 326 | 399 | 194 | 8 s |
-| Test16 | 5 | 308 | 452 | 213 | 6 s |
-| Test17 | 13 | 1966 | 4227 | 1658 | 70 s |
+| Test10 | 7 | 330 | 401 | 194 | 7 s |
+| Test14 | 3 | 363 | 663 | 384 | 11 s |
+| Test16 | 5 | 328 | 444 | 213 | 6 s |
+| Test17 | 13 | 2094 | 4714 | 2345 | 93 s |
+| Test18 | 1 | 335 | 972 | 772 | 43 s |
 
 Nothing is guessed silently: anything the tool could not resolve is a diagnostic
 with a code,

@@ -18,8 +18,8 @@ logged so the reviewer can see why a size was chosen.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from shapely.geometry import Point, Polygon
 from shapely.strtree import STRtree
@@ -103,7 +103,7 @@ def make_tag_cands(texts: list[Prim], group_factor: float = 3.0) -> list[TagCand
     pairs.sort()
     used: set[int] = set()
     grouped: dict[int, int] = {}
-    for d, mi, si in pairs:
+    for _d, mi, si in pairs:
         if mi in used or si in used:
             continue
         used.add(mi)
@@ -187,13 +187,13 @@ def associate_tags(
     pairs.sort(key=lambda p: (p[0], p[1], p[2]))
 
     # pass 2: greedy, preferring elements without a tag of the same kind
-    for score, ti, i, _par in pairs:
+    for _score, ti, i, _par in pairs:
         if ti in tag_owner or has_kind(i, kinds[ti]):
             continue
         assigned.setdefault(i, []).append(ti)
         tag_owner[ti] = i
     # pass 3: remaining tags go to their best candidate anyway
-    for score, ti, i, _par in pairs:
+    for _score, ti, i, _par in pairs:
         if ti in tag_owner:
             continue
         assigned.setdefault(i, []).append(ti)
@@ -243,7 +243,7 @@ def associate_tags(
             kind = kinds[ti]
             if n_kind(i, kind) < 2 or polys[i].contains(Point(tags[ti].center)):
                 continue
-            for score, j in sorted(by_tag_elems.get(ti, [])):
+            for _score, j in sorted(by_tag_elems.get(ti, [])):
                 if j != i and not has_kind(j, kind):
                     assigned[i].remove(ti)
                     assigned.setdefault(j, []).append(ti)

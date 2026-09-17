@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import shapely
-from shapely.geometry import LineString, MultiPolygon, Point, Polygon
+from shapely.geometry import MultiPolygon, Point, Polygon
 from shapely.ops import unary_union
 
 from ..geometry import angle_diff_deg, rectangle_polygon
@@ -264,7 +264,7 @@ def representative_point(poly: Polygon) -> Pt:
         return (c.x, c.y)
     p = shapely.maximum_inscribed_circle(poly, tolerance=10.0) if hasattr(shapely, "maximum_inscribed_circle") else None
     if p is not None and not p.is_empty:
-        q = list(p.coords)[0]
+        q = next(iter(p.coords))
         return (q[0], q[1])
     q = poly.representative_point()
     return (q.x, q.y)

@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 import re
 
-from shapely.geometry import Point, Polygon, box
+from shapely.geometry import Polygon, box
 
 from ..dxfio import Prim
 from ..schema import LegendItem, Point2, Region
@@ -34,7 +34,7 @@ def classify_meaning(text: str) -> tuple[str, float | None]:
         return "column_stop", None
     if ("COLUMN" in up or "COL." in up) and ("START" in up or "BEGIN" in up):
         return "column_start", None
-    if "CUT" in up and "OUT" in up or "OPENING" in up or "DUCT" in up:
+    if ("CUT" in up and "OUT" in up) or "OPENING" in up or "DUCT" in up:
         return "cutout", None
     if "RAFT" in up and ("SUNK" in up or "FOLD" in up):
         return "fold", None

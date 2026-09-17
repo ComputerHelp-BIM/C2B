@@ -245,7 +245,7 @@ class TemplateSpec(BaseModel):
         return self.layers[key].name
 
     @classmethod
-    def load(cls, path: str | Path) -> "TemplateSpec":
+    def load(cls, path: str | Path) -> TemplateSpec:
         return cls.model_validate(yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {})
 
     def save(self, path: str | Path) -> None:

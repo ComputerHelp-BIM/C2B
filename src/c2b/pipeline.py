@@ -1,6 +1,7 @@
 """End-to-end extraction: DXF file in, :class:`Project` out."""
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -15,13 +16,27 @@ from .extract.context import FloorContext
 from .extract.footings import extract_footings
 from .extract.grids import extract_grids
 from .extract.legend import legend_zones, parse_legend, regions_from_hatches
-from .geometry import wraps_a_text
 from .extract.openings import extract_openings, extract_stairs, extract_walls
 from .extract.slabs import extract_slabs
 from .floors import FloorFrame, detect_floors, localise
+from .geometry import wraps_a_text
 from .profile import STRUCTURAL_ROLES, LayerRule, Profile, merge_profiles, suggest_profile
 from .schedules import ScheduleIndex, parse_schedules
-from .schema import DrawingInfo, Floor, Joint, LayerMapEntry, LevelHint, PccHint, Point2, Project, RampHint, Schedule, ScheduleRow, SlabEdge, UnassignedTag
+from .schema import (
+    DrawingInfo,
+    Floor,
+    Joint,
+    LayerMapEntry,
+    LevelHint,
+    PccHint,
+    Point2,
+    Project,
+    RampHint,
+    Schedule,
+    ScheduleRow,
+    SlabEdge,
+    UnassignedTag,
+)
 from .tags import clean_text, looks_like_note, parse_level_hint, parse_pcc, parse_ramp, parse_tag, strip_note_number
 from .units import resolve_units
 
@@ -210,7 +225,7 @@ def extract(path: str | Path, user_profile: Profile | None = None, units_overrid
             if p_.layer in line_layers:
                 continue
             coords = list(p_.geom.coords)
-            for a, b in zip(coords[:-1], coords[1:]):
+            for a, b in itertools.pairwise(coords):
                 if ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5 >= 50.0:
                     project.slab_edges.append(SlabEdge(floor_id=frame.id, start=Point2(x=a[0], y=a[1]), end=Point2(x=b[0], y=b[1]), source_layer=p_.layer, source_handle=p_.handle))
         # a box drawn round a slab tag is annotation, not an outline: read as one it closes a
@@ -222,7 +237,7 @@ def extract(path: str | Path, user_profile: Profile | None = None, units_overrid
             if wraps_a_text(p_.geom, slab_tags, tol.text_box_area_ratio):
                 continue
             coords = list(p_.geom.exterior.coords)
-            for a, b in zip(coords[:-1], coords[1:]):
+            for a, b in itertools.pairwise(coords):
                 project.slab_edges.append(SlabEdge(floor_id=frame.id, start=Point2(x=a[0], y=a[1]), end=Point2(x=b[0], y=b[1]), source_layer=p_.layer, source_handle=p_.handle))
         # ramp notes ("RAMP 1:8 UP") with the arrow line beside them, and PCC notes
         floor_lines = [q for q in frame.prims if q.kind == "line"]
@@ -235,7 +250,7 @@ def extract(path: str | Path, user_profile: Profile | None = None, units_overrid
                 arrow = max(cand, key=lambda l: l.geom.length) if cand else None
                 a0 = a1 = None
                 if arrow is not None:
-                    (x0, y0), (x1, y1) = list(arrow.geom.coords)[0][:2], list(arrow.geom.coords)[-1][:2]
+                    (x0, y0), (x1, y1) = next(iter(arrow.geom.coords))[:2], list(arrow.geom.coords)[-1][:2]
                     a0, a1 = Point2(x=x0, y=y0), Point2(x=x1, y=y1)
                 project.ramp_hints.append(RampHint(id=ctx.ids.next("RP"), floor_id=frame.id, text=clean_text(t.text)[:60], position=Point2(x=c[0], y=c[1]),
                                                    slope_ratio=rp[0], direction=rp[1], arrow_start=a0, arrow_end=a1, handle=t.handle))
@@ -245,7 +260,7 @@ def extract(path: str | Path, user_profile: Profile | None = None, units_overrid
                 project.pcc_hints.append(PccHint(text=clean_text(t.text)[:80], thickness_mm=pc[0], projection_mm=pc[1], floor_id=frame.id, handle=t.handle))
         for p_ in ctx.geoms("JOINT", "line", "polyline"):
             coords = list(p_.geom.coords)
-            for a, b in zip(coords[:-1], coords[1:]):
+            for a, b in itertools.pairwise(coords):
                 project.joints.append(Joint(id=ctx.ids.next("J"), floor_id=frame.id, start=Point2(x=a[0], y=a[1]), end=Point2(x=b[0], y=b[1]), source_layer=p_.layer, source_handle=p_.handle))
         ctx.flush_missing_marks()
 

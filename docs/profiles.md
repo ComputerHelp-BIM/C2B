@@ -89,7 +89,7 @@ which:
 | Modifier | Example layer | Meaning |
 | --- | --- | --- |
 | (none) | `S-COLUMN` | the column under this floor |
-| `stop` | `S-COLUM_STOP` | a column running up from below that ends here — this floor's column |
+| `stop` | `S-COLUMN_STOP` | a column running up from below that ends here — this floor's column |
 | `start` | `S-COLUMN_START` | a column beginning here, so nothing stands under this floor; not drawn on it |
 | `stub` | `S.STUB COL` | a stub column; marked `SC1`, `SC2`, … and sized from its own outline when untagged |
 
@@ -101,11 +101,12 @@ and
 
 Shaped walls (L, T, C, F) are cut into their rectangular legs so each can carry
 the mark and
-size the client wrote on it (`COLUMN_LEGS_SPLIT`). The legs **overlap at the
-corner**, because
-both run to the outside face, which is how the client dimensions them and how
-the walls meet in
-the model. A shape that is not rectilinear is left whole.
+size the client wrote on it (`COLUMN_LEGS_SPLIT`). Each leg is cut as a whole
+rectangle running
+to the outside face, because that is how the client dimensions it; the corner
+the two legs then
+share is settled by the rule below. A shape that is not rectilinear is left
+whole.
 
 ## Members butt, they do not overlap
 

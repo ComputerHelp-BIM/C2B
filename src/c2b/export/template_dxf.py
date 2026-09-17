@@ -8,6 +8,7 @@ round-trips losslessly into utility 4.
 """
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
 import ezdxf
@@ -34,10 +35,8 @@ class TemplateWriter:
             self.doc.modelspace().delete_all_entities()
             for layout in list(self.doc.layouts):
                 if layout.name.lower() != "model":
-                    try:
+                    with contextlib.suppress(Exception):
                         layout.delete_all_entities()
-                    except Exception:
-                        pass
         else:
             if self.seed_path and self.diag is not None:
                 self.diag.warning("SEED_MISSING", f"Seed template {self.seed_path} not found; layers and styles created from the spec")
@@ -52,7 +51,7 @@ class TemplateWriter:
         doc, spec = self.doc, self.spec
         if spec.xdata_appid not in doc.appids:
             doc.appids.add(spec.xdata_appid)
-        for key, ld in spec.layers.items():
+        for _key, ld in spec.layers.items():
             if ld.name not in doc.layers:
                 lt = ld.linetype if ld.linetype in doc.linetypes else "Continuous"
                 doc.layers.add(ld.name, color=ld.color, lineweight=ld.lineweight, linetype=lt)
@@ -106,7 +105,7 @@ class TemplateWriter:
                 best, best_items = fr, inside
         if best is None:
             return
-        minx, miny, maxx, maxy = best.bounds
+        _minx, miny, maxx, _maxy = best.bounds
         # the seed frame includes the bottom band: the plan bottom is band height above it
         plan_bottom = miny + spec.frame.bottom_band_mm
         self.legend_anchor = (maxx, plan_bottom)
@@ -450,10 +449,8 @@ class TemplateWriter:
                             "dimexo": spec.text.mark_height * 0.5, "dimgap": spec.text.mark_height * 0.3, "dimtxsty": spec.text.style, "dimdec": 0, "dimtad": 1, "dimtih": 0, "dimtoh": 0}
                 dim = self.msp.add_linear_dim(base=(x1 + fr.level_dim_offset_mm, (prev[1] + y) / 2), p1=(x1 + fr.level_dim_offset_mm, prev[1]), p2=(x1 + fr.level_dim_offset_mm, y), angle=90,
                                               dimstyle=spec.dimstyle, override=override, dxfattribs={"layer": spec.layer("dim")})
-                try:
+                with contextlib.suppress(Exception):
                     dim.render()
-                except Exception:
-                    pass
             prev = (lv, y)
 
 

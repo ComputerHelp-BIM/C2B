@@ -103,7 +103,7 @@ def read_levels(path: str | Path) -> list:
         if not row or all(v is None for v in row):
             continue
 
-        def val(key):
+        def val(key, row=row):
             i = idx.get(key)
             return row[i] if i is not None and i < len(row) else None
 

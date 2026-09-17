@@ -13,15 +13,12 @@ import queue
 import subprocess
 import sys
 import threading
-from dataclasses import asdict
-from pathlib import Path
-
 import tkinter as tk
+from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from .. import __version__
-from .runner import (COLUMN_SIZE_DEFAULT, COLUMN_SIZE_FROM, JobResult, JobSettings, column_size_label,
-                     column_size_value, run_job, run_verify)
+from .runner import COLUMN_SIZE_DEFAULT, COLUMN_SIZE_FROM, JobResult, JobSettings, column_size_label, column_size_value, run_job, run_verify
 
 SETTINGS_FILE = Path.home() / ".c2b" / "gui.json"
 UNITS = ("read from drawing", "mm", "cm", "m", "in", "ft")
@@ -33,7 +30,7 @@ def _open(path: Path) -> None:
     path = Path(path)
     try:
         if platform.system() == "Windows":
-            os.startfile(path)                                    # noqa: S606
+            os.startfile(path)
         elif platform.system() == "Darwin":
             subprocess.run(["open", str(path)], check=False)
         else:
@@ -147,7 +144,7 @@ class C2BWindow(tk.Tk):
             self.status.configure(text=f"Ready: {Path(path).name}")
 
     def _pick_file(self, key: str, types) -> None:
-        path = filedialog.askopenfilename(title=key.title(), filetypes=list(types) + [("All files", "*.*")])
+        path = filedialog.askopenfilename(title=key.title(), filetypes=[*list(types), ("All files", "*.*")])
         if path:
             self.vars[key].set(path)
 

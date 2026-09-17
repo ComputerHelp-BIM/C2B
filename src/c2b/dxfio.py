@@ -7,19 +7,20 @@ the extractors testable with synthetic data.
 """
 from __future__ import annotations
 
+import contextlib
 import math
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
 
 import ezdxf
 import shapely
 from ezdxf import path as ezpath
 from ezdxf.math import Vec3
-from shapely.geometry import LineString, Point, Polygon, base
+from shapely.geometry import LineString, Point, base
 
-from .geometry import polygon_from_points, rectangle_polygon
+from .geometry import polygon_from_points
 
 FLATTEN_DISTANCE_MM = 1.0
 TEXT_WIDTH_FACTOR = 0.7
@@ -309,17 +310,15 @@ def iter_prims(doc, scale: float, explode_blocks: bool = True, max_depth: int = 
                 layer = parent_layer
             if t == "INSERT":
                 attribs = {}
-                try:
+                with contextlib.suppress(Exception):
                     attribs = {a.dxf.tag: a.dxf.text for a in e.attribs}
-                except Exception:
-                    pass
                 ins_pt = _xy(e.dxf.insert, scale)
-                prims.append(Prim("insert", layer, e.dxf.handle or "", Point(ins_pt), attribs=attribs, block_path=block_path + (e.dxf.name,),
+                prims.append(Prim("insert", layer, e.dxf.handle or "", Point(ins_pt), attribs=attribs, block_path=(*block_path, e.dxf.name),
                                   rotation=float(e.dxf.get("rotation", 0.0)), extra={"dxftype": t, "block": e.dxf.name, "xscale": float(e.dxf.get("xscale", 1.0)), "yscale": float(e.dxf.get("yscale", 1.0))}))
                 # attributes are text belonging to the insert's layer
                 try:
                     for a in e.attribs:
-                        for p in _entity_to_prims(a, layer if a.dxf.layer == "0" else a.dxf.layer, scale, block_path + (e.dxf.name,)):
+                        for p in _entity_to_prims(a, layer if a.dxf.layer == "0" else a.dxf.layer, scale, (*block_path, e.dxf.name)):
                             prims.append(p)
                 except Exception:
                     pass
@@ -327,7 +326,7 @@ def iter_prims(doc, scale: float, explode_blocks: bool = True, max_depth: int = 
                     if e.dxf.name.lower().startswith("*") is False:
                         block_log.append({"block": e.dxf.name, "layer": layer, "handle": e.dxf.handle, "depth": depth})
                     try:
-                        visit(e.virtual_entities(), depth + 1, block_path + (e.dxf.name,), layer)
+                        visit(e.virtual_entities(), depth + 1, (*block_path, e.dxf.name), layer)
                     except Exception as ex:
                         block_log.append({"block": e.dxf.name, "layer": layer, "handle": e.dxf.handle, "depth": depth, "error": str(ex)})
                 continue

@@ -4,8 +4,13 @@ Written by `c2b extract` as `<stem>.c2b.json`. All lengths are millimetres, all
 angles
 degrees, all element coordinates are **floor-local** (the floor `Origin` point
 is 0,0).
-Every element keeps `source_handles` (DXF entity handles) so it can be traced
-back.
+Every element keeps `source_handles` (DXF entity handles), `source_layer` and,
+where more
+than one kind of geometry can produce it, `source_kind` (`polyline`, `hatch`,
+`circle`,
+`lines`, `block` for a column; `paired_lines`, `polyline`, `block` for a beam;
+`tag` or
+`polyline` for a slab), so every value can be traced back to what drew it.
 
 ```text
 Project
@@ -18,7 +23,7 @@ Project
 ├─ columns[]      id, floor_id, mark, shape (rect|circle|polygon), center, width_mm, depth_mm, rotation_deg, diameter_mm,
 │                 outline[], area_mm2, drawn_width_mm, drawn_depth_mm, size_source, wall_like, modifier, grid_ref, tags[]
 ├─ beams[]        id, floor_id, mark, start, end, length_mm, width_mm, depth_mm, depth_alt_mm, drawn_width_mm, angle_deg,
-│                 inverted, sunk_mm, outline[], size_source, depth_source, tags[], n_edge_parts
+│                 inverted, sunk_mm, outline[], size_source, depth_source, depth_rule, tags[], n_edge_parts
 ├─ slabs[]        id, floor_id, mark, thickness_mm, thickness_source, position, outline[] (may be empty), sunk_mm, modifier, tags[]
 ├─ footings[]     id, floor_id, mark, shape, center, width_mm, depth_mm, rotation_deg, thickness_mm, fold_mm, outline[], ...
 ├─ openings[]     id, floor_id, label, center, outline[], area_mm2
@@ -56,6 +61,13 @@ Project
   rectangle; `n_edge_parts` says how many line pieces were merged (high numbers
   = beam
   crossed many others = check it).
+- `depth_rule` on a beam: the schedule stated a rule instead of a number, so
+  `depth_mm` is
+  empty at this step. `slab_thickness` (`300XSLB THK.`) is a concealed beam as
+  deep as the
+  slab around it and is settled by the normaliser once the panels exist;
+  `layout`
+  (`200XAS/LAYOUT`) means the plan says, usually through a dimension override.
 
 ## Versioning rules
 

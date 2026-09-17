@@ -43,7 +43,7 @@ def test_verify_an_edited_template(tmp_path):
     import ezdxf
     doc = ezdxf.readfile(str(first.template_dxf))
     msp = doc.modelspace()
-    msp.delete_entity(list(msp.query('LWPOLYLINE[layer=="CH-S-COLUMN"]'))[0])
+    msp.delete_entity(next(iter(msp.query('LWPOLYLINE[layer=="CH-S-COLUMN"]'))))
     doc.saveas(str(first.template_dxf))
     res2 = run_verify(first.template_dxf, None, progress)
     assert not res2.ok and res2.counts["changes"] >= 1

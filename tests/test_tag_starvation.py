@@ -13,7 +13,6 @@ second. Neither is covered by simply rebalancing an over-tagged element onto a b
 from __future__ import annotations
 
 import ezdxf
-import pytest
 from ezdxf.enums import TextEntityAlignment
 
 from c2b.pipeline import extract

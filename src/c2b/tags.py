@@ -237,10 +237,9 @@ def parse_tag(raw: str) -> ParsedTag:
         if len(tok) == 1 and tok.isalpha():
             single_prefix = tok.upper()
             continue
-        if tok.isalpha():
-            # a bare word is a mark only when it stands alone ("MB") or is a known member prefix ("BKT")
-            if not (len(tokens) == 1 or tok.upper() in _PREFIX_CATEGORY):
-                continue
+        # a bare word is a mark only when it stands alone ("MB") or is a known member prefix ("BKT")
+        if tok.isalpha() and not (len(tokens) == 1 or tok.upper() in _PREFIX_CATEGORY):
+            continue
         if _RE_MARK_TOKEN.match(tok) and not tok.isdigit():
             marks.append(tok)
     tag.marks = marks

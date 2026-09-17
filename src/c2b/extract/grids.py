@@ -1,6 +1,7 @@
 """Grid line extraction."""
 from __future__ import annotations
 
+import itertools
 import math
 import re
 
@@ -56,7 +57,7 @@ def extract_grids(ctx: FloorContext) -> list[Grid]:
     segs: list[Segment] = []
     for p in ctx.geoms("GRID", "line", "polyline"):
         coords = list(p.geom.coords)
-        for a, b in zip(coords[:-1], coords[1:]):
+        for a, b in itertools.pairwise(coords):
             s = Segment((a[0], a[1]), (b[0], b[1]), [p.handle], p.layer)
             if s.length >= tol.grid_min_length_mm * 0.25:
                 segs.append(s)

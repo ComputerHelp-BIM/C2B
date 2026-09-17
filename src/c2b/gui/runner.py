@@ -6,9 +6,9 @@ from __future__ import annotations
 
 import traceback
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 Progress = Callable[[str, str], None]        # (level, message): level in info | step | good | warn | bad
 
@@ -159,10 +159,10 @@ def run_job(settings: JobSettings, progress: Progress) -> JobResult:
 
 def run_verify(template_dxf: Path, spec_path: Path | None, progress: Progress) -> JobResult:
     """Re-check an edited template DXF against the data it was written from."""
-    from ..normalize.model import NormalizedProject
-    from ..normalize.spec import TemplateSpec
     from ..export.normalized_excel import write_normalized_workbook
     from ..export.verify import write_verify_report, write_verify_workbook
+    from ..normalize.model import NormalizedProject
+    from ..normalize.spec import TemplateSpec
     from ..roundtrip.diff import CODES as RT_CODES
     from ..roundtrip.diff import compare
     from ..roundtrip.reader import read_template

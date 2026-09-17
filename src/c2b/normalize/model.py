@@ -6,7 +6,7 @@ client DXF -> extraction -> normalised -> template DXF is fully traceable.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -284,7 +284,7 @@ class NSummary(BaseModel):
 class NormalizedProject(BaseModel):
     schema_version: str = NORMALIZED_SCHEMA_VERSION
     generator: str = f"c2b {__version__}"
-    generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    generated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
     units: Literal["mm"] = "mm"
     source_file: str
     source_schema_version: str

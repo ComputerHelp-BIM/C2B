@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from shapely.geometry import Point, Polygon
+from shapely.geometry import Polygon
 from shapely.strtree import STRtree
 
 from ..geometry import classify_polygon
@@ -206,7 +206,8 @@ def compare(model: NormalizedProject, drawing: NormalizedProject, tol: Tolerance
                 prev = seen.get(key)
                 # one mark may repeat (the client's "MB" runs everywhere); it must not name two different sections
                 if prev and section and prev[1] and any(abs(x - y) > 26 for x, y in zip(section, prev[1])):
-                    shown = lambda t: "x".join(f"{v:.0f}" for v in t)
+                    def shown(t):
+                        return "x".join(f"{v:.0f}" for v in t)
                     add("WARNING", "RT_DUP_MARK", f"{cat[:-1]} mark '{base}' names {shown(prev[1])} on {prev[0]} and {shown(section)} on {e.id}",
                         floor_id=e.floor_id, element_id=e.id, loc=_centre(e))
                 seen[key] = (e.id, section)
