@@ -97,7 +97,10 @@ This release is the code and the documentation catching up with 0.12 and 0.13.
 - `QUICKSTART.md`: the "what to expect" figures were three releases old and
   listed three of
   the five client drawings. All five re-run: Test10, Test14, Test16, Test17,
-  Test18.
+  Test18. Install
+  step 2 no longer checks out the working branch after cloning, since this
+  release is on
+  `main`.
 
 ## [0.13.1] - 2026-09-17
 

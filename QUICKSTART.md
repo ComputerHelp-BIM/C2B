@@ -13,13 +13,12 @@ after installation.
 1. **Install Python 3.11 or newer** from
   [https://www.python.org/downloads/](https://www.python.org/downloads/).
    During setup tick **“Add python.exe to PATH”**.
-2. **Get the code.** Either download the branch as a ZIP from GitHub and unzip
-  it, or:
+2. **Get the code.** Either download the repository as a ZIP from GitHub and
+  unzip it, or:
 
    ```bash
    git clone https://github.com/ComputerHelp-BIM/C2B.git
    cd C2B
-   git checkout claude/adoring-sagan-2h8b4x
    ```
 
 3. **Double-click `windows\install.bat`.** It creates a private Python
