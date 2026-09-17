@@ -50,6 +50,7 @@ CODES: dict[str, str] = {
     "GRID_NO_LABEL": "Grid line without a label",
     "GRID_DUPLICATE_LABEL": "Two non-collinear grid lines share the same label",
     "GRID_LABEL_QUALIFIER": "Grid bubble text repeated on many lines, ignored as a label",
+    "LEGEND_ZONE": "The band each legend line occupies is not read as structure",
     "NO_GRIDS": "No grid lines found on this floor",
     "ELEMENT_OUTSIDE_FLOORS": "Structural entities lie outside every floor boundary",
     "BLOCK_EXPLODED": "Block reference exploded to read its content",

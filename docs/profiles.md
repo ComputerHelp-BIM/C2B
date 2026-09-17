@@ -50,6 +50,24 @@ tolerances:
 `hidden` (skip), `stop`/`start`/`stub`/`podium` (columns), `fold`/`sunk`/`drop`/`projection`
 (slabs, footings), `non_structural`/`retaining` (walls), `hatch`.
 
+## The client's legend is not structure
+
+The legend is drawn under the plan, inside the floor's own frame, and its swatches are drawn
+exactly like the thing they explain -- a hatch, a rectangle, a cut-out cross. The band each
+legend line occupies (`THUS MARKED ...`, `INDICATES ...`, `DENOTES ...`) is therefore ruled out
+before anything is read as a member, swatch included. Reported once per plan as `LEGEND_ZONE`.
+
+## Slab edges: what a layer's modifier means
+
+| Modifier | Closed ring | Open line |
+|---|---|---|
+| (none) | a slab edge | a slab edge |
+| `projection` | a slab edge -- a chajja hanging past the beam grid has no other edge to close against | a step, ignored |
+| `drop`, `fold`, `sunk`, `hidden` | a level change inside a bay the beams already close; ignored | a step, ignored |
+
+Reading a step line as an edge cuts whole bays into cantilever fragments; dropping a projection
+ring leaves that slab with nothing to close against, so it is never built at all.
+
 ## A column's life: start, stop and the floor below
 
 The template models the column that sits **below** a floor level, so of the outlines a client

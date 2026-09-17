@@ -12,7 +12,9 @@ from pathlib import Path
 
 import ezdxf
 from ezdxf.math import Matrix44
+from shapely.geometry import Polygon
 
+from ..normalize.geometry import fit_text_height
 from ..normalize.model import NormalizedProject
 from ..normalize.spec import TemplateSpec
 
@@ -139,6 +141,22 @@ class TemplateWriter:
             self._xdata(p, **xd)
         return p
 
+    def _fit_height(self, text: str, points, rotation: float = 0.0) -> float:
+        """The largest of the drawing's standard heights at which this mark fits inside its member.
+
+        Position is the normaliser's decision, because Revit reads it; height is not -- it is a
+        drawing concern, so it is settled here, once, for every kind of mark.
+        """
+        spec = self.spec
+        ladder = spec.text.mark_heights or [spec.text.mark_height]
+        pts = [(x, y) for x, y, *_ in (points or [])]
+        if len(pts) < 3:
+            return max(ladder)
+        poly = Polygon(pts)
+        if not poly.is_valid or poly.is_empty or poly.area <= 0:
+            return max(ladder)
+        return fit_text_height(text, ladder, spec.text.width_factor, poly, rotation)
+
     def _hatch(self, layer_key: str, rings: list[list[tuple[float, float]]], pattern: str, **xd):
         h = self.msp.add_hatch(dxfattribs={"layer": self.spec.layer(layer_key)})
         h.set_pattern_fill(pattern, scale=self.spec.hatch.scale)
@@ -202,18 +220,20 @@ class TemplateWriter:
         for w in np_.walls:
             if not w.structural:
                 continue   # answer 6B: masonry / non-structural walls are not drawn
-            e = self._poly("wall", [g(w.floor_id, p) for p in w.outline], id=w.id, src=w.source_id, top_offset=w.top_offset_mm)
+            ring = [g(w.floor_id, p) for p in w.outline]
+            e = self._poly("wall", ring, id=w.id, src=w.source_id, top_offset=w.top_offset_mm)
             if w.mark:
-                self._mtext("wall_mark", w.mark, g(w.floor_id, w.center), spec.text.mark_height, 5, id=w.id)
+                self._mtext("wall_mark", w.mark, g(w.floor_id, w.center), self._fit_height(w.mark, ring), 5, id=w.id)
 
         for b in np_.beams:
             stub = "1" if (b.width_mm and b.length_mm and b.length_mm < b.width_mm) else None
-            e = self._poly("beam", [g(b.floor_id, p) for p in b.outline], id=b.id, run=b.run_id, mark=b.mark, client=b.client_mark, stub=stub)
+            ring = [g(b.floor_id, p) for p in b.outline]
+            e = self._poly("beam", ring, id=b.id, run=b.run_id, mark=b.mark, client=b.client_mark, stub=stub)
             if spec.beam_centreline:
                 cl = self.msp.add_line(g(b.floor_id, b.start), g(b.floor_id, b.end), dxfattribs={"layer": spec.layer("beam_cl")})
                 self._xdata(cl, id=b.id, kind="centreline")
             text = self._beam_mark(b)
-            self._mtext("beam_mark", text, g(b.floor_id, b.mark_position), spec.text.mark_height, 5, rotation=b.mark_rotation_deg, id=b.id, mark=b.mark)
+            self._mtext("beam_mark", text, g(b.floor_id, b.mark_position), self._fit_height(text, ring, b.mark_rotation_deg), 5, rotation=b.mark_rotation_deg, id=b.id, mark=b.mark)
 
         for s in np_.panels:
             if s.kind not in ("slab", "cantilever", "ramp"):
@@ -225,11 +245,15 @@ class TemplateWriter:
                 self._xdata(e, id=s.id, mark=s.mark, thk=s.thickness_mm, kind=s.kind, top_offset=s.top_offset_mm, src=",".join(s.tag_ids))
             else:
                 self._poly(layer_key, [g(s.floor_id, p) for p in s.outline], id=s.id, mark=s.mark, thk=s.thickness_mm, kind=s.kind, top_offset=s.top_offset_mm, src=",".join(s.tag_ids))
-            self._mtext(mark_key, s.mark, g(s.floor_id, s.mark_position), spec.text.mark_height, 5, id=s.id)
+            self._mtext(mark_key, s.mark, g(s.floor_id, s.mark_position), self._fit_height(s.mark, [g(s.floor_id, p) for p in s.outline]), 5, id=s.id)
             if s.sunk_mm:
                 self._hatch("slab_sunk", [[g(s.floor_id, q) for q in s.outline]], self.sunk_pattern(s.sunk_mm), id=s.id, sunk=s.sunk_mm)
                 self.used_meanings[("sunk", float(s.sunk_mm))] = self.sunk_pattern(s.sunk_mm)
             if s.top_offset_rule in ("beam_bottom", "projection"):
+                # the legend entry was registered but the hatch itself was never drawn, so the
+                # client's "PROJECTION AT BEAM BOTTOM LVL." areas came out blank on the plan
+                self._hatch(spec.beam_bottom_hatch_layer, [[g(s.floor_id, q) for q in s.outline]],
+                            spec.hatch.slab_at_beam_bottom, id=s.id, meaning="beam_bottom")
                 self.used_meanings[("beam_bottom", None)] = spec.hatch.slab_at_beam_bottom
             if s.kind == "ramp" and len(s.arrow) == 2:
                 a, b = g(s.floor_id, s.arrow[0]), g(s.floor_id, s.arrow[1])
@@ -245,7 +269,7 @@ class TemplateWriter:
             pts = [g(fd.floor_id, p) for p in fd.outline]
             self._poly("slab_fold", pts, id=fd.id, panel=fd.panel_id, fold=fd.fold_mm)
             self._hatch("slab_fold", [pts], spec.hatch.raft_fold_sunk, id=fd.id, meaning="fold")
-            self._mtext("slab_mark", fd.mark, g(fd.floor_id, fd.mark_position), spec.text.mark_height, 5, id=fd.id)
+            self._mtext("slab_mark", fd.mark, g(fd.floor_id, fd.mark_position), self._fit_height(fd.mark, pts), 5, id=fd.id)
             self.used_meanings[("fold", None)] = spec.hatch.raft_fold_sunk
 
         for x in np_.footings:
@@ -260,7 +284,7 @@ class TemplateWriter:
                 self._hatch(layer_key, [pts], spec.hatch.raft_fold_sunk, id=x.id, meaning=x.kind)
             if x.mark_lines:
                 mk = "raft_mark" if (x.kind == "raft" or in_raft) else ("pilecap_mark" if x.kind == "pilecap" else "footing_mark")
-                self._mtext(mk, "\\P".join(x.mark_lines), g(x.floor_id, x.center), spec.text.mark_height, 5, id=x.id)
+                self._mtext(mk, "\\P".join(x.mark_lines), g(x.floor_id, x.center), self._fit_height(max(x.mark_lines, key=len), pts), 5, id=x.id)
         for pl in np_.piles:
             if not pl.diameter_mm:
                 continue   # piles are drawn only as the client drew them; no assumed diameter
@@ -279,7 +303,8 @@ class TemplateWriter:
             if st.outline:
                 self._poly("stairs", [g(st.floor_id, p) for p in st.outline], id=st.id, src=st.source_id)
             if st.mark and (st.outline or not any(x.outline for x in np_.stairs if x.floor_id == st.floor_id)):
-                self._mtext("stairs_mark", st.mark, g(st.floor_id, st.center), spec.text.mark_height, 5, id=st.id)
+                self._mtext("stairs_mark", st.mark, g(st.floor_id, st.center),
+                            self._fit_height(st.mark, [g(st.floor_id, p) for p in st.outline]), 5, id=st.id)
         for j in np_.joints:
             ln = self.msp.add_line(g(j.floor_id, j.start), g(j.floor_id, j.end), dxfattribs={"layer": spec.layer("joint")})
             self._xdata(ln, id=j.id)

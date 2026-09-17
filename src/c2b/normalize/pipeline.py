@@ -196,7 +196,7 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
             # answer 7: the mark sits on the bounding-box centre, and shrinks to stay inside its
             # member rather than overflowing onto the beams alongside. A smaller mark that reads
             # is worth more than a full-height one lying across its neighbours.
-            ladder = text.column_mark_heights or [text.mark_height]
+            ladder = text.mark_heights or [text.mark_height]
             base_txt, size_txt = split_mark_size(mark)
             drawn, lines = mark, []
             if spec.placement.column_mark_fit == "fixed":

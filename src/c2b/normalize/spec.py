@@ -24,10 +24,12 @@ class TextSpec(BaseModel):
     style: str = "JetBrains Mono"
     font: str = "JetBrainsMono-VariableFont_wght.ttf"
     fallback_font: str = "arial.ttf"
-    mark_height: float = 125.0
-    #: answer 7: column marks step down this ladder to stay inside their member. Standard
-    #: heights only -- a drawing whose every mark is a different size cannot be re-styled.
-    column_mark_heights: list[float] = [100.0, 75.0, 50.0]
+    mark_height: float = 50.0
+    #: Every mark -- column, beam, slab, footing, stair -- steps down this ladder until it fits
+    #: inside its own member. Standard heights only: a drawing whose every mark is a slightly
+    #: different size cannot be re-styled or edited as a set. 10 mm is the floor; below that a
+    #: mark is not worth drawing, and the overflow is reported instead.
+    mark_heights: list[float] = [50.0, 40.0, 30.0, 20.0, 10.0]
     note_height: float = 250.0
     title_height: float = 500.0
     width_factor: float = 0.6         # approximate glyph width / height, used for fit checks
@@ -128,7 +130,7 @@ class HatchMap(BaseModel):
     raft_fold_sunk: str = "ANSI37"
     # one pattern per distinct sunk depth, allocated in the order the depths appear
     sunk_patterns: list[str] = Field(default_factory=lambda: ["ANGLE", "HEX", "ANSI33", "ANSI37", "CROSS", "AR-SAND"])
-    scale: float = 20.0
+    scale: float = 10.0
     hatch_all_columns: bool = False          # template hatched every column; legend says the hatch means "stops here"
 
 
@@ -218,6 +220,9 @@ class TemplateSpec(BaseModel):
     stair_estimate: bool = True              # answer 5: treads counted, mid landing at half height, flagged
     raft_min_area_m2: float = 0.0            # optional size rule (0 = off)
     raft_min_columns: int = 0                # optional stack-count rule (0 = off)
+    #: where the "slab at beam bottom" / "projection" hatch is drawn. The template has no layer
+    #: of its own for it, so it goes on the general hatch layer until the firm adds one.
+    beam_bottom_hatch_layer: str = "hatch"
     beam_centreline: bool = True             # answer 6B: centreline on CH-S-BEAM-CL in addition to the outline
     client_notes: bool = True                # answer 18C: client general notes verbatim under each plan
     level_reference: Literal["SSL", "FFL"] = "SSL"   # answer 20A; the level workbook's Settings sheet overrides this

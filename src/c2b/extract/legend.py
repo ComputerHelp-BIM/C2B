@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 import re
 
-from shapely.geometry import Point
+from shapely.geometry import Point, Polygon, box
 
 from ..dxfio import Prim
 from ..schema import LegendItem, Point2, Region
@@ -45,6 +45,34 @@ def classify_meaning(text: str) -> tuple[str, float | None]:
     if "DROP" in up:
         return "drop", None
     return "other", None
+
+
+#: How far either side of a legend line its swatch may sit, in text heights. The swatch search
+#: below allows 30 to the left and 4 to the right; the zone is drawn a little wider than that.
+_ZONE_LEFT_H = 36.0
+_ZONE_RIGHT_H = 6.0
+_ZONE_ABOVE_H = 2.0
+
+
+def legend_zones(prims: list[Prim]) -> list[Polygon]:
+    """The strip each legend line occupies, swatch included.
+
+    Nothing inside it is structure. The swatches are drawn exactly like the thing they explain --
+    a hatch, a rectangle, a cut-out cross -- so on a sheet where the legend sits under the plan,
+    inside the floor's own frame, they are read as a stub column and an opening unless the band
+    they live in is ruled out first. Built from the legend *text*, which is always found, rather
+    than from the swatch, which for a cut-out is a plain rectangle with no hatch to match.
+    """
+    zones: list[Polygon] = []
+    for t in prims:
+        if t.kind != "text" or not t.text or not _RE_LEGEND.match(clean_text(t.text)):
+            continue
+        h = t.text_height or 125.0
+        ax, ay = t.extra.get("anchor", t.rep_point())
+        width = t.extra.get("box_w") or (0.7 * h * len(t.text))
+        zones.append(box(ax - _ZONE_LEFT_H * h, ay - _ZONE_ABOVE_H * h,
+                         ax + width + _ZONE_RIGHT_H * h, ay + _ZONE_ABOVE_H * h))
+    return zones
 
 
 def parse_legend(prims: list[Prim]) -> tuple[list[LegendItem], set[str]]:

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ezdxf
 import pytest
+from ezdxf.enums import TextEntityAlignment
 from shapely.geometry import Point, Polygon
 
 from c2b.export.template_dxf import write_template_dxf
@@ -28,9 +29,9 @@ from c2b.roundtrip.reader import TemplateReader
 #: a tall wall: 200 wide, 2950 deep, tagged 200X2500 -- the client's own numbers disagree
 TALL = [(4000.0, 1000.0), (4200.0, 1000.0), (4200.0, 3950.0), (4000.0, 3950.0)]
 TALL_TAG = "T1SW136c-200X2500"
-#: a short wall leg: the full mark cannot be drawn at full height inside 900 mm
-SHORT = [(8000.0, 1000.0), (8200.0, 1000.0), (8200.0, 1900.0), (8000.0, 1900.0)]
-SHORT_TAG = "T1SW44a-200X900"
+#: a short member: the full mark cannot be drawn at the top of the ladder inside 450 mm
+SHORT = [(8000.0, 1000.0), (8200.0, 1000.0), (8200.0, 1450.0), (8000.0, 1450.0)]
+SHORT_TAG = "T1SW44a-200X450"
 
 
 def _build(tmp_path, spec: TemplateSpec):
@@ -93,12 +94,12 @@ def test_box_centre_stays_inside_an_L_shape():
 
 def test_fit_text_height_steps_down_a_standard_ladder():
     """Heights come from the drawing's ladder, never a freely computed size."""
-    ladder = [100.0, 75.0, 50.0]
-    poly = Polygon([(0, 0), (2000, 0), (2000, 300), (0, 300)])
-    assert fit_text_height("SHORT", ladder, 0.6, poly) == 100.0               # already fits
-    h = fit_text_height("T1SW136c-200X2500-AND-THEN-SOME-MO", ladder, 0.6, poly)
-    assert h in ladder and h < 100.0
-    assert fit_text_height("X" * 400, ladder, 0.6, poly) == 50.0              # gives up at the smallest
+    ladder = [50.0, 40.0, 30.0, 20.0, 10.0]
+    poly = Polygon([(0, 0), (800, 0), (800, 300), (0, 300)])
+    assert fit_text_height("SHORT", ladder, 0.6, poly) == 50.0                # already fits
+    h = fit_text_height("T1SW136c-200X2500-AND-THEN-SOME-MORE-STILL", ladder, 0.6, poly)
+    assert h in ladder and h < 50.0
+    assert fit_text_height("X" * 400, ladder, 0.6, poly) == 10.0              # gives up at the smallest
 
 
 def test_mark_sits_on_the_box_centre_inside_the_wall(normalized):
@@ -110,12 +111,12 @@ def test_mark_sits_on_the_box_centre_inside_the_wall(normalized):
     assert "2950" not in w.mark, "the mark states the tagged size; the polyline does not get a vote"
 
 
-def test_a_short_wall_steps_its_mark_down_instead_of_overflowing(normalized):
+def test_a_short_member_steps_its_mark_down_instead_of_overflowing(normalized):
     _path, np_ = normalized
-    ladder = TemplateSpec().text.column_mark_heights
+    ladder = TemplateSpec().text.mark_heights
     short, tall = _by_mark(np_, "T1SW44a"), _by_mark(np_, "T1SW136c")
     assert short.mark_height_mm in ladder and tall.mark_height_mm in ladder
-    assert short.mark_height_mm < max(ladder), "the full mark does not fit 900 mm at full height"
+    assert short.mark_height_mm < max(ladder), "the full mark does not fit 450 mm at the top of the ladder"
     assert tall.mark_height_mm == max(ladder), "a wall with room keeps full-height text"
     poly = Polygon([(p.x, p.y) for p in short.outline])
     assert poly.contains(Point(short.mark_position.x, short.mark_position.y))
@@ -146,8 +147,8 @@ def test_beside_mode_splits_the_mark_and_still_reads_back(beside, tmp_path):
     assert (r.width_mm, r.depth_mm) == (200.0, 2500.0)          # sizes come from the mark it states
 
 
-def test_a_leg_too_short_for_the_whole_mark_shows_the_base(tmp_path):
-    """A 17-character mark will not go inside a 500 mm leg at any height a drafter can read.
+def test_a_member_too_small_for_the_whole_mark_shows_the_base(tmp_path):
+    """A mark that misses even the smallest standard height shows its base instead.
 
     The base alone does. The size is not lost: it stays in the schedule and in the XDATA, so
     utility 4 reads the whole mark back off the drawing.
@@ -162,18 +163,19 @@ def test_a_leg_too_short_for_the_whole_mark_shows_the_base(tmp_path):
                        close=True, dxfattribs={"layer": "Boundary"})
     msp.add_point((0, 0), dxfattribs={"layer": "Origin"})
     msp.add_text("GROUND FLOOR LEVEL", dxfattribs={"layer": "G-ANNO-TEXT", "height": 400}).set_placement((3000, -2500))
-    msp.add_lwpolyline([(0, 0), (200, 0), (200, 500), (0, 500)], close=True, dxfattribs={"layer": "S-COLS"})
-    msp.add_text("T1SW136c-200X500", dxfattribs={"layer": "S-COLS-IDEN", "height": 100}).set_placement((100, 250))
+    msp.add_lwpolyline([(0, 0), (100, 0), (100, 100), (0, 100)], close=True, dxfattribs={"layer": "S-COLS"})
+    msp.add_text("T1SW136c-200X100", dxfattribs={"layer": "S-COLS-IDEN", "height": 50}).set_placement(
+        (50, 50), align=TextEntityAlignment.MIDDLE_CENTER)
     doc.saveas(str(path))
 
     spec = TemplateSpec()
     levels = [LevelRow("L01", "GROUND FLOOR LEVEL", 0, 0.0, None, "GROUND FLOOR LVL.")]
     np_ = normalize(extract(path).project, spec, levels, source_file="tiny.dxf")
     col = np_.columns[0]
-    assert col.mark == "T1SW136c-200X500", "the data keeps the whole mark"
+    assert col.mark == "T1SW136c-200X100", "the data keeps the whole mark"
     assert col.mark_lines == ["T1SW136c"], "the drawing shows only what fits"
-    assert col.mark_height_mm in spec.text.column_mark_heights
+    assert col.mark_height_mm in spec.text.mark_heights
 
     dxf = write_template_dxf(np_, tmp_path / "tiny.template.dxf", spec)
     reread = TemplateReader(spec).read(dxf)
-    assert reread.columns[0].mark == "T1SW136c-200X500", "utility 4 recovers the whole mark"
+    assert reread.columns[0].mark == "T1SW136c-200X100", "utility 4 recovers the whole mark"

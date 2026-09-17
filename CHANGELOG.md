@@ -8,6 +8,40 @@ The canonical JSON schema carries its own version (`schema_version` in every out
 A MAJOR bump of the schema means downstream utilities (DXF writer, Revit importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes values.
 
+## [0.12.0] - 2026-09-17
+
+### Fixed
+
+- **The client's legend was being read as structure.** The legend sits under the plan, inside
+  the floor's own frame, and its swatches are drawn exactly like the thing they explain -- so
+  the "COLUMN/SHEAR WALL END" swatch became a stub column (`SC1-581X1436`) and the "CUT-OUT"
+  swatch became an opening, on every plan. The band each legend line occupies is now ruled out
+  before anything is read as a member. Built from the legend *text*, because a cut-out swatch
+  is a plain rectangle with no hatch to match it by. Test17: 3 phantom columns and 13 phantom
+  openings gone.
+- **The "projection at beam bottom" hatch was never drawn.** The panel registered the legend
+  entry and then drew nothing, unlike the sunk hatch beside it, so those areas came out blank.
+  Test17 now carries 243 of them (on `CH-HATCH`; the template has no layer of its own for it --
+  `beam_bottom_hatch_layer` moves them when it gets one).
+- **North-side chajjas were missing.** 0.9.0 stopped reading step lines as slab edges, which
+  fixed whole bays being classified as cantilevers, but it also dropped the closed rings on the
+  projection layer -- and a chajja hanging past the beam grid has no other edge to close
+  against, so it was never built. What the modifier *means* now decides: a `projection` ring is
+  an edge, a `drop`, `fold` or `sunk` ring is a level change inside a bay the beams already
+  close, and an open line is a step whatever the layer. Test17: 55 → 724 cantilever panels,
+  panels 1722 → 2404, and `beam_bottom` offsets are back.
+
+### Changed
+
+- **Mark heights: 50 mm, stepping down to 10 mm, for every mark** -- column, beam, slab, fold,
+  footing, stair and wall, not just columns. Height is settled in the writer, once, since unlike
+  position it is a drawing concern Revit does not read. Test17: 2080 marks at 50, 12 at 40,
+  2 at 20.
+- **Hatch scale 20 → 10.** Both this and the text heights are the tool's defaults, not read
+  from the seed template: the template supplies layers, text styles, dimension styles,
+  linetypes and the legend.
+- `text.column_mark_heights` is now `text.mark_heights`, since it is no longer column-only.
+
 ## [0.11.1] - 2026-09-17
 
 ### Fixed

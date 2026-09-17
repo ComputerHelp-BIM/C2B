@@ -14,7 +14,7 @@ from .extract.columns import extract_columns
 from .extract.context import FloorContext
 from .extract.footings import extract_footings
 from .extract.grids import extract_grids
-from .extract.legend import parse_legend, regions_from_hatches
+from .extract.legend import legend_zones, parse_legend, regions_from_hatches
 from .extract.openings import extract_openings, extract_stairs, extract_walls
 from .extract.slabs import extract_slabs
 from .floors import FloorFrame, detect_floors, localise
@@ -167,8 +167,13 @@ def extract(path: str | Path, user_profile: Profile | None = None, units_overrid
 
     for frame in frames:
         localise(frame)
+        # the legend is copied under every plan, and a frame's prims are already in that floor's
+        # own coordinates, so the bands are measured here rather than once for the drawing
+        zones = legend_zones(frame.prims)
+        if zones:
+            diag.info("LEGEND_ZONE", f"{len(zones)} legend line(s) on this plan; the band each occupies is not read as structure", floor_id=frame.id)
         ctx = FloorContext(frame=frame, roles=roles, rules=rules, tol=tol, diag=diag, schedules=sched_index,
-                           size_sources=profile.size_sources)
+                           size_sources=profile.size_sources, legend_zones=zones)
         project.grids.extend(extract_grids(ctx))
         project.columns.extend(extract_columns(ctx))
         project.beams.extend(extract_beams(ctx))
@@ -190,19 +195,26 @@ def extract(path: str | Path, user_profile: Profile | None = None, units_overrid
                 cp = _Poly([(q.x, q.y) for q in c.outline])
                 if any(sp.intersection(cp).area >= 0.5 * cp.area for sp in stop_polys if sp.intersects(cp)):
                     c.modifier = "stop"
-        # slab edge lines (free edges of cantilevers / chajjas) and slab outline rings.
-        # Lines on drop, projection, fold or sunk layers describe a step in the slab, not its edge.
-        modifier_layers = {name for name, r in rules.items() if set(r.modifiers) & {"drop", "projection", "fold", "sunk", "hidden"}}
+        # Slab edge lines (free edges of cantilevers / chajjas) and slab outline rings.
+        #
+        # What the layer's modifier *means* decides whether its geometry is an edge. A drop, fold
+        # or sunk layer carries level changes taking place inside a bay the beams already close:
+        # reading those as edges cuts whole bays into cantilever fragments. A projection layer is
+        # the opposite -- slab hanging out past the beam grid, a chajja -- and it has no other
+        # edge to close against, so without its ring that slab is never built at all.
+        # Open lines are a step in the slab whatever the layer, so none of them are edges.
+        step_layers = {name for name, r in rules.items() if set(r.modifiers) & {"drop", "fold", "sunk", "hidden"}}
+        line_layers = step_layers | {name for name, r in rules.items() if "projection" in r.modifiers}
         for p_ in ctx.geoms("SLAB", "line", "polyline"):
-            if p_.layer in modifier_layers:
+            if p_.layer in line_layers:
                 continue
             coords = list(p_.geom.coords)
             for a, b in zip(coords[:-1], coords[1:]):
                 if ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5 >= 50.0:
                     project.slab_edges.append(SlabEdge(floor_id=frame.id, start=Point2(x=a[0], y=a[1]), end=Point2(x=b[0], y=b[1]), source_layer=p_.layer, source_handle=p_.handle))
         for p_ in ctx.geoms("SLAB", "polygon"):
-            if p_.geom.area < 1e5 or p_.layer in modifier_layers:
-                continue   # text boxes, hatch swatches, and steps in the slab
+            if p_.geom.area < 1e5 or p_.layer in step_layers:
+                continue   # text boxes, hatch swatches, and level changes inside a closed bay
             coords = list(p_.geom.exterior.coords)
             for a, b in zip(coords[:-1], coords[1:]):
                 project.slab_edges.append(SlabEdge(floor_id=frame.id, start=Point2(x=a[0], y=a[1]), end=Point2(x=b[0], y=b[1]), source_layer=p_.layer, source_handle=p_.handle))

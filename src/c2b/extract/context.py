@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from ..diagnostics import DiagnosticsCollector
 from ..dxfio import Prim
 from ..floors import FloorFrame
+from shapely.geometry import Point
+
 from ..profile import LayerRule, SizeSources, Tolerances
 from ..schedules import ScheduleIndex
 from ..schema import Point2, TagRef
@@ -31,6 +33,7 @@ class FloorContext:
     diag: DiagnosticsCollector
     schedules: ScheduleIndex
     size_sources: SizeSources = field(default_factory=SizeSources)
+    legend_zones: list = field(default_factory=list)   # strips the client's legend occupies; not structure
     by_geom_role: dict[str, list[Prim]] = field(default_factory=dict)
     by_text_role: dict[str, list[Prim]] = field(default_factory=dict)
     assigned_tag_handles: set[str] = field(default_factory=set)
@@ -53,14 +56,36 @@ class FloorContext:
     def floor_id(self) -> str:
         return self.frame.id
 
+    def in_legend(self, p: Prim) -> bool:
+        """Does this primitive sit in the band the client's legend occupies?
+
+        Area is compared for a shape and the representative point for anything thinner: a swatch
+        whose representative point lands on the zone's own edge would otherwise slip through, and
+        the swatches are exactly the shapes that must not.
+        """
+        if not self.legend_zones:
+            return False
+        g = p.geom
+        for z in self.legend_zones:
+            if not z.intersects(g):
+                continue
+            if g.geom_type in ("Polygon", "MultiPolygon") and g.area > 0:
+                if g.intersection(z).area >= 0.5 * g.area:
+                    return True
+            elif z.contains(Point(p.rep_point())):
+                return True
+        return False
+
     def geoms(self, role: str, *kinds: str) -> list[Prim]:
         items = self.by_geom_role.get(role, [])
         if kinds:
             items = [p for p in items if p.kind in kinds]
-        return [p for p in items if "hidden" not in self.rules.get(p.layer, LayerRule()).modifiers]
+        return [p for p in items
+                if "hidden" not in self.rules.get(p.layer, LayerRule()).modifiers and not self.in_legend(p)]
 
     def texts(self, role: str) -> list[Prim]:
-        return [p for p in self.by_text_role.get(role, []) if p.text and p.text.strip()]
+        return [p for p in self.by_text_role.get(role, [])
+                if p.text and p.text.strip() and not self.in_legend(p)]
 
     def modifier_for(self, layer: str) -> str | None:
         mods = [m for m in self.rules.get(layer, LayerRule()).modifiers if m not in ("tag_layer", "hatch")]
