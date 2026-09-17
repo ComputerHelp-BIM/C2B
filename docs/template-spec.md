@@ -61,7 +61,7 @@ represents several levels gets one row per level with the same `floor_id`:
 | File | Purpose |
 |---|---|
 | `<stem>.template.dxf` | the template drawing; every entity carries XDATA `C2B` with `id=`, `mark=`, `client=` for the round trip (utility 4) |
-| `<stem>.normalized.json` | normalised model, schema 0.8.0 (stacks, spans, panels, footings, grids, levels, mark map; each element carries `mark` and, where the drawing splits it, `mark_lines`) |
+| `<stem>.normalized.json` | normalised model, schema 0.9.0 (stacks, spans, panels, footings, grids, levels, mark map; each element carries `mark` and, where the drawing splits it, `mark_lines`) |
 | `<stem>.schedules.xlsx` | column schedule (stack × floor), beams, slabs, footings, grids, mark map, diagnostics |
 | `<stem>.template-spec.yaml` | the spec used, ready to edit |
 

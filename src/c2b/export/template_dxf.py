@@ -157,11 +157,21 @@ class TemplateWriter:
             return max(ladder)
         return fit_text_height(text, ladder, spec.text.width_factor, poly, rotation)
 
-    def _hatch(self, layer_key: str, rings: list[list[tuple[float, float]]], pattern: str, **xd):
+    def _hatch(self, layer_key: str, rings: list[list[tuple[float, float]]], pattern: str,
+               holes: list[list[tuple[float, float]]] | None = None, **xd):
+        """A hatched area, with any cut-outs in it left unhatched.
+
+        A slab's openings are holes in the hatch, not areas to draw over: hatching straight
+        across a cut-out buries the drafter's own cut-out symbol under the pattern.
+        """
         h = self.msp.add_hatch(dxfattribs={"layer": self.spec.layer(layer_key)})
         h.set_pattern_fill(pattern, scale=self.spec.hatch.scale)
+        h.dxf.hatch_style = ezdxf.const.HATCH_STYLE_NESTED
         for ring in rings:
-            h.paths.add_polyline_path(ring, is_closed=True)
+            h.paths.add_polyline_path(ring, is_closed=True, flags=ezdxf.const.BOUNDARY_PATH_EXTERNAL)
+        for hole in holes or []:
+            if len(hole) >= 3:
+                h.paths.add_polyline_path(hole, is_closed=True, flags=ezdxf.const.BOUNDARY_PATH_DEFAULT)
         if xd:
             self._xdata(h, **xd)
         return h
@@ -246,14 +256,20 @@ class TemplateWriter:
             else:
                 self._poly(layer_key, [g(s.floor_id, p) for p in s.outline], id=s.id, mark=s.mark, thk=s.thickness_mm, kind=s.kind, top_offset=s.top_offset_mm, src=",".join(s.tag_ids))
             self._mtext(mark_key, s.mark, g(s.floor_id, s.mark_position), self._fit_height(s.mark, [g(s.floor_id, p) for p in s.outline]), 5, id=s.id)
+            cutouts = [[g(s.floor_id, q) for q in hole] for hole in s.holes]
             if s.sunk_mm:
-                self._hatch("slab_sunk", [[g(s.floor_id, q) for q in s.outline]], self.sunk_pattern(s.sunk_mm), id=s.id, sunk=s.sunk_mm)
+                # a pocket keeps its own outline; only a panel sunk as a whole takes the full ring
+                rings = ([[g(s.floor_id, q) for q in ring] for ring in s.sunk_outlines]
+                         or [[g(s.floor_id, q) for q in s.outline]])
+                for ring in rings:
+                    self._hatch("slab_sunk", [ring], self.sunk_pattern(s.sunk_mm),
+                                holes=cutouts if not s.sunk_outlines else None, id=s.id, sunk=s.sunk_mm)
                 self.used_meanings[("sunk", float(s.sunk_mm))] = self.sunk_pattern(s.sunk_mm)
-            if s.top_offset_rule in ("beam_bottom", "projection"):
-                # the legend entry was registered but the hatch itself was never drawn, so the
-                # client's "PROJECTION AT BEAM BOTTOM LVL." areas came out blank on the plan
+            # a chajja sits at beam bottom too (its own rule says so), and the client hatches it
+            # the same way; without it the north chajjas came out as bare outlines
+            if s.top_offset_rule in ("beam_bottom", "projection", "cantilever_bottom_align"):
                 self._hatch(spec.beam_bottom_hatch_layer, [[g(s.floor_id, q) for q in s.outline]],
-                            spec.hatch.slab_at_beam_bottom, id=s.id, meaning="beam_bottom")
+                            spec.hatch.slab_at_beam_bottom, holes=cutouts, id=s.id, meaning="beam_bottom")
                 self.used_meanings[("beam_bottom", None)] = spec.hatch.slab_at_beam_bottom
             if s.kind == "ramp" and len(s.arrow) == 2:
                 a, b = g(s.floor_id, s.arrow[0]), g(s.floor_id, s.arrow[1])

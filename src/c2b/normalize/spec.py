@@ -113,6 +113,7 @@ class PanelRules(BaseModel):
     cantilever_support: Literal["min", "max"] = "min"   # correction: with beams of different depth the smaller depth governs
     cantilever_default_thickness_mm: float = 100.0      # answer 1B fallback when no tag and no adjacent slab
     region_cover: float = 0.5               # a panel covered this much by a legend region takes its meaning
+    pocket_inside: float = 0.6              # a legend region lying this much inside a panel, but too small to claim it, is a pocket in it
     arc_fit_tol_mm: float = 2.5             # vertices this close to a circular column are replaced by a true arc (bulge)
     span_extend_mm: float = 150.0           # spans are lengthened this much at each end for the lattice only, so beam corners reach into round/odd supports
     min_area_m2: float = 0.25

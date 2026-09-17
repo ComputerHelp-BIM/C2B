@@ -66,6 +66,7 @@ CODES: dict[str, str] = {
     "BEAM_OVERLAP": "Two beams overlap along their length",
     "PANEL_NO_TAG": "Slab panel without a thickness tag inside it",
     "PANEL_MULTI_TAG": "Slab panel contains tags with different thicknesses",
+    "PANEL_MULTI_SUNK": "Slab panel holds sunk pockets of more than one depth",
     "PANEL_LARGE": "Slab panel larger than expected; a beam may be missing",
     "PANEL_TAG_OUTSIDE": "Slab tag lies in no panel",
     "PANEL_NO_LATTICE": "Floor has beams but no closed panels could be formed",

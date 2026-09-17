@@ -490,10 +490,30 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
                 diag.warning("PANEL_NO_TAG", f"Panel {pid} ({poly.area / 1e6:.1f} m2) has no thickness tag inside it", floor_id=f.id, element_id=pid, location=representative_point(poly))
             sunk = next((s.sunk_mm for s in inside if s.sunk_mm), None)
             sunk_source = "tag" if sunk else None
+            sunk_rings: list[list] = []
             if sunk is None:
                 cover, val = region_cover(poly, "sunk")
                 if cover >= spec.panels.region_cover and val:
                     sunk, sunk_source = val, "legend"
+                else:
+                    # A sunk area far smaller than its panel is a pocket in it -- a 250 mm sunk
+                    # box covering under a hundredth of the bay it sits in. Sinking the whole bay
+                    # for it would be wrong, so the pocket keeps its own outline; without this it
+                    # was simply dropped and the client's hatch went missing from the plan.
+                    pockets = [(r, rp) for r, rp in regions_f
+                               if r.meaning == "sunk" and r.value_mm
+                               and rp.intersection(poly).area >= spec.panels.pocket_inside * rp.area]
+                    if pockets:
+                        by_depth: dict[float, list] = {}
+                        for r, rp in pockets:
+                            by_depth.setdefault(float(r.value_mm), []).append(rp)
+                        depth = max(by_depth, key=lambda d: sum(x.area for x in by_depth[d]))
+                        if len(by_depth) > 1:
+                            diag.info("PANEL_MULTI_SUNK", f"Panel {pid} holds sunk pockets of {sorted(by_depth)} mm; {depth:.0f} mm drawn", floor_id=f.id, element_id=pid, location=representative_point(poly))
+                        clipped = [rp.intersection(poly) for rp in by_depth[depth]]
+                        sunk_rings = [_pts(ring_points(c)) for c in clipped if c.geom_type == "Polygon" and not c.is_empty]
+                        if sunk_rings:
+                            sunk, sunk_source = depth, "legend"
             op_ids = []
             holes: list[list] = []
             out_poly = poly
@@ -547,7 +567,7 @@ def normalize(project: Project, spec: TemplateSpec, levels: list[LevelRow] | Non
             kind = "ramp" if ramp is not None else ("cantilever" if is_cant else "slab")
             np_.panels.append(NPanel(id=pid, floor_id=f.id, kind=kind, mark=mark, thickness_mm=thickness, thickness_source=source,
                                      outline=_pts(ring), bulges=bulges, holes=holes, area_m2=round(poly.area / 1e6, 3), centroid=_pt((c.x, c.y)), mark_position=_pt(mp),
-                                     sunk_mm=sunk, sunk_source=sunk_source, top_offset_mm=round(top_offset, 1), top_offset_rule=rule, support_depth_mm=support_depth,
+                                     sunk_mm=sunk, sunk_source=sunk_source, sunk_outlines=sunk_rings, top_offset_mm=round(top_offset, 1), top_offset_rule=rule, support_depth_mm=support_depth,
                                      cantilever=is_cant, slope_ratio=ramp.slope_ratio if ramp else None, direction=ramp.direction if ramp else None,
                                      arrow=[ramp.arrow_start, ramp.arrow_end] if ramp and ramp.arrow_start and ramp.arrow_end else [],
                                      opening_ids=op_ids, tag_ids=[s.id for s in inside]))

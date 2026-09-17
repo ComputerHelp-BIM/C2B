@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from .. import __version__
 from ..schema import Diagnostic, Point2, TagRef
 
-NORMALIZED_SCHEMA_VERSION = "0.8.0"
+NORMALIZED_SCHEMA_VERSION = "0.9.0"
 
 
 class NFloor(BaseModel):
@@ -124,6 +124,9 @@ class NPanel(BaseModel):
     mark_position: Point2
     sunk_mm: float | None = None
     sunk_source: str | None = None         # tag | legend
+    #: when the sunk area is only a pocket in this panel rather than the whole of it, the rings
+    #: of those pockets. Empty means the whole panel is sunk.
+    sunk_outlines: list[list[Point2]] = Field(default_factory=list)
     top_offset_mm: float = 0.0             # slab top relative to the level (SSL); negative = below
     top_offset_rule: str | None = None     # beam_bottom | cantilever_bottom_align | sunk
     support_depth_mm: float | None = None  # deepest adjacent beam

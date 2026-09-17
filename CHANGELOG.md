@@ -8,6 +8,31 @@ The canonical JSON schema carries its own version (`schema_version` in every out
 A MAJOR bump of the schema means downstream utilities (DXF writer, Revit importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes values.
 
+## [0.12.1] - 2026-09-17
+
+Hatching, from a look at the generated plans. Normalised schema `0.8.0` → `0.9.0`
+(new field, no breaking change).
+
+### Fixed
+
+- **Chajjas came out as bare outlines.** A chajja sits at beam bottom level by its own rule
+  (`cantilever_bottom_align`) and the client hatches it like any other slab at that level, but
+  only `beam_bottom` and `projection` were being hatched. Test17: 243 → 967 beam-bottom hatches.
+- **The hatch ran straight across cut-outs**, burying the drafter's own cut-out symbol under the
+  pattern. A panel's openings are now holes in its hatch. Test17: 76 hatches carry a hole.
+- **Sunk areas far smaller than their panel were dropped.** A 250 mm sunk box covering under a
+  hundredth of the bay it sits in failed the "half the panel" rule, and sinking the whole bay
+  for it would have been wrong, so it went missing from the plan entirely. Such a region is now
+  a *pocket*: it keeps its own outline, and only a panel sunk as a whole takes the full ring.
+  All 480 of Test17's sunk regions now reach a panel that is drawn sunk (was 432).
+
+### Added
+
+- `NPanel.sunk_outlines` -- the rings of the sunk pockets in a panel; empty means the whole
+  panel is sunk. `panels.pocket_inside` (0.6) sets how much of a region must lie in a panel to
+  count as a pocket in it, and `PANEL_MULTI_SUNK` reports a panel holding pockets of more than
+  one depth.
+
 ## [0.12.0] - 2026-09-17
 
 ### Fixed
