@@ -9,25 +9,26 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
 
+from .geometry import WALL_LIKE_MIN_LENGTH_MM, WALL_LIKE_MIN_SIDE_RATIO
 from .tags import parse_size_from_name
 
 # Roles a layer's geometry or text can play.
 ROLES = [
     "BOUNDARY", "ORIGIN",
     "GRID", "COLUMN", "BEAM", "SLAB", "FOOTING", "OPENING", "WALL", "STAIR",
-    "SCHEDULE", "NOTE", "TITLE", "DIMENSION", "HATCH_GENERIC",
+    "SCHEDULE", "NOTE", "TITLE", "DIMENSION", "HATCH_GENERIC", "JOINT",
     "IGNORE", "UNKNOWN",
 ]
-STRUCTURAL_ROLES = {"GRID", "COLUMN", "BEAM", "SLAB", "FOOTING", "OPENING", "WALL"}
+STRUCTURAL_ROLES = {"GRID", "COLUMN", "BEAM", "SLAB", "FOOTING", "OPENING", "WALL", "STAIR"}
 
 # Text on a structural layer is that element's tag.
 TEXT_ROLE_FOR = {r: f"{r}_TAG" for r in STRUCTURAL_ROLES}
-TEXT_ROLE_FOR.update({"SCHEDULE": "SCHEDULE", "NOTE": "NOTE", "TITLE": "TITLE", "STAIR": "STAIR_TAG",
+TEXT_ROLE_FOR.update({"SCHEDULE": "SCHEDULE", "NOTE": "NOTE", "TITLE": "TITLE", "JOINT": "NOTE",
                       "DIMENSION": "IGNORE", "BOUNDARY": "NOTE", "ORIGIN": "IGNORE", "HATCH_GENERIC": "NOTE",
                       "IGNORE": "IGNORE", "UNKNOWN": "NOTE"})
 
@@ -41,12 +42,13 @@ _RULES: list[tuple[str, str, str]] = [
     (r"titl|title", "TITLE", "high"),
     (r"(^|[^a-z])dims?([^a-z]|$)|dimension|anotdim", "DIMENSION", "high"),
     (r"grid|axis|\baxes\b", "GRID", "high"),
+    (r"exp(ansion|antion)?[\s._-]*joint|\bej\b|const(ruction)?[\s._-]*joint", "JOINT", "high"),
     (r"cut-?out|opening|shaft|void|duct|sleeve", "OPENING", "high"),
     (r"stair|strs|stp", "STAIR", "medium"),
-    (r"\bfnd\b|foot|ftg|foundation|raft|pile|pedestal", "FOOTING", "high"),
+    (r"\bfnd\b|foot|ftg|foundation|raft|pile|pedestal|\bpcc\b|\bpit\b", "FOOTING", "high"),
     (r"(^|[^a-z])col(umns?|ums?|s|m)?([^a-z]|$)|stub", "COLUMN", "high"),
     (r"beam|^b-\d+x\d+|(^|[^a-z])bm([^a-z]|$)", "BEAM", "high"),
-    (r"slab|flor|floor|drop|sunk", "SLAB", "high"),
+    (r"slab|flor|floor|drop|sunk|ramp", "SLAB", "high"),
     (r"wall|shear|(^|[^a-z])sw([^a-z]|$)|retaining", "WALL", "high"),
     (r"^hat(ch)?$|hatch|solid|fill", "HATCH_GENERIC", "medium"),
     (r"anno|text|\btxt\b", "NOTE", "medium"),
@@ -64,6 +66,12 @@ _MODIFIER_RULES: list[tuple[str, str]] = [
     (r"projection|proj", "projection"),
     (r"non[\s\-_.]*str|non[\s\-_.]*structural|masonry|brick|block\s*work", "non_structural"),
     (r"retaining", "retaining"),
+    (r"\braft\b|\bmat\b", "raft"),
+    (r"pile\s*cap|pilecap|p\.?\s*cap\b", "pilecap"),
+    (r"\bpiles?\b", "pile"),
+    (r"\bpcc\b|lean\s*concrete|blinding", "pcc"),
+    (r"\bramp", "ramp"),
+    (r"\bpit\b", "pit"),
     (r"podium", "podium"),
     (r"hatch|solid|fill", "hatch"),
     (r"iden|(^|[^a-z])no\.?([^a-z]|$)|size|tag|mark|thk|label", "tag_layer"),
@@ -102,11 +110,12 @@ class Tolerances(BaseModel):
     column_iou_dedupe: float = 0.6
     column_tag_radius_factor: float = 1.5   # x max side of column
     column_tag_radius_min_mm: float = 600.0
-    wall_like_min_side_ratio: float = 4.0
-    wall_like_min_length_mm: float = 1000.0
+    wall_like_min_side_ratio: float = WALL_LIKE_MIN_SIDE_RATIO
+    wall_like_min_length_mm: float = WALL_LIKE_MIN_LENGTH_MM
     beam_min_width_mm: float = 100.0
     beam_max_width_mm: float = 1500.0
     beam_min_length_mm: float = 500.0
+    beam_stub_min_length_mm: float = 40.0     # brackets / corbels: a 200 wide x 50 long nib is a real member
     beam_min_overlap_mm: float = 300.0
     beam_merge_gap_mm: float = 800.0       # merge collinear edge pieces across crossing beams
     beam_merge_offset_mm: float = 2.0
@@ -118,10 +127,27 @@ class Tolerances(BaseModel):
     slab_min_area_mm2: float = 1.0e6
     footing_min_side_mm: float = 300.0
     opening_min_area_mm2: float = 40000.0
+    dimension_tag_height_mm: float = 125.0  # assumed text height for a dimension override that states no height
+    text_box_area_ratio: float = 3.0        # an outline this close in area to the text inside it is a box round that text
     size_mismatch_tol_mm: float = 26.0
     schedule_row_tol_factor: float = 0.6
     z_tol_mm: float = 0.5
     large_coord_mm: float = 500000.0
+
+
+class SizeSources(BaseModel):
+    """Which witness wins, per element, when the client's tag and their outline disagree.
+
+    ``tag`` takes the tag or schedule and falls back to the outline; ``outline`` measures the
+    drawing and keeps the tag for the mark alone. Neither is right for every client -- a firm
+    that dimensions carefully wants the outline, one that keeps a maintained schedule wants the
+    tag -- so it is a setting, defaulting to the tag as the client's stated intent.
+    """
+
+    column: Literal["tag", "outline"] = "tag"
+    beam: Literal["tag", "outline"] = "tag"
+    slab: Literal["tag", "outline"] = "tag"
+    footing: Literal["tag", "outline"] = "tag"
 
 
 class Profile(BaseModel):
@@ -131,6 +157,7 @@ class Profile(BaseModel):
     layers: dict[str, LayerRule] = Field(default_factory=dict)
     floor: FloorSettings = Field(default_factory=FloorSettings)
     tolerances: Tolerances = Field(default_factory=Tolerances)
+    size_sources: SizeSources = Field(default_factory=SizeSources)
     explode_blocks: bool = True
     max_block_depth: int = 4
 
@@ -145,7 +172,7 @@ class Profile(BaseModel):
         return None
 
     @classmethod
-    def load(cls, path: str | Path) -> "Profile":
+    def load(cls, path: str | Path) -> Profile:
         data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
         return cls.model_validate(data)
 

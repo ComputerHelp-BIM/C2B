@@ -1,6 +1,7 @@
 """Beam extraction: pair parallel edge lines into centreline + width, then resolve sizes."""
 from __future__ import annotations
 
+import itertools
 import math
 
 from ..geometry import PairedRect, Segment, classify_polygon, merge_collinear, pair_parallel
@@ -13,11 +14,20 @@ from .outlines import _block_size
 def _segments_from_prim(p) -> list[Segment]:
     coords = list(p.geom.exterior.coords) if p.geom.geom_type == "Polygon" else list(p.geom.coords)
     out = []
-    for a, b in zip(coords[:-1], coords[1:]):
+    for a, b in itertools.pairwise(coords):
         s = Segment((a[0], a[1]), (b[0], b[1]), [p.handle], p.layer)
         if s.length > 1e-6:
             out.append(s)
     return out
+
+
+def _rect_from(shape, angle_deg: float, length: float, width: float) -> PairedRect:
+    """A PairedRect centred on ``shape`` running ``length`` along ``angle_deg``, ``width`` across."""
+    ux, uy = math.cos(math.radians(angle_deg)), math.sin(math.radians(angle_deg))
+    half = length / 2
+    start = (shape.center[0] - ux * half, shape.center[1] - uy * half)
+    end = (shape.center[0] + ux * half, shape.center[1] + uy * half)
+    return PairedRect(start, end, width, angle_deg % 180, (Segment(shape.center, shape.center), Segment(shape.center, shape.center)), 0.0)
 
 
 def extract_beams(ctx: FloorContext) -> list[Beam]:
@@ -30,18 +40,28 @@ def extract_beams(ctx: FloorContext) -> list[Beam]:
         elif p.kind in ("polygon", "solid"):
             s = classify_polygon(p.geom)
             short, long_ = min(s.width, s.depth), max(s.width, s.depth)
+            kind = "polyline" if p.kind == "polygon" else "block"
             if s.shape == "rect" and tol.beam_min_width_mm <= short <= tol.beam_max_width_mm and long_ >= tol.beam_min_length_mm and long_ / short >= 2:
+                # a normal beam: the long side is the span
                 ang = s.rotation_deg if s.width >= s.depth else s.rotation_deg + 90
-                ux, uy = math.cos(math.radians(ang)), math.sin(math.radians(ang))
-                half = long_ / 2
-                rect = PairedRect((s.center[0] - ux * half, s.center[1] - uy * half), (s.center[0] + ux * half, s.center[1] + uy * half), short, ang % 180, (Segment(s.center, s.center), Segment(s.center, s.center)), 0.0)
-                direct.append((rect, p.layer, [p.handle], "polyline" if p.kind == "polygon" else "block", _block_size(p)))
+                direct.append((_rect_from(s, ang, long_, short), p.layer, [p.handle], kind, _block_size(p)))
+            elif (s.shape == "rect" and tol.beam_min_width_mm <= long_ <= tol.beam_max_width_mm
+                  and tol.beam_stub_min_length_mm <= short < tol.beam_min_length_mm):
+                # a bracket or corbel: too short to be a span, and the LONG side is the beam width
+                ang = s.rotation_deg if s.width < s.depth else s.rotation_deg + 90
+                direct.append((_rect_from(s, ang, short, long_), p.layer, [p.handle], kind, _block_size(p)))
             else:
                 segs.extend(_segments_from_prim(p))
 
-    merged = merge_collinear(segs, angle_tol=0.5, offset_tol=tol.beam_merge_offset_mm, gap_tol=tol.beam_merge_gap_mm)
-    rects, unpaired = pair_parallel(merged, tol.beam_min_width_mm, tol.beam_max_width_mm, tol.beam_min_overlap_mm, tol.beam_angle_tol_deg)
-    rects = [r for r in rects if r.length >= tol.beam_min_length_mm]
+    # nothing is merged across an expansion joint: the two beams either side of one are two
+    # beams, and a 175 mm joint is well inside the 800 mm the merge would otherwise bridge
+    joints = [p.geom for p in ctx.geoms("JOINT", "line", "polyline") if p.geom.length > 0]
+    merged = merge_collinear(segs, angle_tol=0.5, offset_tol=tol.beam_merge_offset_mm,
+                             gap_tol=tol.beam_merge_gap_mm, barriers=joints or None)
+    rects, unpaired = pair_parallel(merged, tol.beam_min_width_mm, tol.beam_max_width_mm, tol.beam_min_overlap_mm,
+                                    tol.beam_angle_tol_deg, barriers=joints or None)
+    # a pair whose overlap is short but whose width matches a beam is a bracket, not noise
+    rects = [r for r in rects if r.length >= min(tol.beam_min_length_mm, tol.beam_stub_min_length_mm)]
 
     items: list[tuple[PairedRect, str, list[str], str, tuple | None, int]] = []
     for r in rects:
@@ -68,7 +88,7 @@ def extract_beams(ctx: FloorContext) -> list[Beam]:
     def radius(i: int, tag: TagCand) -> float:
         return max(1.5 * items[i][0].width, tol.beam_tag_buffer_factor * tag.height)
 
-    assigned, unassigned = associate_tags(polys, tags, radius, angles=angles)
+    assigned, _unassigned = associate_tags(polys, tags, radius, angles=angles)
 
     beams: list[Beam] = []
     for i, (r, layer, handles, kind, bsize, n_parts) in enumerate(items):
@@ -80,6 +100,7 @@ def extract_beams(ctx: FloorContext) -> list[Beam]:
         drawn_w = round(r.width, 1)
         width = depth = depth_alt = None
         size_source = depth_source = "unknown"
+        depth_rule: str | None = None
 
         if len(sizes) > 1:
             ctx.diag.warning("BEAM_MULTI_SIZE", f"Beam {bid} has conflicting size tags along its length: {sizes}; first one used (split the beam at supports in the next step)", floor_id=ctx.floor_id, element_id=bid, location=r.start)
@@ -91,6 +112,11 @@ def extract_beams(ctx: FloorContext) -> list[Beam]:
             if sched and isinstance(sched.get("width"), (int, float)) and isinstance(sched.get("depth"), (int, float)):
                 width, depth = float(sched["width"]), float(sched["depth"])
                 size_source = depth_source = "schedule"
+            elif sched and isinstance(sched.get("width"), (int, float)) and sched.get("depth_rule"):
+                # "300XSLB THK." -- the width is real, the depth is a rule resolved once the
+                # slabs around this beam are known, which is the normaliser's business
+                width, size_source = float(sched["width"]), "schedule"
+                depth_rule = str(sched["depth_rule"])
             elif merged_tag.mark and len(ctx.schedules):
                 ctx.note_missing_mark("beam", merged_tag.mark, bid)
             if size_source == "unknown":
@@ -122,7 +148,7 @@ def extract_beams(ctx: FloorContext) -> list[Beam]:
             id=bid, floor_id=ctx.floor_id, mark=merged_tag.mark, start=pt(r.start), end=pt(r.end), length_mm=round(r.length, 1),
             width_mm=width, depth_mm=depth, depth_alt_mm=depth_alt, drawn_width_mm=drawn_w, angle_deg=round(r.angle_deg, 3),
             inverted=merged_tag.inverted, sunk_mm=merged_tag.sunk_mm, outline=outline_points(polys[i]),
-            size_source=size_source, depth_source=depth_source, tags=[tag_ref(pr) for t in my_tags for pr in t.prims],
+            size_source=size_source, depth_source=depth_source, depth_rule=depth_rule, tags=[tag_ref(pr) for t in my_tags for pr in t.prims],
             source_layer=layer, source_kind=kind, source_handles=handles, n_edge_parts=n_parts,
             confidence="high" if kind != "paired_lines" or n_parts <= 4 else "medium",
         ))

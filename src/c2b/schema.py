@@ -11,7 +11,7 @@ Conventions:
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -74,7 +74,19 @@ class Floor(BaseModel):
     floor_to_floor_mm: float | None = None
     default_beam_depth_mm: float | None = None
     default_slab_thickness_mm: float | None = None
+    notes: list[str] = Field(default_factory=list)      # client general notes found inside the frame, verbatim
     counts: dict[str, int] = Field(default_factory=dict)
+
+
+class LevelHint(BaseModel):
+    """A level read from a client section/elevation text, e.g. 'GROUND FLOOR LVL. +2.500'."""
+
+    name: str
+    elevation_mm: float
+    text: str
+    handle: str
+    layer: str
+    floor_id: str | None = None
 
 
 class TagRef(BaseModel):
@@ -139,6 +151,7 @@ class Beam(BaseModel):
     outline: list[Point2] = Field(default_factory=list)
     size_source: SizeSource = "unknown"
     depth_source: SizeSource = "unknown"
+    depth_rule: str | None = None        # schedule stated a rule, not a number: slab_thickness | layout
     tags: list[TagRef] = Field(default_factory=list)
     source_layer: str
     source_kind: str                     # paired_lines | polyline | block
@@ -197,6 +210,90 @@ class Opening(BaseModel):
     source_handles: list[str] = Field(default_factory=list)
 
 
+class SlabEdge(BaseModel):
+    """A slab edge line drawn by the client (free edges of cantilevers, chajjas, balconies)."""
+
+    floor_id: str
+    start: Point2
+    end: Point2
+    source_layer: str
+    source_handle: str
+
+
+class LegendItem(BaseModel):
+    """One line of the client's legend: a hatch pattern and what it means."""
+
+    pattern: str
+    meaning: str                 # sunk | beam_bottom | column_stop | cutout | fold | upstand | drop | projection | other
+    value_mm: float | None = None
+    text: str
+    handle: str
+
+
+class Region(BaseModel):
+    """A hatched area whose meaning comes from the legend (e.g. slab sunk by 75)."""
+
+    id: str
+    floor_id: str
+    meaning: str
+    value_mm: float | None = None
+    pattern: str
+    outline: list[Point2]
+    area_mm2: float
+    source_layer: str
+    source_handles: list[str] = Field(default_factory=list)
+
+
+class Joint(BaseModel):
+    """Expansion / construction joint line carried through as drawn."""
+
+    id: str
+    floor_id: str
+    start: Point2
+    end: Point2
+    source_layer: str
+    source_handle: str
+
+
+class RampHint(BaseModel):
+    """A ramp note in plan: 'RAMP 1:8 UP' with the arrow line next to it when found."""
+
+    id: str
+    floor_id: str
+    text: str
+    position: Point2
+    slope_ratio: str | None = None          # "1:8"
+    direction: str | None = None            # UP | DN
+    arrow_start: Point2 | None = None
+    arrow_end: Point2 | None = None
+    handle: str
+
+
+class PccHint(BaseModel):
+    """PCC (lean concrete) note: thickness and projection beyond the footing."""
+
+    text: str
+    thickness_mm: float | None = None
+    projection_mm: float | None = None
+    floor_id: str | None = None
+    handle: str
+
+
+class Stair(BaseModel):
+    """Stair geometry carried through as drawn (outline polygons and raw lines)."""
+
+    id: str
+    floor_id: str
+    label: str | None = None
+    labels: list[str] = Field(default_factory=list)   # every text near the stair (DN, UP, ST1 ...)
+    center: Point2
+    outline: list[Point2] = Field(default_factory=list)
+    lines: list[list[Point2]] = Field(default_factory=list)
+    area_mm2: float = 0.0
+    source_layer: str
+    source_handles: list[str] = Field(default_factory=list)
+
+
 class Wall(BaseModel):
     id: str
     floor_id: str
@@ -247,6 +344,7 @@ class Summary(BaseModel):
     footings: int = 0
     openings: int = 0
     walls: int = 0
+    stairs: int = 0
     schedules: int = 0
     tags_unassigned: int = 0
     errors: int = 0
@@ -257,7 +355,7 @@ class Summary(BaseModel):
 class Project(BaseModel):
     schema_version: str = SCHEMA_VERSION
     generator: str = f"c2b {__version__}"
-    generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    generated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
     units: Literal["mm"] = "mm"
     drawing: DrawingInfo
     profile_name: str | None = None
@@ -270,6 +368,14 @@ class Project(BaseModel):
     footings: list[Footing] = Field(default_factory=list)
     openings: list[Opening] = Field(default_factory=list)
     walls: list[Wall] = Field(default_factory=list)
+    stairs: list[Stair] = Field(default_factory=list)
+    slab_edges: list[SlabEdge] = Field(default_factory=list)
+    ramp_hints: list[RampHint] = Field(default_factory=list)
+    pcc_hints: list[PccHint] = Field(default_factory=list)
+    legend: list[LegendItem] = Field(default_factory=list)
+    regions: list[Region] = Field(default_factory=list)
+    joints: list[Joint] = Field(default_factory=list)
+    level_hints: list[LevelHint] = Field(default_factory=list)
     schedules: list[Schedule] = Field(default_factory=list)
     tags_unassigned: list[UnassignedTag] = Field(default_factory=list)
     diagnostics: list[Diagnostic] = Field(default_factory=list)
@@ -279,7 +385,7 @@ class Project(BaseModel):
         self.summary = Summary(
             floors=len(self.floors), grids=len(self.grids), columns=len(self.columns), beams=len(self.beams),
             slabs=len(self.slabs), footings=len(self.footings), openings=len(self.openings), walls=len(self.walls),
-            schedules=len(self.schedules), tags_unassigned=len(self.tags_unassigned),
+            stairs=len(self.stairs), schedules=len(self.schedules), tags_unassigned=len(self.tags_unassigned),
             errors=sum(1 for d in self.diagnostics if d.severity == "ERROR"),
             warnings=sum(1 for d in self.diagnostics if d.severity == "WARNING"),
             infos=sum(1 for d in self.diagnostics if d.severity == "INFO"),

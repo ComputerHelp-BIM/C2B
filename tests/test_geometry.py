@@ -1,4 +1,3 @@
-import math
 
 from shapely.geometry import LineString, Polygon
 

@@ -20,6 +20,178 @@ def version() -> None:
 
 
 @app.command()
+def gui(drawing: Optional[Path] = typer.Argument(None, exists=True, help="Optional drawing to preload")) -> None:
+    """Open the C2B window: pick a drawing, press Run, read the issues."""
+    from .gui import run_gui
+
+    raise typer.Exit(run_gui(drawing))
+
+
+@app.command()
+def demo(out: Path = typer.Option(Path("demo"), "--out", "-o", help="Folder for the demo drawing")) -> None:
+    """Write a small demo client drawing so the whole pipeline can be tried without client data."""
+    from .demo import build_demo_drawing
+
+    out.mkdir(parents=True, exist_ok=True)
+    path = build_demo_drawing(out / "demo.dxf")
+    typer.echo(f"Demo client drawing: {path}")
+    typer.echo(f"Try it with:  c2b run {path}")
+
+
+@app.command()
+def doctor(selftest: bool = typer.Option(True, "--selftest/--no-selftest", help="Run the whole pipeline on the demo drawing")) -> None:
+    """Check the installation: Python, dependencies, DWG converter, and a full pipeline self-test."""
+    import platform
+    import tempfile
+
+    from . import SCHEMA_VERSION
+    from .dwg import converter_status
+
+    ok = True
+    typer.echo(f"c2b            {__version__} (extraction schema {SCHEMA_VERSION})")
+    typer.echo(f"python         {platform.python_version()} on {platform.system()} {platform.release()}")
+    for mod in ("ezdxf", "shapely", "pydantic", "openpyxl", "typer", "yaml"):
+        try:
+            m = __import__(mod)
+            typer.echo(f"{mod:14s} {getattr(m, '__version__', 'ok')}")
+        except ImportError:
+            typer.secho(f"{mod:14s} MISSING - run: pip install -e .", fg=typer.colors.RED)
+            ok = False
+    try:
+        import matplotlib
+        typer.echo(f"{'matplotlib':14s} {matplotlib.__version__} (optional, for c2b render)")
+    except ImportError:
+        typer.echo(f"{'matplotlib':14s} not installed (optional, only needed for c2b render)")
+    conv = converter_status()
+    if conv["oda_file_converter"]:
+        typer.echo(f"{'DWG':14s} ODA File Converter at {conv['oda_file_converter']}")
+    elif conv["accoreconsole"]:
+        typer.echo(f"{'DWG':14s} AutoCAD accoreconsole at {conv['accoreconsole']}")
+    else:
+        typer.echo(f"{'DWG':14s} no converter found - save DXF from AutoCAD, or install ODA File Converter")
+
+    if selftest:
+        typer.echo("\nSelf-test: demo drawing -> extract -> normalize -> verify")
+        from .demo import build_demo_drawing
+        from .export.template_dxf import write_template_dxf
+        from .normalize.pipeline import normalize as run_normalize
+        from .normalize.spec import TemplateSpec
+        from .pipeline import extract as run_extract
+        from .roundtrip.diff import compare
+        from .roundtrip.reader import read_template
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            dxf = build_demo_drawing(tmp / "demo.dxf")
+            result = run_extract(dxf)
+            spec = TemplateSpec()
+            np_ = run_normalize(result.project, spec, None, source_file=dxf.name)
+            tpl = write_template_dxf(np_, tmp / "demo.template.dxf", spec)
+            res = compare(np_, read_template(tpl, spec))
+            for label, value, good in (
+                ("extract", f"{result.project.summary.columns} columns, {result.project.summary.beams} beams", result.project.summary.errors == 0),
+                ("normalize", f"{np_.summary.columns} columns, {np_.summary.beams} spans, {np_.summary.panels} panels", np_.summary.errors == 0),
+                ("template dxf", f"{tpl.stat().st_size // 1024} KB", tpl.exists()),
+                ("round trip", "identical" if res.ok() else f"{res.errors} errors, {res.warnings} warnings", res.ok()),
+            ):
+                typer.secho(f"  {label:14s} {value}", fg=typer.colors.GREEN if good else typer.colors.RED)
+                ok = ok and good
+    typer.secho("\nREADY" if ok else "\nPROBLEMS FOUND", fg=typer.colors.GREEN if ok else typer.colors.RED)
+    raise typer.Exit(0 if ok else 1)
+
+
+@app.command()
+def run(
+    drawing: Path = typer.Argument(..., exists=True, readable=True, help="Client DXF (or DWG when a converter is installed)"),
+    out: Path = typer.Option(None, "--out", "-o", help="Output folder (default: <drawing folder>/out/<stem>)"),
+    seed: Optional[Path] = typer.Option(None, "--seed", exists=True, help="Seed template DXF (your CH template)"),
+    spec: Optional[Path] = typer.Option(None, "--spec", "-s", exists=True, help="Template spec YAML"),
+    profile: Optional[Path] = typer.Option(None, "--profile", "-p", exists=True, help="Layer profile YAML for this client"),
+    levels: Optional[Path] = typer.Option(None, "--levels", "-l", exists=True, help="Filled level schedule (default: the one in the output folder)"),
+    units: Optional[str] = typer.Option(None, "--units", "-u", help="Override drawing units: mm, cm, m, in, ft"),
+) -> None:
+    """The whole pipeline in one command: extract, normalise to the template, and verify the round trip."""
+    from .dwg import ensure_dxf
+    from .export.excel import write_workbook
+    from .export.jsonout import write_json
+    from .export.levels import read_level_settings, read_levels, write_levels_template
+    from .export.normalized_excel import write_normalized_workbook
+    from .export.report import write_report
+    from .export.review_dxf import write_review_dxf
+    from .export.template_dxf import write_template_dxf
+    from .export.verify import write_verify_report, write_verify_workbook
+    from .normalize.pipeline import normalize as run_normalize
+    from .normalize.spec import TemplateSpec
+    from .pipeline import extract as run_extract
+    from .profile import Profile
+    from .roundtrip.diff import compare
+    from .roundtrip.reader import read_template
+
+    stem = drawing.stem
+    out = out or drawing.parent / "out" / stem
+    out.mkdir(parents=True, exist_ok=True)
+    try:
+        dxf, converted = ensure_dxf(drawing, out)
+    except RuntimeError as ex:
+        typer.secho(str(ex), fg=typer.colors.RED)
+        raise typer.Exit(2) from None
+    if converted:
+        typer.echo(f"Converted {drawing.name} to {dxf.name}")
+
+    typer.secho(f"\n1/3  Extracting {dxf.name}", bold=True)
+    result = run_extract(dxf, Profile.load(profile) if profile else None, units)
+    project = result.project
+    write_json(project, out / f"{stem}.c2b.json")
+    write_workbook(project, out / f"{stem}.review.xlsx")
+    write_report(project, out / f"{stem}.report.md")
+    write_review_dxf(project, out / f"{stem}.review.dxf")
+    result.profile.save(out / f"{stem}.profile.yaml")
+    s1 = project.summary
+    typer.echo(f"     floors {s1.floors} | columns {s1.columns} | beams {s1.beams} | slabs {s1.slabs} | footings {s1.footings} | {s1.errors} errors, {s1.warnings} warnings")
+
+    levels_path = levels or (out / f"{stem}.levels.xlsx")
+    level_rows = level_ref = None
+    if levels_path.exists():
+        level_rows = read_levels(levels_path)
+        level_ref = read_level_settings(levels_path).get("level_reference")
+        filled = [r for r in level_rows if r.elevation is not None]
+        typer.echo(f"     levels: {len(filled)} of {len(level_rows)} rows filled in {levels_path.name}")
+        if not filled:
+            level_rows = None
+    write_levels_template(project, out / f"{stem}.levels.template.xlsx")
+    if not levels_path.exists():
+        write_levels_template(project, levels_path)
+        typer.secho(f"     fill {levels_path.name} with the floor elevations and run again for the elevation frame", fg=typer.colors.YELLOW)
+
+    typer.secho("2/3  Normalising to the template", bold=True)
+    tspec = TemplateSpec.load(spec) if spec else TemplateSpec()
+    np_ = run_normalize(project, tspec, level_rows, source_file=dxf.name, level_reference=level_ref)
+    (out / f"{stem}.normalized.json").write_text(np_.model_dump_json(indent=2), encoding="utf-8")
+    write_normalized_workbook(np_, out / f"{stem}.schedules.xlsx")
+    tspec.save(out / f"{stem}.template-spec.yaml")
+    template = write_template_dxf(np_, out / f"{stem}.template.dxf", tspec, seed)
+    s2 = np_.summary
+    typer.echo(f"     stacks {s2.stacks} | columns {s2.columns} | spans {s2.beams} | panels {s2.panels} | footings {s2.footings} | levels {s2.levels} | {s2.errors} errors, {s2.warnings} warnings")
+
+    typer.secho("3/3  Verifying the round trip", bold=True)
+    drawing_model = read_template(template, tspec)
+    (out / f"{stem}.reread.json").write_text(drawing_model.model_dump_json(indent=2), encoding="utf-8")
+    write_normalized_workbook(drawing_model, out / f"{stem}.reread.xlsx")
+    res = compare(np_, drawing_model)
+    write_verify_workbook(res, np_, drawing_model, out / f"{stem}.verify.xlsx")
+    write_verify_report(res, np_, drawing_model, out / f"{stem}.verify.md")
+    color = typer.colors.GREEN if res.ok() else (typer.colors.RED if res.errors else typer.colors.YELLOW)
+    typer.secho(f"     {'identical' if res.ok() else 'differences'}: {res.errors} errors, {res.warnings} warnings", fg=color)
+
+    typer.secho("\nDone. Open these next:", bold=True)
+    typer.echo(f"  {out / f'{stem}.template.dxf'}       the drawing in your template")
+    typer.echo(f"  {out / f'{stem}.review.xlsx'}        what was read from the client drawing, with diagnostics")
+    typer.echo(f"  {out / f'{stem}.schedules.xlsx'}     column / beam / slab / footing schedules")
+    typer.echo(f"  {out / f'{stem}.verify.md'}          round-trip check")
+    typer.echo(f"  {out / f'{stem}.review.dxf'}         overlay on the client drawing to see what was recognised")
+
+
+@app.command()
 def inspect(dxf: Path = typer.Argument(..., exists=True, readable=True, help="DXF file"),
             units: Optional[str] = typer.Option(None, "--units", "-u", help="Override drawing units: mm, cm, m, in, ft")) -> None:
     """Summarise a DXF: units, layers, entity counts, floors found."""
@@ -100,6 +272,135 @@ def extract(
         c = f.counts
         typer.echo(f"  {f.id} {f.name[:40]:40s} cols {c.get('columns', 0):4d} beams {c.get('beams', 0):4d} slabs {c.get('slabs', 0):4d} ftg {c.get('footings', 0):4d} grids {c.get('grids', 0):3d}")
     typer.echo(f"Outputs in {out}")
+
+
+@app.command()
+def normalize(
+    json_file: Path = typer.Argument(..., exists=True, help="<stem>.c2b.json produced by extract"),
+    out: Path = typer.Option(None, "--out", "-o", help="Output folder (default: next to the JSON)"),
+    spec: Optional[Path] = typer.Option(None, "--spec", "-s", exists=True, help="Template spec YAML (default: built-in CH template spec)"),
+    seed: Optional[Path] = typer.Option(None, "--seed", exists=True, help="Seed template DXF whose layers/styles/legend are reused"),
+    levels: Optional[Path] = typer.Option(None, "--levels", "-l", exists=True, help="Level schedule xlsx (elevations)"),
+) -> None:
+    """Utility 3: normalise to the template (stacks, spans, panels, marks) and write the template DXF."""
+    from .export.jsonout import read_json
+    from .export.levels import read_level_settings, read_levels
+    from .export.normalized_excel import write_normalized_workbook
+    from .export.template_dxf import write_template_dxf
+    from .normalize.pipeline import normalize as run_normalize
+    from .normalize.spec import TemplateSpec
+
+    project = read_json(json_file)
+    tspec = TemplateSpec.load(spec) if spec else TemplateSpec()
+    level_rows = read_levels(levels) if levels else None
+    level_ref = read_level_settings(levels).get("level_reference") if levels else None
+    out = out or json_file.parent
+    out.mkdir(parents=True, exist_ok=True)
+    stem = json_file.name.replace(".c2b.json", "")
+    typer.echo(f"Normalising {json_file.name} ...")
+    np_ = run_normalize(project, tspec, level_rows, source_file=project.drawing.file, level_reference=level_ref)
+    from .diagnostics import DiagnosticsCollector
+    diag = DiagnosticsCollector()
+    dxf_path = write_template_dxf(np_, out / f"{stem}.template.dxf", tspec, seed, diag)
+    np_.diagnostics.extend(diag.items)
+    np_.recompute_summary()
+    (out / f"{stem}.normalized.json").write_text(np_.model_dump_json(indent=2), encoding="utf-8")
+    write_normalized_workbook(np_, out / f"{stem}.schedules.xlsx")
+    tspec.save(out / f"{stem}.template-spec.yaml")
+    s = np_.summary
+    typer.echo(f"Floors {s.floors} | levels {s.levels} | stacks {s.stacks} | columns {s.columns} | beam spans {s.beams} | panels {s.panels} | footings {s.footings} | grids {s.grids} | openings {s.openings}")
+    color = typer.colors.RED if s.errors else typer.colors.YELLOW if s.warnings else typer.colors.GREEN
+    typer.secho(f"Diagnostics: {s.errors} errors, {s.warnings} warnings, {s.infos} infos", fg=color)
+    for f in np_.floors:
+        c = f.counts
+        typer.echo(f"  {f.id} {f.name[:36]:36s} cols {c.get('columns', 0):4d} spans {c.get('beams', 0):4d} panels {c.get('panels', 0):4d} ftg {c.get('footings', 0):3d} grids {c.get('grids', 0):3d}")
+    typer.echo(f"Template DXF: {dxf_path}")
+
+
+@app.command()
+def verify(
+    template: Path = typer.Argument(..., exists=True, readable=True, help="<stem>.template.dxf written by normalize"),
+    against: Optional[Path] = typer.Option(None, "--against", "-a", exists=True, help="<stem>.normalized.json to compare with (default: next to the DXF)"),
+    spec: Optional[Path] = typer.Option(None, "--spec", "-s", exists=True, help="Template spec YAML (default: <stem>.template-spec.yaml next to the DXF, else built-in)"),
+    out: Path = typer.Option(None, "--out", "-o", help="Output folder (default: next to the DXF)"),
+) -> None:
+    """Utility 4: read the template DXF back to JSON + Excel and verify it against the normalised model."""
+    from .diagnostics import DiagnosticsCollector
+    from .export.normalized_excel import write_normalized_workbook
+    from .export.verify import write_verify_report, write_verify_workbook
+    from .normalize.model import NormalizedProject
+    from .normalize.spec import TemplateSpec
+    from .roundtrip.diff import compare
+    from .roundtrip.reader import read_template
+
+    stem = template.name.replace(".template.dxf", "").replace(".dxf", "")
+    out = out or template.parent
+    out.mkdir(parents=True, exist_ok=True)
+    spec_path = spec or (template.parent / f"{stem}.template-spec.yaml")
+    tspec = TemplateSpec.load(spec_path) if spec_path.exists() else TemplateSpec()
+    typer.echo(f"Reading {template.name} with spec '{tspec.name}' ...")
+    diag = DiagnosticsCollector()
+    drawing = read_template(template, tspec, diag)
+    (out / f"{stem}.reread.json").write_text(drawing.model_dump_json(indent=2), encoding="utf-8")
+    write_normalized_workbook(drawing, out / f"{stem}.reread.xlsx")
+    s = drawing.summary
+    typer.echo(f"Floors {s.floors} | levels {s.levels} | columns {s.columns} | beam spans {s.beams} | panels {s.panels} | footings {s.footings} | grids {s.grids} | openings {s.openings}")
+
+    model_path = against or (template.parent / f"{stem}.normalized.json")
+    if not model_path.exists():
+        typer.secho(f"No normalised model at {model_path}; wrote the re-read JSON and workbook only.", fg=typer.colors.YELLOW)
+        raise typer.Exit(0)
+    model = NormalizedProject.model_validate_json(model_path.read_text(encoding="utf-8"))
+    res = compare(model, drawing)
+    write_verify_workbook(res, model, drawing, out / f"{stem}.verify.xlsx")
+    write_verify_report(res, model, drawing, out / f"{stem}.verify.md")
+    color = typer.colors.GREEN if res.ok() else (typer.colors.RED if res.errors else typer.colors.YELLOW)
+    typer.secho(f"{'PASS' if res.ok() else 'DIFFERENCES FOUND'}: {res.errors} errors, {res.warnings} warnings, {res.infos} infos", fg=color)
+    from collections import Counter as _C
+    for code, n in _C(d.code for d in res.findings).most_common(8):
+        typer.echo(f"  {code:20s} {n}")
+    typer.echo(f"Outputs in {out}")
+    raise typer.Exit(0 if res.ok() else 1)
+
+
+@app.command("revit-plan")
+def revit_plan(
+    normalized: Path = typer.Argument(..., exists=True, help="<stem>.normalized.json from normalize (or .reread.json after drafter edits)"),
+    mapping: Optional[Path] = typer.Option(None, "--mapping", "-m", help="Revit family mapping YAML (default: next to the file, else built-in)"),
+    out: Path = typer.Option(None, "--out", "-o", help="Output folder (default: next to the JSON)"),
+    write_mapping: bool = typer.Option(False, "--write-mapping", help="Write a starting mapping file and stop"),
+) -> None:
+    """Utility 5, step 1: turn the model into a Revit build plan and a workbook of what will be created."""
+    from .export.revit_excel import write_revit_workbook
+    from .normalize.model import NormalizedProject
+    from .revit.mapping import RevitMapping
+    from .revit.plan import build_plan
+
+    stem = normalized.name.replace(".normalized.json", "").replace(".reread.json", "").replace(".json", "")
+    out = out or normalized.parent
+    out.mkdir(parents=True, exist_ok=True)
+    mapping_path = mapping or (out / f"{stem}.revit-mapping.yaml")
+    if write_mapping:
+        RevitMapping().save(mapping_path)
+        typer.echo(f"Mapping written to {mapping_path}. Edit the family and type names to match your Revit template.")
+        raise typer.Exit(0)
+    rm = RevitMapping.load(mapping_path) if mapping_path.exists() else RevitMapping()
+    if not mapping_path.exists():
+        rm.save(mapping_path)
+        typer.secho(f"No mapping found, so a starting one was written to {mapping_path.name}. Check the family names in it.", fg=typer.colors.YELLOW)
+    model = NormalizedProject.model_validate_json(normalized.read_text(encoding="utf-8"))
+    plan = build_plan(model, rm)
+    (out / f"{stem}.revit.json").write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+    write_revit_workbook(plan, out / f"{stem}.revit.xlsx")
+    errors = [d for d in plan.diagnostics if d.severity == "ERROR"]
+    for kind, n in sorted(plan.counts.items()):
+        typer.echo(f"  {kind:12s} {n}")
+    if errors:
+        for d in errors[:5]:
+            typer.secho(f"  {d.code}: {d.message}", fg=typer.colors.RED)
+    typer.secho(f"Build plan: {out / f'{stem}.revit.json'}", fg=typer.colors.RED if errors else typer.colors.GREEN)
+    typer.echo(f"Check {out / f'{stem}.revit.xlsx'} (Types to create) before running it in Revit.")
+    raise typer.Exit(1 if errors else 0)
 
 
 @app.command()

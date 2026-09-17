@@ -3,16 +3,23 @@
 A tag belongs to the element whose outline contains its text centre. Otherwise
 candidates within a radius (element size and text height dependent) are ranked
 by distance, with a penalty for text not running parallel to a beam, and
-assigned greedily while preferring elements that have no tag yet. Two clean-up
-passes follow: tags are rebalanced from over-tagged elements to untagged
-neighbours, and still-orphaned tags get a relaxed-radius second chance limited
-to untagged (and, for beams, parallel) elements. Element/tag pairs are logged
-so the reviewer can see why a size was chosen.
+assigned greedily while preferring elements that have no tag yet.
+
+Greedy order is not the same as sharing the tags out well, so an element the
+greedy starved is then fed by re-homing a tag a neighbour can spare -- the
+augmenting step of bipartite matching, run only for the starved so that every
+assignment the greedy got right is left alone. A tag written inside an element
+is never taken from it.
+
+Two clean-up passes follow: tags are rebalanced from over-tagged elements to
+untagged neighbours, and still-orphaned tags get a relaxed-radius second chance
+limited to untagged (and, for beams, parallel) elements. Element/tag pairs are
+logged so the reviewer can see why a size was chosen.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from shapely.geometry import Point, Polygon
 from shapely.strtree import STRtree
@@ -96,7 +103,7 @@ def make_tag_cands(texts: list[Prim], group_factor: float = 3.0) -> list[TagCand
     pairs.sort()
     used: set[int] = set()
     grouped: dict[int, int] = {}
-    for d, mi, si in pairs:
+    for _d, mi, si in pairs:
         if mi in used or si in used:
             continue
         used.add(mi)
@@ -119,6 +126,10 @@ def make_tag_cands(texts: list[Prim], group_factor: float = 3.0) -> list[TagCand
     return result
 
 
+#: How far a re-homing chain may run before it is abandoned; real chains are one or two long.
+_AUGMENT_MAX_DEPTH = 6
+
+
 def associate_tags(
     polys: list[Polygon],
     tags: list[TagCand],
@@ -128,8 +139,16 @@ def associate_tags(
     parallel_penalty: float = 2.5,
     relaxed_factor: float = 2.5,
     max_search_mm: float = 6000.0,
+    size_match_fn: Callable[[int, TagCand], bool | None] | None = None,
+    size_mismatch_penalty: float = 3.0,
 ) -> tuple[dict[int, list[int]], list[int]]:
-    """Return (element_index -> [tag indices], unassigned tag indices)."""
+    """Return (element_index -> [tag indices], unassigned tag indices).
+
+    ``size_match_fn`` answers whether a tag's stated size matches an element as drawn: True it
+    does, False it states one that does not, None it states none. Where two members stand close
+    enough to argue over a tag, the size the client wrote on it settles which of them it names --
+    a far better witness than which outline the text happens to sit a few millimetres nearer.
+    """
     assigned: dict[int, list[int]] = {}
     tag_owner: dict[int, int] = {}
     if not polys:
@@ -161,21 +180,59 @@ def associate_tags(
             if d > radius_fn(i, tag):
                 continue
             par = is_parallel(i, tag)
-            pairs.append((d * (1.0 if par else parallel_penalty), ti, i, par))
+            penalty = 1.0 if par else parallel_penalty
+            if size_match_fn is not None and size_match_fn(i, tag) is False:
+                penalty *= size_mismatch_penalty
+            pairs.append((d * penalty, ti, i, par))
     pairs.sort(key=lambda p: (p[0], p[1], p[2]))
 
     # pass 2: greedy, preferring elements without a tag of the same kind
-    for score, ti, i, _par in pairs:
+    for _score, ti, i, _par in pairs:
         if ti in tag_owner or has_kind(i, kinds[ti]):
             continue
         assigned.setdefault(i, []).append(ti)
         tag_owner[ti] = i
     # pass 3: remaining tags go to their best candidate anyway
-    for score, ti, i, _par in pairs:
+    for _score, ti, i, _par in pairs:
         if ti in tag_owner:
             continue
         assigned.setdefault(i, []).append(ti)
         tag_owner[ti] = i
+
+    # pass 3b: feed an element the greedy starved, by re-homing a tag its neighbour can spare.
+    # Taking the pairs in order of distance is not the same as sharing them out well: where two
+    # legs of a wall stand close, the tag that is one leg's only option goes to the neighbour
+    # that had another, and the first leg ends with nothing. That accounted for 71 of Test17's
+    # 108 unmarked columns. This is the augmenting step of bipartite matching, run only for the
+    # starved, so every assignment the greedy got right is left alone.
+    cands_by_elem: dict[tuple[int, str], list[tuple[float, int]]] = {}
+    for score, ti, i, _par in pairs:
+        cands_by_elem.setdefault((i, kinds[ti]), []).append((score, ti))
+    for key in cands_by_elem:
+        cands_by_elem[key].sort()
+
+    def augment(i: int, kind: str, seen: set[int], depth: int = 0) -> bool:
+        if depth > _AUGMENT_MAX_DEPTH:
+            return False
+        for _score, ti in cands_by_elem.get((i, kind), []):
+            if ti in seen:
+                continue
+            seen.add(ti)
+            j = tag_owner.get(ti)
+            if j is not None and polys[j].contains(Point(tags[ti].center)):
+                continue          # a tag written inside its element belongs to it; never stolen
+            # j can let this one go if it keeps another of the kind, or can find a replacement
+            if j is None or n_kind(j, kind) > 1 or (j != i and augment(j, kind, seen, depth + 1)):
+                if j is not None:
+                    assigned[j].remove(ti)
+                assigned.setdefault(i, []).append(ti)
+                tag_owner[ti] = i
+                return True
+        return False
+
+    for (i, kind) in sorted(cands_by_elem):
+        if not has_kind(i, kind):
+            augment(i, kind, set())
 
     # pass 4: rebalance duplicates of one kind onto neighbours lacking that kind
     by_tag_elems: dict[int, list[tuple[float, int]]] = {}
@@ -186,7 +243,7 @@ def associate_tags(
             kind = kinds[ti]
             if n_kind(i, kind) < 2 or polys[i].contains(Point(tags[ti].center)):
                 continue
-            for score, j in sorted(by_tag_elems.get(ti, [])):
+            for _score, j in sorted(by_tag_elems.get(ti, [])):
                 if j != i and not has_kind(j, kind):
                     assigned[i].remove(ti)
                     assigned.setdefault(j, []).append(ti)

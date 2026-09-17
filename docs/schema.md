@@ -1,10 +1,18 @@
-# Canonical schema v0.1.0
+# Canonical schema v0.7.0
 
-Written by `c2b extract` as `<stem>.c2b.json`. All lengths are millimetres, all angles
-degrees, all element coordinates are **floor-local** (the floor `Origin` point is 0,0).
-Every element keeps `source_handles` (DXF entity handles) so it can be traced back.
+Written by `c2b extract` as `<stem>.c2b.json`. All lengths are millimetres, all
+angles
+degrees, all element coordinates are **floor-local** (the floor `Origin` point
+is 0,0).
+Every element keeps `source_handles` (DXF entity handles), `source_layer` and,
+where more
+than one kind of geometry can produce it, `source_kind` (`polyline`, `hatch`,
+`circle`,
+`lines`, `block` for a column; `paired_lines`, `polyline`, `block` for a beam;
+`tag` or
+`polyline` for a slab), so every value can be traced back to what drew it.
 
-```
+```text
 Project
 ├─ schema_version, generator, generated_at, units ("mm"), profile_name
 ├─ drawing        file, dxf_version, insunits, unit_name, unit_scale_to_mm, unit_source, unit_confidence, layouts, extents
@@ -15,7 +23,7 @@ Project
 ├─ columns[]      id, floor_id, mark, shape (rect|circle|polygon), center, width_mm, depth_mm, rotation_deg, diameter_mm,
 │                 outline[], area_mm2, drawn_width_mm, drawn_depth_mm, size_source, wall_like, modifier, grid_ref, tags[]
 ├─ beams[]        id, floor_id, mark, start, end, length_mm, width_mm, depth_mm, depth_alt_mm, drawn_width_mm, angle_deg,
-│                 inverted, sunk_mm, outline[], size_source, depth_source, tags[], n_edge_parts
+│                 inverted, sunk_mm, outline[], size_source, depth_source, depth_rule, tags[], n_edge_parts
 ├─ slabs[]        id, floor_id, mark, thickness_mm, thickness_source, position, outline[] (may be empty), sunk_mm, modifier, tags[]
 ├─ footings[]     id, floor_id, mark, shape, center, width_mm, depth_mm, rotation_deg, thickness_mm, fold_mm, outline[], ...
 ├─ openings[]     id, floor_id, label, center, outline[], area_mm2
@@ -28,21 +36,38 @@ Project
 
 ## Field conventions
 
-- `size_source` / `depth_source` / `thickness_source`: `tag`, `schedule`, `layer`, `block`,
-  `geometry`, `default`, `unknown`. Anything other than `tag`/`schedule` deserves a look.
-- `width_mm` × `depth_mm` for rectangles follow the drawn orientation: `width_mm` is the
-  extent along the element's local x axis, `rotation_deg` (−45, 45] rotates that axis.
-  `drawn_*` are what the geometry measures; `width_mm`/`depth_mm` are what the tag or
+- `size_source` / `depth_source` / `thickness_source`: `tag`, `schedule`,
+  `layer`, `block`,
+  `geometry`, `default`, `unknown`. Anything other than `tag`/`schedule`
+  deserves a look.
+- `width_mm` × `depth_mm` for rectangles follow the drawn orientation:
+  `width_mm` is the
+  extent along the element's local x axis, `rotation_deg` (−45, 45] rotates that
+  axis.
+  `drawn_*` are what the geometry measures; `width_mm`/`depth_mm` are what the
+  tag or
   schedule says (drawn values when nothing else exists).
-- `wall_like` on a column: long/short ratio ≥ 4 and long side ≥ 1 m. Such elements are
-  kept as columns (that is how the drawings tag them) and flagged for the Revit step,
+- `wall_like` on a column: long/short ratio ≥ 4 and long side ≥ 1 m. Such
+  elements are
+  kept as columns (that is how the drawings tag them) and flagged for the Revit
+  step,
   where they will become structural walls.
 - `modifier` on columns: `start`, `stop`, `stub`, `podium` (from layer names).
   On slabs: `drop`, `fold`, `projection`, `sunk`.
-- `grid_ref`: nearest grid intersection ("3/B") within 600 mm, when both axes have grids.
-- Beams: `start`/`end` are the centreline over the paired length; `outline` is the plan
-  rectangle; `n_edge_parts` says how many line pieces were merged (high numbers = beam
+- `grid_ref`: nearest grid intersection ("3/B") within 600 mm, when both axes
+  have grids.
+- Beams: `start`/`end` are the centreline over the paired length; `outline` is
+  the plan
+  rectangle; `n_edge_parts` says how many line pieces were merged (high numbers
+  = beam
   crossed many others = check it).
+- `depth_rule` on a beam: the schedule stated a rule instead of a number, so
+  `depth_mm` is
+  empty at this step. `slab_thickness` (`300XSLB THK.`) is a concealed beam as
+  deep as the
+  slab around it and is settled by the normaliser once the panels exist;
+  `layout`
+  (`200XAS/LAYOUT`) means the plan says, usually through a dimension override.
 
 ## Versioning rules
 

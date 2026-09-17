@@ -14,16 +14,44 @@ from ..schema import Project
 HEADERS = ["floor_id", "floor_name", "order", "elevation_mm", "floor_to_floor_mm", "revit_level_name", "notes"]
 
 
+def _match_hint(floor_name: str, hints) -> tuple[float, str] | None:
+    """Pick the level hint whose name shares the most words with the floor name."""
+    words = {w for w in floor_name.upper().replace(".", " ").split() if w not in ("LEVEL", "LVL", "FLOOR", "AT", "LAYOUT", "PLAN", "-")}
+    best, score = None, 0
+    for h in hints:
+        hw = {w for w in h.name.upper().replace(".", " ").split() if w not in ("LEVEL", "LVL", "FLOOR")}
+        common = len(words & hw)
+        if common > score:
+            best, score = h, common
+    return (best.elevation_mm, best.text) if best and score else None
+
+
 def write_levels_template(project: Project, path: str | Path) -> Path:
     wb = Workbook()
     ws = wb.active
     ws.title = "Levels"
     ws.append(HEADERS)
     for f in project.floors:
-        ws.append([f.id, f.name, f.index, f.elevation_mm, f.floor_to_floor_mm, None, "fill elevation_mm (top of structural slab) in mm"])
+        hint = _match_hint(f.name, project.level_hints) if f.elevation_mm is None else None
+        elev = f.elevation_mm if f.elevation_mm is not None else (hint[0] if hint else None)
+        note = "fill elevation_mm (top of structural slab) in mm" if elev is None else (f"from client text '{hint[1]}', please confirm" if hint else "")
+        ws.append([f.id, f.name, f.index, elev, f.floor_to_floor_mm, None, note])
     ws.freeze_panes = "A2"
     for col, width in zip("ABCDEFG", (10, 36, 8, 16, 18, 24, 50)):
         ws.column_dimensions[col].width = width
+    st = wb.create_sheet("Settings")
+    st.append(["key", "value", "notes"])
+    st.append(["level_reference", "SSL", "SSL = top of structural slab (default), FFL = finished floor; this sheet wins over the template spec"])
+    st.column_dimensions["A"].width = 18
+    st.column_dimensions["B"].width = 12
+    st.column_dimensions["C"].width = 80
+    if project.level_hints:
+        hs = wb.create_sheet("Level hints")
+        hs.append(["name", "elevation_mm", "client text", "handle", "layer", "floor"])
+        for h in sorted(project.level_hints, key=lambda h: h.elevation_mm):
+            hs.append([h.name, h.elevation_mm, h.text, h.handle, h.layer, h.floor_id])
+        for col, width in zip("ABCDEF", (30, 14, 60, 10, 24, 8)):
+            hs.column_dimensions[col].width = width
     wb.save(str(path))
     return Path(path)
 
@@ -60,3 +88,45 @@ def apply_levels(project: Project, path: str | Path) -> list[str]:
                 problems.append(f"{fid}: order '{row[idx['order']]}' is not an integer")
     project.floors.sort(key=lambda f: f.index)
     return problems
+
+
+def read_levels(path: str | Path) -> list:
+    """Read the level schedule as rows (a plan floor may own several levels, e.g. a typical floor)."""
+    from ..normalize.pipeline import LevelRow
+
+    wb = load_workbook(str(path), data_only=True)
+    ws = wb["Levels"] if "Levels" in wb.sheetnames else wb.active
+    header = [str(c.value).strip() if c.value is not None else "" for c in ws[1]]
+    idx = {h: i for i, h in enumerate(header)}
+    rows = []
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if not row or all(v is None for v in row):
+            continue
+
+        def val(key, row=row):
+            i = idx.get(key)
+            return row[i] if i is not None and i < len(row) else None
+
+        def num(key):
+            v = val(key)
+            try:
+                return float(v) if v is not None and str(v).strip() != "" else None
+            except (TypeError, ValueError):
+                return None
+
+        fid = str(val("floor_id")).strip() if val("floor_id") not in (None, "") else None
+        rows.append(LevelRow(fid, str(val("floor_name") or "").strip() or None, int(num("order") or 0) if num("order") is not None else None,
+                             num("elevation_mm"), num("floor_to_floor_mm"), str(val("revit_level_name") or "").strip() or None))
+    return rows
+
+
+def read_level_settings(path: str | Path) -> dict[str, str]:
+    """Key/value pairs from the workbook's Settings sheet (e.g. level_reference)."""
+    wb = load_workbook(str(path), data_only=True)
+    if "Settings" not in wb.sheetnames:
+        return {}
+    out: dict[str, str] = {}
+    for row in wb["Settings"].iter_rows(min_row=2, values_only=True):
+        if row and row[0] is not None and len(row) > 1 and row[1] is not None:
+            out[str(row[0]).strip()] = str(row[1]).strip()
+    return out

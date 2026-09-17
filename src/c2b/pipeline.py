@@ -1,8 +1,11 @@
 """End-to-end extraction: DXF file in, :class:`Project` out."""
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from shapely.geometry import Point
 
 from . import __version__
 from .diagnostics import DiagnosticsCollector
@@ -12,13 +15,29 @@ from .extract.columns import extract_columns
 from .extract.context import FloorContext
 from .extract.footings import extract_footings
 from .extract.grids import extract_grids
-from .extract.openings import extract_openings, extract_walls
+from .extract.legend import legend_zones, parse_legend, regions_from_hatches
+from .extract.openings import extract_openings, extract_stairs, extract_walls
 from .extract.slabs import extract_slabs
 from .floors import FloorFrame, detect_floors, localise
+from .geometry import wraps_a_text
 from .profile import STRUCTURAL_ROLES, LayerRule, Profile, merge_profiles, suggest_profile
 from .schedules import ScheduleIndex, parse_schedules
-from .schema import DrawingInfo, Floor, LayerMapEntry, Point2, Project, Schedule, ScheduleRow, UnassignedTag
-from .tags import parse_tag
+from .schema import (
+    DrawingInfo,
+    Floor,
+    Joint,
+    LayerMapEntry,
+    LevelHint,
+    PccHint,
+    Point2,
+    Project,
+    RampHint,
+    Schedule,
+    ScheduleRow,
+    SlabEdge,
+    UnassignedTag,
+)
+from .tags import clean_text, looks_like_note, parse_level_hint, parse_pcc, parse_ramp, parse_tag, strip_note_number
 from .units import resolve_units
 
 _IMPERIAL_HINT = ("'", '"')
@@ -115,6 +134,10 @@ def extract(path: str | Path, user_profile: Profile | None = None, units_overrid
     tables = parse_schedules(sched_texts, diag, tol.schedule_row_tol_factor)
     sched_index = ScheduleIndex(tables)
 
+    # client legend: hatch pattern -> meaning (before floors are localised; positions are only compared relatively)
+    legend_items, swatches = parse_legend(prims)
+    project_legend = legend_items
+
     global_defaults: dict[str, float] = {}
     for p in prims:
         if p.kind != "text" or not p.text:
@@ -151,7 +174,7 @@ def extract(path: str | Path, user_profile: Profile | None = None, units_overrid
             extents_max=Point2(x=meta.extmax[0] * scale, y=meta.extmax[1] * scale) if meta.extmax else None,
             entity_count=meta.entity_count,
         ),
-        profile_name=profile.name, layer_map=layer_map,
+        profile_name=profile.name, layer_map=layer_map, legend=project_legend,
     )
     for t in tables:
         project.schedules.append(Schedule(id=t.id, title=t.title, category=t.category, columns=t.columns,
@@ -160,7 +183,13 @@ def extract(path: str | Path, user_profile: Profile | None = None, units_overrid
 
     for frame in frames:
         localise(frame)
-        ctx = FloorContext(frame=frame, roles=roles, rules=rules, tol=tol, diag=diag, schedules=sched_index)
+        # the legend is copied under every plan, and a frame's prims are already in that floor's
+        # own coordinates, so the bands are measured here rather than once for the drawing
+        zones = legend_zones(frame.prims)
+        if zones:
+            diag.info("LEGEND_ZONE", f"{len(zones)} legend line(s) on this plan; the band each occupies is not read as structure", floor_id=frame.id)
+        ctx = FloorContext(frame=frame, roles=roles, rules=rules, tol=tol, diag=diag, schedules=sched_index,
+                           size_sources=profile.size_sources, legend_zones=zones)
         project.grids.extend(extract_grids(ctx))
         project.columns.extend(extract_columns(ctx))
         project.beams.extend(extract_beams(ctx))
@@ -168,6 +197,71 @@ def extract(path: str | Path, user_profile: Profile | None = None, units_overrid
         project.footings.extend(extract_footings(ctx))
         project.openings.extend(extract_openings(ctx))
         project.walls.extend(extract_walls(ctx))
+        project.stairs.extend(extract_stairs(ctx))
+        # legend-driven regions (sunk, slab at beam bottom, column stop, cut-out ...)
+        regions = regions_from_hatches(frame.prims, legend_items, swatches, frame.id, ctx.ids)
+        project.regions.extend(regions)
+        stop_regions = [r for r in regions if r.meaning == "column_stop"]
+        if stop_regions:
+            from shapely.geometry import Polygon as _Poly
+            stop_polys = [_Poly([(q.x, q.y) for q in r.outline]) for r in stop_regions]
+            for c in project.columns:
+                if c.floor_id != frame.id or len(c.outline) < 3:
+                    continue
+                cp = _Poly([(q.x, q.y) for q in c.outline])
+                if any(sp.intersection(cp).area >= 0.5 * cp.area for sp in stop_polys if sp.intersects(cp)):
+                    c.modifier = "stop"
+        # Slab edge lines (free edges of cantilevers / chajjas) and slab outline rings.
+        #
+        # What the layer's modifier *means* decides whether its geometry is an edge. A drop, fold
+        # or sunk layer carries level changes taking place inside a bay the beams already close:
+        # reading those as edges cuts whole bays into cantilever fragments. A projection layer is
+        # the opposite -- slab hanging out past the beam grid, a chajja -- and it has no other
+        # edge to close against, so without its ring that slab is never built at all.
+        # Open lines are a step in the slab whatever the layer, so none of them are edges.
+        step_layers = {name for name, r in rules.items() if set(r.modifiers) & {"drop", "fold", "sunk", "hidden"}}
+        line_layers = step_layers | {name for name, r in rules.items() if "projection" in r.modifiers}
+        for p_ in ctx.geoms("SLAB", "line", "polyline"):
+            if p_.layer in line_layers:
+                continue
+            coords = list(p_.geom.coords)
+            for a, b in itertools.pairwise(coords):
+                if ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5 >= 50.0:
+                    project.slab_edges.append(SlabEdge(floor_id=frame.id, start=Point2(x=a[0], y=a[1]), end=Point2(x=b[0], y=b[1]), source_layer=p_.layer, source_handle=p_.handle))
+        # a box drawn round a slab tag is annotation, not an outline: read as one it closes a
+        # small panel of its own inside the bay it labels, and the two overlap completely
+        slab_tags = ctx.texts("SLAB_TAG")
+        for p_ in ctx.geoms("SLAB", "polygon"):
+            if p_.geom.area < 1e5 or p_.layer in step_layers:
+                continue   # hatch swatches and level changes inside a closed bay
+            if wraps_a_text(p_.geom, slab_tags, tol.text_box_area_ratio):
+                continue
+            coords = list(p_.geom.exterior.coords)
+            for a, b in itertools.pairwise(coords):
+                project.slab_edges.append(SlabEdge(floor_id=frame.id, start=Point2(x=a[0], y=a[1]), end=Point2(x=b[0], y=b[1]), source_layer=p_.layer, source_handle=p_.handle))
+        # ramp notes ("RAMP 1:8 UP") with the arrow line beside them, and PCC notes
+        floor_lines = [q for q in frame.prims if q.kind == "line"]
+        for t in (q for q in frame.prims if q.kind == "text" and q.text):
+            rp = parse_ramp(t.text)
+            if rp is not None:
+                c = t.rep_point()
+                reach = max(1500.0, 6.0 * (t.text_height or 125.0))
+                cand = [l for l in floor_lines if l.geom.length >= 400.0 and l.geom.distance(Point(c)) <= reach and roles.get(l.layer, ("",))[0] not in ("BEAM", "COLUMN", "GRID", "FOOTING", "WALL")]
+                arrow = max(cand, key=lambda l: l.geom.length) if cand else None
+                a0 = a1 = None
+                if arrow is not None:
+                    (x0, y0), (x1, y1) = next(iter(arrow.geom.coords))[:2], list(arrow.geom.coords)[-1][:2]
+                    a0, a1 = Point2(x=x0, y=y0), Point2(x=x1, y=y1)
+                project.ramp_hints.append(RampHint(id=ctx.ids.next("RP"), floor_id=frame.id, text=clean_text(t.text)[:60], position=Point2(x=c[0], y=c[1]),
+                                                   slope_ratio=rp[0], direction=rp[1], arrow_start=a0, arrow_end=a1, handle=t.handle))
+            pc = parse_pcc(t.text)
+            if pc is not None:
+                c = t.rep_point()
+                project.pcc_hints.append(PccHint(text=clean_text(t.text)[:80], thickness_mm=pc[0], projection_mm=pc[1], floor_id=frame.id, handle=t.handle))
+        for p_ in ctx.geoms("JOINT", "line", "polyline"):
+            coords = list(p_.geom.coords)
+            for a, b in itertools.pairwise(coords):
+                project.joints.append(Joint(id=ctx.ids.next("J"), floor_id=frame.id, start=Point2(x=a[0], y=a[1]), end=Point2(x=b[0], y=b[1]), source_layer=p_.layer, source_handle=p_.handle))
         ctx.flush_missing_marks()
 
         # unassigned structural tags
@@ -191,12 +285,37 @@ def extract(path: str | Path, user_profile: Profile | None = None, units_overrid
             hint = f"; hidden-line geometry exists on {', '.join(hidden_layers)} and is skipped, the tags may belong to it" if hidden_layers else ""
             diag.warning("TAG_UNASSIGNED", f"{len(items)} tag(s) on layer {layer} matched no element (e.g. {sample}){hint}", floor_id=frame.id, layer=layer, location=items[0].rep_point())
 
+        # client general notes inside the frame, verbatim (numbering stripped, re-numbered by the template writer)
+        notes: list[str] = []
+        seen_notes: set[str] = set()
+        for t in sorted((t for t in frame.prims if t.kind == "text" and t.text and roles.get(t.layer, ("", "NOTE"))[1] in ("NOTE", "TITLE")), key=lambda t: (-t.rep_point()[1], t.rep_point()[0])):
+            txt = clean_text(t.text)
+            if txt.upper() == frame.name.upper() or not looks_like_note(txt):
+                continue
+            txt = strip_note_number(txt)
+            key = txt.upper()
+            if not txt or key in seen_notes:
+                continue
+            seen_notes.add(key)
+            notes.append(txt)
         project.floors.append(Floor(
-            id=frame.id, index=frame.index, name=frame.name, name_source=frame.name_source,
+            id=frame.id, index=frame.index, name=frame.name, name_source=frame.name_source, notes=notes,
             origin=Point2(x=frame.origin[0], y=frame.origin[1]),
             boundary=[Point2(x=c[0], y=c[1]) for c in list(frame.boundary.exterior.coords)[:-1]] if frame.boundary is not None else [],
             default_beam_depth_mm=frame.default_beam_depth, default_slab_thickness_mm=frame.default_slab_thickness,
         ))
+
+    # level hints from sections / elevations anywhere in the drawing
+    seen_hints: set[tuple[str, float]] = set()
+    for t in prims:
+        if t.kind != "text" or not t.text:
+            continue
+        hint = parse_level_hint(t.text)
+        if hint is None or hint in seen_hints:
+            continue
+        seen_hints.add(hint)
+        fid = next((f.id for f in frames if f.boundary is not None and f.boundary.contains(Point(t.rep_point()[0] + f.origin[0], t.rep_point()[1] + f.origin[1]))), None)
+        project.level_hints.append(LevelHint(name=hint[0], elevation_mm=hint[1], text=clean_text(t.text)[:80], handle=t.handle, layer=t.layer, floor_id=fid))
 
     project.diagnostics = diag.items
     project.recompute_summary()

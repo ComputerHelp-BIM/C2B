@@ -7,19 +7,20 @@ the extractors testable with synthetic data.
 """
 from __future__ import annotations
 
+import contextlib
 import math
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
 
 import ezdxf
 import shapely
 from ezdxf import path as ezpath
 from ezdxf.math import Vec3
-from shapely.geometry import LineString, Point, Polygon, base
+from shapely.geometry import LineString, Point, base
 
-from .geometry import polygon_from_points, rectangle_polygon
+from .geometry import polygon_from_points
 
 FLATTEN_DISTANCE_MM = 1.0
 TEXT_WIDTH_FACTOR = 0.7
@@ -246,11 +247,19 @@ def _entity_to_prims(e, layer: str, scale: float, block_path: tuple[str, ...]) -
             if poly is not None:
                 prims.append(Prim("solid", layer, handle, poly, closed=True, extra={"dxftype": t}))
         elif t == "DIMENSION":
-            try:
-                loc = _xy(e.dxf.defpoint, scale)
-            except Exception:
-                loc = (0.0, 0.0)
-            prims.append(Prim("dimension", layer, handle, Point(loc), text=e.dxf.get("text", ""), extra={"dxftype": t, "measurement": e.dxf.get("actual_measurement", None)}))
+            # the text mid-point, not the definition point: where a drafter overrides a dimension
+            # with a member's size, that text is the tag and its position is what places it
+            loc = None
+            for attr in ("text_midpoint", "defpoint"):
+                try:
+                    loc = _xy(e.dxf.get(attr), scale)
+                    break
+                except Exception:
+                    continue
+            height = _dim_text_height(e, scale)
+            prims.append(Prim("dimension", layer, handle, Point(loc or (0.0, 0.0)), text=e.dxf.get("text", ""),
+                              text_height=height, text_center=loc,
+                              extra={"dxftype": t, "measurement": e.dxf.get("actual_measurement", None)}))
         elif t in ("LEADER", "MLEADER", "MULTILEADER"):
             return prims
         else:
@@ -260,6 +269,31 @@ def _entity_to_prims(e, layer: str, scale: float, block_path: tuple[str, ...]) -
     for p in prims:
         p.block_path = block_path
     return prims
+
+
+
+def _dim_text_height(e, scale: float) -> float:
+    """A dimension's text height in millimetres, from its style and any override.
+
+    Without it an overridden dimension read as a size tag has no reach at all, because how far a
+    tag may sit from its member is measured in text heights.
+    """
+    try:
+        txt = e.dxf.get("dimtxt", None)
+        if txt is None and e.doc is not None:
+            style = e.doc.dimstyles.get(e.dxf.get("dimstyle", "Standard"))
+            txt = style.dxf.get("dimtxt", None)
+        factor = e.dxf.get("dimscale", None)
+        if factor is None and e.doc is not None:
+            try:
+                factor = e.doc.dimstyles.get(e.dxf.get("dimstyle", "Standard")).dxf.get("dimscale", None)
+            except Exception:
+                factor = None
+        if txt:
+            return float(txt) * float(factor or 1.0) * scale
+    except Exception:
+        pass
+    return 0.0
 
 
 def iter_prims(doc, scale: float, explode_blocks: bool = True, max_depth: int = 4) -> tuple[list[Prim], list[dict]]:
@@ -276,17 +310,15 @@ def iter_prims(doc, scale: float, explode_blocks: bool = True, max_depth: int = 
                 layer = parent_layer
             if t == "INSERT":
                 attribs = {}
-                try:
+                with contextlib.suppress(Exception):
                     attribs = {a.dxf.tag: a.dxf.text for a in e.attribs}
-                except Exception:
-                    pass
                 ins_pt = _xy(e.dxf.insert, scale)
-                prims.append(Prim("insert", layer, e.dxf.handle or "", Point(ins_pt), attribs=attribs, block_path=block_path + (e.dxf.name,),
+                prims.append(Prim("insert", layer, e.dxf.handle or "", Point(ins_pt), attribs=attribs, block_path=(*block_path, e.dxf.name),
                                   rotation=float(e.dxf.get("rotation", 0.0)), extra={"dxftype": t, "block": e.dxf.name, "xscale": float(e.dxf.get("xscale", 1.0)), "yscale": float(e.dxf.get("yscale", 1.0))}))
                 # attributes are text belonging to the insert's layer
                 try:
                     for a in e.attribs:
-                        for p in _entity_to_prims(a, layer if a.dxf.layer == "0" else a.dxf.layer, scale, block_path + (e.dxf.name,)):
+                        for p in _entity_to_prims(a, layer if a.dxf.layer == "0" else a.dxf.layer, scale, (*block_path, e.dxf.name)):
                             prims.append(p)
                 except Exception:
                     pass
@@ -294,7 +326,7 @@ def iter_prims(doc, scale: float, explode_blocks: bool = True, max_depth: int = 
                     if e.dxf.name.lower().startswith("*") is False:
                         block_log.append({"block": e.dxf.name, "layer": layer, "handle": e.dxf.handle, "depth": depth})
                     try:
-                        visit(e.virtual_entities(), depth + 1, block_path + (e.dxf.name,), layer)
+                        visit(e.virtual_entities(), depth + 1, (*block_path, e.dxf.name), layer)
                     except Exception as ex:
                         block_log.append({"block": e.dxf.name, "layer": layer, "handle": e.dxf.handle, "depth": depth, "error": str(ex)})
                 continue

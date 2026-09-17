@@ -1,7 +1,8 @@
+from shapely.geometry import Point
+
 from c2b.diagnostics import DiagnosticsCollector
 from c2b.dxfio import Prim
 from c2b.schedules import ScheduleIndex, parse_schedules
-from shapely.geometry import Point
 
 
 def _t(text, x, y, h=250):
@@ -29,3 +30,24 @@ def test_size_to_marks_list():
     assert len(tables) == 1 and tables[0].category == "beam"
     idx = ScheduleIndex(tables)
     assert idx.find("BK1")["width"] == 200 and idx.find("B2")["depth"] == 650
+
+
+def test_size_list_keeps_a_symbolic_depth():
+    """Test17's beam schedule has nine rows; two state a rule instead of a depth.
+
+    Dropping them left SB and B2 with no schedule entry at all -- 414 of that drawing's 575
+    depth-less beams. The width is still real and the rule has to survive to be resolved later.
+    """
+    from c2b.schedules import _build_table
+
+    table = _build_table("SCH01", "SCHEDULE OF RCC BEAM SIZES", ["mark", "width", "depth", "depth_rule"], [
+        {"mark": "B1", "width": 200.0, "depth": 650.0, "size": "200X650"},
+        {"mark": "SB", "width": 300.0, "depth": None, "size": "300XSLB THK.", "depth_rule": "slab_thickness"},
+        {"mark": "B2", "width": 200.0, "depth": None, "size": "200XAS/LAYOUT", "depth_rule": "layout"},
+    ], "G-ANNO-SCHD")
+
+    assert [r["mark"] for r in table.rows] == ["B1", "SB", "B2"]
+    sb = table.lookup["SB"]
+    assert sb["width"] == 300.0 and sb["depth"] is None and sb["depth_rule"] == "slab_thickness"
+    assert table.lookup["B2"]["depth_rule"] == "layout"
+    assert "depth_rule" not in table.lookup["B1"]      # an ordinary row is untouched

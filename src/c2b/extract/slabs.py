@@ -25,9 +25,9 @@ def extract_slabs(ctx: FloorContext) -> list[Slab]:
             return None, "missing_in_schedule"
         return None, "unknown"
 
-    tree = STRtree([o.geom for o in outlines]) if outlines else None
+    STRtree([o.geom for o in outlines]) if outlines else None
     used_tags: set[int] = set()
-    for oi, o in enumerate(outlines):
+    for _oi, o in enumerate(outlines):
         sid = ctx.ids.next("S")
         inside = [ti for ti, t in enumerate(tags) if o.geom.contains(Point(t.center))]
         used_tags.update(inside)

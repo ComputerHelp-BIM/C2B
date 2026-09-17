@@ -1,16 +1,122 @@
 """Column extraction."""
 from __future__ import annotations
 
-from ..geometry import classify_polygon, nearest_grid_intersection_label
+from dataclasses import replace
+
+from shapely.strtree import STRtree
+
+from ..geometry import classify_polygon, is_wall_like, nearest_grid_intersection_label, shorten_to_clear, split_rectilinear
 from ..schema import Column
 from .associate import TagCand, associate_tags, make_tag_cands, merge_parsed
 from .context import FloorContext, outline_points, pt, tag_ref
-from .outlines import collect_outlines
+from .outlines import Outline, collect_outlines
+
+#: overlaps smaller than this are drafting noise, not a junction
+_TRIM_MIN_AREA_MM2 = 100.0
 
 
 def _sizes_match(a: tuple[float, float], b: tuple[float, float], tol: float) -> bool:
     sa, sb = sorted(a), sorted(b)
     return abs(sa[0] - sb[0]) <= tol and abs(sa[1] - sb[1]) <= tol
+
+
+def _modifiers(ctx: FloorContext, layer: str) -> set[str]:
+    rule = ctx.rules.get(layer)
+    return set(rule.modifiers) if rule else set()
+
+
+def _this_floors_columns(ctx: FloorContext, outlines: list[Outline]) -> list[Outline]:
+    """Answer 4: of the outlines drawn here, which are the columns *below* this floor level.
+
+    The client draws a column's life on three layers. A plain outline is the column under this
+    floor. A "start" outline is a column beginning here, so there is nothing under this floor to
+    model and it is not this floor's column at all. A "stop" outline is a column running up from
+    below that ends here; where the client has drawn a stop outline and a plain one over each
+    other, the plain one is the floor above's column and the stop one is this floor's.
+    """
+    keep, dropped_start, dropped_above = [], 0, 0
+    stops = [o for o in outlines if "stop" in _modifiers(ctx, o.layer)]
+    stop_tree = STRtree([o.poly for o in stops]) if stops else None
+    for o in outlines:
+        mods = _modifiers(ctx, o.layer)
+        if "start" in mods:
+            dropped_start += 1
+            continue
+        if stop_tree is not None and not (mods & {"stop", "stub"}):
+            covered = any(o.poly.intersection(stops[int(k)].poly).area >= 0.5 * min(o.poly.area, stops[int(k)].poly.area)
+                          for k in stop_tree.query(o.poly, predicate="intersects"))
+            if covered:
+                dropped_above += 1
+                continue
+        keep.append(o)
+    if dropped_start:
+        ctx.diag.info("COLUMN_STARTS_ABOVE", f"{dropped_start} column(s) start at this floor, so nothing stands under it here", floor_id=ctx.floor_id)
+    if dropped_above:
+        ctx.diag.info("COLUMN_ABOVE_FLOOR", f"{dropped_above} column outline(s) drawn over a stopping column belong to the floor above", floor_id=ctx.floor_id)
+    return keep
+
+
+def _trim_junctions(ctx: FloorContext, outlines: list[Outline]) -> list[Outline]:
+    """Butt the members of a wall against each other instead of letting them overlap.
+
+    Each leg runs the full width of the wall, so at a corner or a T the two share that square.
+    Drawn as they are, the smaller leg pushes into the larger by its width and the junction comes
+    out doubled. The larger member is the one the client dimensions, so it stays whole and the
+    smaller is cut back to meet its face -- which is the overlap, usually the larger's width.
+
+    This runs across the whole floor, not within one outline's legs: a C or F shaped wall is as
+    often drawn as several separate polylines as one, and the legs overlap just the same.
+
+    A cut member is no longer the length its own tag states, so it is flagged and takes its size
+    from the drawing instead; the mark keeps its name.
+    """
+    if len(outlines) < 2:
+        return outlines
+    order = sorted(range(len(outlines)), key=lambda i: -outlines[i].poly.area)
+    polys = [o.poly for o in outlines]
+    tree = STRtree(polys)
+    out: list[Outline] = [None] * len(outlines)   # type: ignore[list-item]
+    settled: dict[int, object] = {}
+    trimmed = 0
+    for i in order:
+        g, cut = polys[i], False
+        for k in tree.query(g, predicate="intersects"):
+            j = int(k)
+            if j == i or j not in settled:
+                continue                          # only the members already settled may cut
+            other = settled[j]
+            if not g.intersects(other) or g.intersection(other).area <= _TRIM_MIN_AREA_MM2:
+                continue
+            d = shorten_to_clear(g, other, min_len=ctx.tol.column_min_side_mm)
+            if d is not None and d is not g and d.area > 0:
+                g, cut = d, True
+        settled[i] = g
+        out[i] = replace(outlines[i], poly=g, trimmed=outlines[i].trimmed or cut)
+        trimmed += 1 if cut else 0
+    if trimmed:
+        ctx.diag.info("COLUMN_LEG_TRIMMED", f"{trimmed} wall leg(s) cut back to butt against the larger member at a junction; their size is taken from the drawing, not their tag", floor_id=ctx.floor_id)
+    return [o for o in out if o is not None and o.poly.area > 0]
+
+
+def _split_legs(ctx: FloorContext, outlines: list[Outline]) -> list[Outline]:
+    """Answer 2: each leg of an L, T, C or F shaped wall is its own element.
+
+    The client marks and sizes every leg separately, so a wall kept whole can only hold one of
+    those marks and the rest land nowhere. Shapes that are already rectangles, or that are not
+    rectilinear, come back untouched.
+    """
+    out: list[Outline] = []
+    split = 0
+    for o in outlines:
+        legs = split_rectilinear(o.poly, min_side=ctx.tol.column_min_side_mm)
+        if len(legs) < 2:
+            out.append(o)
+            continue
+        split += 1
+        out.extend(replace(o, poly=leg) for leg in legs)
+    if split:
+        ctx.diag.info("COLUMN_LEGS_SPLIT", f"{split} shaped wall(s) split into their legs so each can carry its own mark", floor_id=ctx.floor_id)
+    return out
 
 
 def extract_columns(ctx: FloorContext) -> list[Column]:
@@ -19,6 +125,9 @@ def extract_columns(ctx: FloorContext) -> list[Column]:
         ctx, "COLUMN", tol.column_min_side_mm, tol.column_min_area_mm2, tol.column_max_area_mm2, tol.column_max_side_mm,
         include_generic_hatch=True,
     )
+    if not outlines:
+        return []
+    outlines = _trim_junctions(ctx, _split_legs(ctx, _this_floors_columns(ctx, outlines)))
     if not outlines:
         return []
 
@@ -33,7 +142,15 @@ def extract_columns(ctx: FloorContext) -> list[Column]:
         s = shapes[i]
         return max(tol.column_tag_radius_min_mm, tol.column_tag_radius_factor * min(s.width, s.depth), 0.5 * max(s.width, s.depth), 4 * tag.height)
 
-    assigned, unassigned = associate_tags(polys, tags, radius)
+    def size_matches(i: int, tag: TagCand) -> bool | None:
+        """Does the size on this tag describe this column as drawn?"""
+        w, d = tag.parsed.width_mm, tag.parsed.depth_mm
+        if not (w and d):
+            return None
+        s_ = shapes[i]
+        return _sizes_match((w, d), (s_.width, s_.depth), tol.size_mismatch_tol_mm)
+
+    assigned, _unassigned = associate_tags(polys, tags, radius, size_match_fn=size_matches)
     columns: list[Column] = []
     no_size_ids: list[str] = []
     for i, o in enumerate(outlines):
@@ -46,7 +163,7 @@ def extract_columns(ctx: FloorContext) -> list[Column]:
 
         drawn_w, drawn_d = round(s.width, 1), round(s.depth, 1)
         long_side, short_side = max(s.width, s.depth), min(s.width, s.depth)
-        wall_like = (s.shape != "circle" and short_side > 0 and long_side / short_side >= tol.wall_like_min_side_ratio and long_side >= tol.wall_like_min_length_mm) or (s.shape == "polygon" and long_side >= tol.wall_like_min_length_mm)
+        wall_like = is_wall_like(s.shape, s.width, s.depth, tol.wall_like_min_side_ratio, tol.wall_like_min_length_mm)
         width = depth = dia = None
         size_source = "unknown"
         if len(sizes) > 1:
@@ -76,6 +193,18 @@ def extract_columns(ctx: FloorContext) -> list[Column]:
                 width, depth = ctx.layer_size(o.layer)  # type: ignore[misc]
                 size_source = "layer"
 
+        if o.trimmed and size_source in ("tag", "schedule", "block", "layer") and s.shape != "circle":
+            # this leg was cut back to butt against a larger one, so its tag's length is the
+            # length before the cut; what is built is what is drawn. The mark keeps its name.
+            width, depth, size_source = drawn_w, drawn_d, "geometry"
+        elif ctx.size_sources.column == "outline" and size_source in ("tag", "schedule", "block", "layer"):
+            # answer 5: the drawing wins, and the tag is kept for the mark alone. The size the
+            # client stated is still reported where it differs, so neither reading is lost.
+            if s.shape == "circle":
+                dia = round(s.diameter or 0, 1)
+            else:
+                width, depth = drawn_w, drawn_d
+            size_source = "geometry"
         if size_source == "unknown":
             if s.shape == "circle":
                 dia = round(s.diameter or 0, 1)
@@ -96,9 +225,9 @@ def extract_columns(ctx: FloorContext) -> list[Column]:
             ctx.diag.warning("COLUMN_SIZE_MISMATCH", f"Column {cid} tagged dia {dia:.0f} but drawn dia {s.diameter:.0f}", floor_id=ctx.floor_id, element_id=cid, location=s.center)
 
         # rectangle drawn with a tag in the other orientation: align tag size to drawn axes
-        if s.shape == "rect" and width is not None and depth is not None and size_source in ("tag", "schedule"):
-            if abs(width - drawn_d) + abs(depth - drawn_w) < abs(width - drawn_w) + abs(depth - drawn_d):
-                width, depth = depth, width
+        if (s.shape == "rect" and width is not None and depth is not None and size_source in ("tag", "schedule")
+                and abs(width - drawn_d) + abs(depth - drawn_w) < abs(width - drawn_w) + abs(depth - drawn_d)):
+            width, depth = depth, width
 
         if merged.category_hint not in (None, "column", "wall"):
             ctx.diag.info("TAG_CATEGORY_MISMATCH", f"Column {cid} tag '{merged.text}' looks like a {merged.category_hint} mark", floor_id=ctx.floor_id, element_id=cid, location=s.center)

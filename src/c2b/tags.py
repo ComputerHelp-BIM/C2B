@@ -237,10 +237,9 @@ def parse_tag(raw: str) -> ParsedTag:
         if len(tok) == 1 and tok.isalpha():
             single_prefix = tok.upper()
             continue
-        if tok.isalpha():
-            # a bare word is a mark only when it stands alone ("MB") or is a known member prefix ("BKT")
-            if not (len(tokens) == 1 or tok.upper() in _PREFIX_CATEGORY):
-                continue
+        # a bare word is a mark only when it stands alone ("MB") or is a known member prefix ("BKT")
+        if tok.isalpha() and not (len(tokens) == 1 or tok.upper() in _PREFIX_CATEGORY):
+            continue
         if _RE_MARK_TOKEN.match(tok) and not tok.isdigit():
             marks.append(tok)
     tag.marks = marks
@@ -265,3 +264,135 @@ def parse_size_from_name(name: str) -> tuple[float, float] | None:
     if w and d and w >= 50 and d >= 50:
         return (w, d)
     return None
+
+
+# ---------------------------------------------------------------------------
+# Level hints and general notes
+# ---------------------------------------------------------------------------
+
+_RE_LEVEL = re.compile(
+    r"(?P<name>[A-Za-z0-9 .\-/&()']*?)\b(?P<kw>LVL|LEVEL|FFL|SFL|SSL|TOS|TOF|TOC|PLINTH|GL|NGL|EGL)\b\.?\s*[:=]?\s*"
+    r"(?P<sign>[+\-−]?)\s*(?P<val>\d{1,3}(?:[.,]\d{1,3})?|\d{3,6})\s*(?P<unit>mm|m|MM|M)?(?![\d])",
+    re.I,
+)
+_RE_NOTE_START = re.compile(r"^\s*(?:\d{1,2}\s*[).:-]|\*|NOTES?\b|ALL\b|REFER\b|FOR\b|UNLESS\b|U\.N\.O)", re.I)
+
+
+def parse_level_hint(text: str) -> tuple[str, float] | None:
+    """Return (name, elevation_mm) when the text carries a level value, else None."""
+    s = clean_text(text).replace("\n", " ")
+    m = _RE_LEVEL.search(s)
+    if not m:
+        return None
+    raw = m.group("val").replace(",", ".")
+    unit = (m.group("unit") or "").lower()
+    val = float(raw)
+    if unit == "m" or (not unit and "." in raw):
+        mm = val * 1000.0
+    elif unit == "mm" or abs(val) >= 100:
+        mm = val
+    else:
+        mm = val * 1000.0
+    if m.group("sign") in ("-", "−"):
+        mm = -mm
+    name = (m.group("name") or "").strip(" -:.")
+    kw = m.group("kw").upper()
+    if kw in ("LVL", "LEVEL") and name:
+        name = f"{name} LVL."
+    elif not name:
+        name = kw
+    else:
+        name = f"{name} {kw}"
+    return name.upper(), round(mm, 1)
+
+
+def looks_like_note(text: str, min_len: int = 12) -> bool:
+    s = clean_text(text)
+    return len(s) >= min_len and bool(_RE_NOTE_START.match(s))
+
+
+def strip_note_number(text: str) -> str:
+    """Remove a leading 'NOTE -', 'NOTES:', '1)', '2.' or '*' so notes can be renumbered."""
+    s = re.sub(r"^\s*NOTES?\s*[:\-]?\s*", "", clean_text(text), flags=re.I)
+    return re.sub(r"^\s*(?:\d{1,2}\s*[).:-]\s*|\*\s*)", "", s).strip()
+
+
+_RE_SLOPE = re.compile(r"\b1\s*(?::|IN)\s*(\d{1,3})\b", re.I)
+_RE_DIR = re.compile(r"\b(UP|DN|DOWN)\b", re.I)
+_RE_PCC_T = re.compile(r"PCC(?:\s*\(?\s*\d\s*:\s*\d\s*:\s*\d\s*\)?)?[^0-9]{0,25}?(\d{2,4})\s*(?:MM)?\s*(?:THK|THICK|TH\b)?|(\d{2,4})\s*(?:MM)?\s*(?:THK|THICK|TH\b)?\.?\s*(?:\w+\s+){0,3}PCC", re.I)
+_RE_PCC_P = re.compile(r"(\d{2,4})\s*(?:MM)?\s*(?:PROJ|PROJECTION|OFFSET|BEYOND|ALL\s*ROUND|EXTRA|WIDER)", re.I)
+_RE_DEEP = re.compile(r"(\d+(?:\.\d+)?)\s*(MM|M)?\s*(?:DEEP|DP\.?|DEPTH)\b", re.I)
+
+
+def parse_ramp(text: str) -> tuple[str | None, str | None] | None:
+    """('1:8', 'UP') for a ramp note, None if the text is not about a ramp."""
+    s = clean_text(text).upper()
+    m = _RE_SLOPE.search(s)
+    d = _RE_DIR.search(s)
+    if "RAMP" not in s and not (m and d):
+        return None
+    return (f"1:{m.group(1)}" if m else None, ("DN" if d.group(1).upper() in ("DN", "DOWN") else "UP") if d else None)
+
+
+def parse_pcc(text: str) -> tuple[float | None, float | None] | None:
+    """(thickness_mm, projection_mm) for a PCC / lean concrete note, None otherwise."""
+    s = clean_text(text).upper()
+    if "PCC" not in s and "LEAN CONCRETE" not in s and "BLINDING" not in s:
+        return None
+    t = _RE_PCC_T.search(s)
+    p_ = _RE_PCC_P.search(s)
+    thk = float(t.group(1) or t.group(2)) if t else None
+    return (thk, float(p_.group(1)) if p_ else None)
+
+
+def parse_depth(text: str) -> float | None:
+    """'LIFT PIT 1500 DEEP' -> 1500."""
+    m = _RE_DEEP.search(clean_text(text).upper())
+    if not m:
+        return None
+    return parse_length_mm(m.group(1) + (m.group(2) or ""))
+
+
+#: A schedule may state a depth the table cannot hold as a number: "300XSLB THK." means the beam
+#: is as deep as the slab it sits in (a concealed beam), "200XAS/LAYOUT" means the plan tag says.
+#: The rule is carried through as a symbol and resolved where the answer is known.
+RE_SIZE_SYMBOLIC = re.compile(
+    rf"(?P<w>{LENGTH})\s*[xX×*]\s*(?P<rule>SLB\s*THK\.?|SLAB\s*THK\.?|AS\s*[/\-]?\s*LAYOUT|AS\s*PER\s*LAYOUT|AS\s*[/\-]?\s*PLAN)",
+    re.I,
+)
+
+#: What a symbolic depth resolves against.
+DEPTH_RULE_SLAB = "slab_thickness"
+DEPTH_RULE_LAYOUT = "layout"
+
+
+def parse_symbolic_size(name: str) -> tuple[float, str] | None:
+    """Parse ``300XSLB THK.`` / ``200XAS/LAYOUT`` into (width_mm, depth rule).
+
+    Returns ``None`` when the text states no width or no rule this understands, so a caller can
+    fall back to :func:`parse_size_from_name`. Dropping these rows is what left 414 of Test17's
+    575 depth-less beams with no schedule entry at all.
+    """
+    m = RE_SIZE_SYMBOLIC.search(name or "")
+    if not m:
+        return None
+    w = parse_length_mm(m.group("w"))
+    if not w or w < 50:
+        return None
+    rule = re.sub(r"[\s.]+", "", m.group("rule")).upper()
+    if rule in ("SLBTHK", "SLABTHK"):
+        return (w, DEPTH_RULE_SLAB)
+    return (w, DEPTH_RULE_LAYOUT)
+
+
+_RE_MTEXT_FMT = re.compile(r"\\[A-Za-z][^;\\]*;|[{}]|\\[PXpx]|%%[UuOoDd]")
+
+
+def strip_mtext_codes(text: str) -> str:
+    """Drop the inline formatting a drafter leaves in an override, keeping the words.
+
+    ``{\\H0.666667x;200x400}`` is a size written at two-thirds height; the size is what matters.
+    """
+    out = _RE_MTEXT_FMT.sub(" ", text or "")
+    out = out.strip().strip("()[]").strip()
+    return re.sub(r"\s+", " ", out)

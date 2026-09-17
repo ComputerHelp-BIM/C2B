@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 
 from .diagnostics import DiagnosticsCollector
 from .dxfio import Prim
-from .tags import parse_length_mm, parse_size_from_name, parse_tag
+from .tags import parse_length_mm, parse_size_from_name, parse_symbolic_size, parse_tag
 
 _HEADER_ALIASES: dict[str, str] = {
     "mark": "mark", "marks": "mark", "no": "mark", "no.": "mark", "beam no": "mark", "beam no.": "mark", "column no": "mark",
@@ -157,15 +157,23 @@ def parse_schedules(texts: list[Prim], diag: DiagnosticsCollector, row_tol_facto
                 break
             if not size_txt or not mark_txt:
                 continue
-            size = parse_size_from_name(size_txt[0].text)
+            raw_size = size_txt[0].text.strip()
+            size = parse_size_from_name(raw_size)
+            symbolic = None if size else parse_symbolic_size(raw_size)
             marks = [m.strip() for m in re.split(r"[,/;&]| and ", mark_txt[0].text) if m.strip()]
-            if not size or not marks:
+            if not (size or symbolic) or not marks:
                 continue
             for m in marks:
-                data_rows.append({"mark": m, "width": size[0], "depth": size[1], "size": size_txt[0].text.strip()})
+                if size:
+                    data_rows.append({"mark": m, "width": size[0], "depth": size[1], "size": raw_size})
+                else:
+                    # the table states a rule where a number will not fit ("300XSLB THK."); the
+                    # width is still real, and the rule is resolved where the answer is known
+                    data_rows.append({"mark": m, "width": symbolic[0], "depth": None, "size": raw_size,
+                                      "depth_rule": symbolic[1]})
         if data_rows:
             counter += 1
-            tables.append(_build_table(f"SCH{counter:02d}", title or size_cols[0].text, ["mark", "width", "depth"], data_rows, row[0].layer))
+            tables.append(_build_table(f"SCH{counter:02d}", title or size_cols[0].text, ["mark", "width", "depth", "depth_rule"], data_rows, row[0].layer))
 
     return tables
 
