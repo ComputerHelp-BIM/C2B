@@ -114,7 +114,7 @@ def run(
     from .dwg import ensure_dxf
     from .export.excel import write_workbook
     from .export.jsonout import write_json
-    from .export.levels import read_level_settings, read_levels, write_levels_template
+    from .export.levels import read_level_settings, write_levels_from_storeys
     from .export.normalized_excel import write_normalized_workbook
     from .export.report import write_report
     from .export.review_dxf import write_review_dxf
@@ -149,19 +149,24 @@ def run(
     s1 = project.summary
     typer.echo(f"     floors {s1.floors} | columns {s1.columns} | beams {s1.beams} | slabs {s1.slabs} | footings {s1.footings} | {s1.errors} errors, {s1.warnings} warnings")
 
+    # The storeys are the building's levels, and the storey window owns them; the workbook is
+    # written from them. A run with no storeys yet seeds them from the drawing, so the first run
+    # already has an elevation for every floor rather than an empty form to go and fill in.
+    from .gui.runner import load_storeys, storey_sidecar
+
+    schedule, where = load_storeys(project, out, stem, levels)
+    schedule.save(storey_sidecar(out, stem))
     levels_path = levels or (out / f"{stem}.levels.xlsx")
-    level_rows = level_ref = None
-    if levels_path.exists():
-        level_rows = read_levels(levels_path)
-        level_ref = read_level_settings(levels_path).get("level_reference")
-        filled = [r for r in level_rows if r.elevation is not None]
-        typer.echo(f"     levels: {len(filled)} of {len(level_rows)} rows filled in {levels_path.name}")
-        if not filled:
-            level_rows = None
-    write_levels_template(project, out / f"{stem}.levels.template.xlsx")
-    if not levels_path.exists():
-        write_levels_template(project, levels_path)
-        typer.secho(f"     fill {levels_path.name} with the floor elevations and run again for the elevation frame", fg=typer.colors.YELLOW)
+    level_ref = read_level_settings(levels_path).get("level_reference") if levels_path.exists() else None
+    if levels is None:
+        write_levels_from_storeys(schedule, levels_path, project, level_reference=level_ref or "SSL")
+    problems = schedule.problems([f.id for f in project.floors])
+    errors = [x for x in problems if x.severity == "ERROR"]
+    typer.echo(f"     storeys: {len(schedule)} from {where}"
+               + (f", {len(errors)} to fix" if errors else ""))
+    for x in errors[:5]:
+        typer.secho(f"     {x.message}", fg=typer.colors.RED)
+    level_rows = schedule.level_rows() if len(schedule) and not errors else None
 
     typer.secho("2/3  Normalising to the template", bold=True)
     tspec = TemplateSpec.load(spec) if spec else TemplateSpec()
@@ -258,7 +263,7 @@ def extract(
     write_json(project, out / f"{stem}.c2b.json")
     write_workbook(project, out / f"{stem}.review.xlsx")
     write_report(project, out / f"{stem}.report.md")
-    write_levels_template(project, out / f"{stem}.levels.xlsx")
+    write_levels_template(project, out / f"{stem}.levels.xlsx")   # extract alone: no storeys yet
     result.profile.name = result.profile.name if result.profile.name != "auto" else stem
     result.profile.save(out / f"{stem}.profile.yaml")
     if review_dxf:

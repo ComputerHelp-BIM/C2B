@@ -14,7 +14,7 @@ from ..schema import Project
 HEADERS = ["floor_id", "floor_name", "order", "elevation_mm", "floor_to_floor_mm", "revit_level_name", "notes"]
 
 
-def _match_hint(floor_name: str, hints) -> tuple[float, str] | None:
+def match_level_hint(floor_name: str, hints) -> tuple[float, str] | None:
     """Pick the level hint whose name shares the most words with the floor name."""
     words = {w for w in floor_name.upper().replace(".", " ").split() if w not in ("LEVEL", "LVL", "FLOOR", "AT", "LAYOUT", "PLAN", "-")}
     best, score = None, 0
@@ -32,7 +32,7 @@ def write_levels_template(project: Project, path: str | Path) -> Path:
     ws.title = "Levels"
     ws.append(HEADERS)
     for f in project.floors:
-        hint = _match_hint(f.name, project.level_hints) if f.elevation_mm is None else None
+        hint = match_level_hint(f.name, project.level_hints) if f.elevation_mm is None else None
         elev = f.elevation_mm if f.elevation_mm is not None else (hint[0] if hint else None)
         note = "fill elevation_mm (top of structural slab) in mm" if elev is None else (f"from client text '{hint[1]}', please confirm" if hint else "")
         ws.append([f.id, f.name, f.index, elev, f.floor_to_floor_mm, None, note])
@@ -176,3 +176,50 @@ def read_level_settings(path: str | Path) -> dict[str, str]:
         if row and row[0] is not None and len(row) > 1 and row[1] is not None:
             out[str(row[0]).strip()] = str(row[1]).strip()
     return out
+
+
+def write_levels_from_storeys(schedule, path: str | Path, project: Project | None = None,
+                              level_reference: str = "SSL") -> Path:
+    """The level workbook, written from the storey schedule.
+
+    The storey window owns the building's levels; this workbook is what it produces. It keeps
+    the columns :func:`read_levels` has always read, so a scripted run pointing ``--levels`` at
+    it still works and Revit still gets its levels from one place -- but it is an *output* now,
+    and the banner on the sheet says so, because a drafter who types into it would lose the
+    edit on the next run. To work in Excel instead, delete the ``.storeys.json`` beside it.
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Levels"
+    ws.append(HEADERS)
+    rows = schedule.rows()
+    for r, s in zip(rows, schedule.storeys):
+        note = "; ".join(x for x in (s.source_words, s.note) if x)
+        ws.append([s.plan_floor_id, s.name, r["n"], r["elevation_mm"],
+                   None if r["is_top"] else schedule.storeys[r["n"] + 1].height_mm, s.name, note])
+    ws.freeze_panes = "A2"
+    for col, width in zip("ABCDEFG", (10, 36, 8, 16, 18, 24, 50)):
+        ws.column_dimensions[col].width = width
+
+    st = wb.create_sheet("Settings")
+    st.append(["key", "value", "notes"])
+    st.append(["level_reference", level_reference,
+               "SSL = top of structural slab (default), FFL = finished floor; this sheet wins over the template spec"])
+    st.append(["written_by", "the C2B storey window",
+               "This workbook is written from the storey schedule on every run. Edit the storeys in "
+               "C2B, not here: anything typed into this file is replaced the next time you press Run."])
+    st.append(["base_elevation_mm", schedule.base_elevation_mm, "elevation of the lowest storey; every other is this plus the heights above it"])
+    st.append(["total_height_mm", schedule.total_height_mm(), "lowest storey to highest"])
+    st.column_dimensions["A"].width = 20
+    st.column_dimensions["B"].width = 26
+    st.column_dimensions["C"].width = 100
+
+    if project is not None and project.level_hints:
+        hs = wb.create_sheet("Level hints")
+        hs.append(["name", "elevation_mm", "client text", "handle", "layer", "floor"])
+        for h in sorted(project.level_hints, key=lambda h: h.elevation_mm):
+            hs.append([h.name, h.elevation_mm, h.text, h.handle, h.layer, h.floor_id])
+        for col, width in zip("ABCDEF", (30, 14, 60, 10, 24, 8)):
+            hs.column_dimensions[col].width = width
+    wb.save(str(path))
+    return Path(path)

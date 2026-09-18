@@ -74,7 +74,7 @@ class C2BWindow(tk.Tk):
         self._row(top, 0, "Client drawing", "drawing", self._pick_drawing, "DXF from the client (DWG works when a converter is installed)")
         self._row(top, 1, "Our template", "seed", lambda: self._pick_file("seed", [("Template DXF", "*.dxf")]), "leave empty to use the firm's CH template from the C2B folder")
         self._row(top, 2, "Layer profile", "profile", lambda: self._pick_file("profile", [("Profile", "*.yaml *.yml")]), "optional: saved layer roles for this client")
-        self._row(top, 3, "Level heights", "levels", lambda: self._pick_file("levels", [("Level workbook", "*.xlsx")]), "optional: the filled levels workbook")
+        self._row(top, 3, "Level heights", "levels", lambda: self._pick_file("levels", [("Level workbook", "*.xlsx")]), "optional: a level workbook to use instead of the storeys")
         self._row(top, 4, "Save results in", "out", self._pick_out, "leave empty to write next to the drawing")
 
         opts = ttk.Frame(top)
@@ -143,7 +143,7 @@ class C2BWindow(tk.Tk):
         self.next_frame.pack(fill="x")
         self.next_label = ttk.Label(self.next_frame, text="", style="Next.TLabel", anchor="w", wraplength=980)
         self.next_label.pack(side="left", fill="x", expand=True)
-        self.levels_btn = ttk.Button(self.next_frame, text="Set floor heights…", command=self._edit_levels)
+        self.storeys_btn = ttk.Button(self.next_frame, text="Storeys…", command=self._edit_storeys)
 
         self.actions = ttk.Frame(self, padding=(14, 0, 14, 12))
         self.actions.pack(fill="x")
@@ -273,10 +273,12 @@ class C2BWindow(tk.Tk):
         else:
             self.status.configure(text=f"{summary}   —   nothing to flag", foreground=COLORS["good"])
         self.next_label.configure(text=f"Next:  {result.next_step}" if result.next_step else "")
-        needs_levels = bool(result.levels_xlsx and Path(result.levels_xlsx).exists() and not result.revit_json)
-        self.levels_btn.pack_forget()
-        if needs_levels:
-            self.levels_btn.pack(side="right", padx=(10, 0))
+        # The storey editor is always offered once a drawing has been read. It is not a remedy
+        # for a missing elevation any more -- it is where the building's levels are decided, and
+        # a drafter reaches for it on a run that went perfectly as often as on one that did not.
+        self.storeys_btn.pack_forget()
+        if result.storeys_json:
+            self.storeys_btn.pack(side="right", padx=(10, 0))
 
         for label, path in (("Open the template DXF", result.template_dxf), ("Review workbook", result.review_xlsx),
                             ("Schedules", result.schedules_xlsx), ("Overlay on the client drawing", result.review_dxf),
@@ -285,70 +287,47 @@ class C2BWindow(tk.Tk):
             if path and Path(path).exists():
                 ttk.Button(self.actions, text=label, command=lambda p=path: _open(p)).pack(side="left", padx=(0, 8), pady=6)
 
-    # ---------------------------------------------------------- floor heights
-    def _edit_levels(self) -> None:
-        """Type the floor elevations here rather than in Excel, then run again.
+    # ---------------------------------------------------------------- storeys
+    def _edit_storeys(self) -> None:
+        """Add, remove, move, repeat and size the building's storeys, then run again.
 
-        The elevations are the only thing a plan cannot tell us, and sending a drafter out to a
-        workbook to supply them is what turns one run into three.
+        The elevations are the one thing a plan cannot tell us, and a drawing's floor plans are
+        not the same list as a building's storeys: eight typical floors are drawn once. This is
+        where that gap is closed, and ``levels.xlsx`` is written from what is decided here.
         """
-        from ..export.levels import level_rows_for_editing, write_level_elevations
+        from ..storeys import StoreySchedule
+        from ..ui import edit_storeys
 
-        path = self.result.levels_xlsx if self.result else None
+        path = self.result.storeys_json if self.result else None
         if not path or not Path(path).exists():
-            messagebox.showinfo("C2B", "Run a drawing first: the floors come from it.")
+            messagebox.showinfo("C2B", "Run a drawing first: the storeys are seeded from it.")
             return
         try:
-            rows = level_rows_for_editing(path)
+            schedule = StoreySchedule.load(path)
         except Exception as ex:
             messagebox.showerror("C2B", f"Could not read {Path(path).name}:\n{ex}")
             return
 
-        win = tk.Toplevel(self)
-        win.title("Floor heights")
-        win.transient(self)
-        win.grab_set()
-        ttk.Label(win, text="Top of the structural slab for each floor, in millimetres.\n"
-                            "Below ground is negative. Leave a floor empty to skip it.",
-                  padding=(14, 12, 14, 6), justify="left").pack(fill="x")
-
-        table = ttk.Frame(win, padding=(14, 0, 14, 8))
-        table.pack(fill="both", expand=True)
-        ttk.Label(table, text="Floor", style="Head.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12))
-        ttk.Label(table, text="Height (mm)", style="Head.TLabel").grid(row=0, column=1, sticky="w")
-        entries = []
-        for i, row in enumerate(rows, start=1):
-            name = row["revit_level_name"] or row["floor_name"] or row["floor_id"]
-            ttk.Label(table, text=f"{row['floor_id']}  {name}").grid(row=i, column=0, sticky="w", pady=2, padx=(0, 12))
-            var = tk.StringVar(value="" if row["elevation_mm"] is None else f"{row['elevation_mm']:.0f}")
-            ttk.Entry(table, textvariable=var, width=14, justify="right").grid(row=i, column=1, sticky="w", pady=2)
-            entries.append((row["excel_row"], var))
-
-        def save_and_run() -> None:
-            values: dict[int, float | None] = {}
-            for excel_row, var in entries:
-                text = var.get().strip().replace(",", "")
-                if not text:
-                    values[excel_row] = None
-                    continue
-                try:
-                    values[excel_row] = float(text)
-                except ValueError:
-                    messagebox.showerror("C2B", f"'{text}' is not a number.", parent=win)
-                    return
-            try:
-                write_level_elevations(path, values)
-            except Exception as ex:
-                messagebox.showerror("C2B", f"Could not save the heights:\n{ex}", parent=win)
-                return
-            self.vars["levels"].set(str(path))
-            win.destroy()
-            self.start()
-
-        buttons = ttk.Frame(win, padding=(14, 0, 14, 12))
-        buttons.pack(fill="x")
-        ttk.Button(buttons, text="Save and run again", style="Run.TButton", command=save_and_run).pack(side="left")
-        ttk.Button(buttons, text="Cancel", command=win.destroy).pack(side="left", padx=8)
+        plans = self.result.plan_floors if self.result else []
+        subtitle = (f"{len(schedule)} storeys from {len(plans)} floor "
+                    f"{'plan' if len(plans) == 1 else 'plans'} in {Path(self.vars['drawing'].get()).name}. "
+                    "Repeat a storey to build a typical floor more than once.")
+        try:
+            saved = edit_storeys(schedule, plan_floors=plans, parent=self, subtitle=subtitle)
+        except Exception as ex:
+            messagebox.showerror("C2B", f"The storey editor could not open:\n{ex}")
+            return
+        if not saved:
+            return
+        try:
+            schedule.save(path)
+        except Exception as ex:
+            messagebox.showerror("C2B", f"Could not save the storeys:\n{ex}")
+            return
+        # The levels the drawing was run with have changed, so a workbook chosen on a previous
+        # run would now contradict them. The storeys are the source of truth from here.
+        self.vars["levels"].set("")
+        self.start()
 
     # -------------------------------------------------------------- settings
     def _load_settings(self) -> None:

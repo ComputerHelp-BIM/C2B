@@ -97,26 +97,21 @@ def test_the_run_button_is_not_inside_the_settings_grid():
 
 # ----------------------------------------------------------- the last step, in the window
 def test_the_run_prepares_the_revit_model_too(tmp_path):
-    """A drafter should never open a terminal to reach the last step of the pipeline."""
-    from c2b.export.levels import level_rows_for_editing, write_level_elevations
+    """A drafter should never open a terminal to reach the last step of the pipeline.
 
+    Nor should they have to run twice. The storey schedule is seeded from the drawing, so the
+    *first* run already has levels and already writes a Revit plan; the storey window is for
+    correcting that stack, not for supplying it from nothing.
+    """
     dxf = build_demo_drawing(tmp_path / "demo.dxf")
     lines, progress = _collect()
     first = run_job(JobSettings(drawing=dxf, out_dir=tmp_path / "out"), progress)
 
-    # no elevations yet: there is nothing to place, and the window says exactly that
-    assert first.revit_json is None
-    assert "elevation" in first.next_step.lower() and "run again" in first.next_step.lower()
-
-    rows = level_rows_for_editing(first.levels_xlsx)
-    write_level_elevations(first.levels_xlsx, {r["excel_row"]: 3000.0 * i for i, r in enumerate(rows)})
-
-    lines, progress = _collect()
-    second = run_job(JobSettings(drawing=dxf, out_dir=tmp_path / "out", levels=first.levels_xlsx), progress)
-    assert second.revit_json and Path(second.revit_json).exists()
-    assert second.revit_xlsx and Path(second.revit_xlsx).exists()
-    assert "Revit" in second.next_step and Path(second.revit_json).name in second.next_step
+    assert first.revit_json and Path(first.revit_json).exists()
+    assert first.revit_xlsx and Path(first.revit_xlsx).exists()
+    assert "Revit" in first.next_step and Path(first.revit_json).name in first.next_step
     assert [m for level, m in lines if m.startswith("4 of 4")], "the Revit step has to be visible as a step"
+    assert first.storeys_json and Path(first.storeys_json).exists()
 
 
 def test_the_template_description_is_found_not_asked_for(tmp_path):
@@ -137,39 +132,91 @@ def test_the_template_description_is_found_not_asked_for(tmp_path):
     assert repo.exists()
 
 
-def test_floor_heights_round_trip_without_excel(tmp_path):
-    from c2b.export.levels import level_rows_for_editing, write_level_elevations
+def test_the_first_run_seeds_a_stack_of_storeys_from_the_drawing(tmp_path):
+    """An empty workbook to go and fill in was what turned one run into three."""
+    from c2b.storeys import StoreySchedule
 
     dxf = build_demo_drawing(tmp_path / "demo.dxf")
     _lines, progress = _collect()
     res = run_job(JobSettings(drawing=dxf, out_dir=tmp_path / "out"), progress)
 
-    rows = level_rows_for_editing(res.levels_xlsx)
-    assert rows and all(r["elevation_mm"] is None for r in rows)
-    assert all(r["floor_id"] and r["excel_row"] >= 2 for r in rows)
-
-    write_level_elevations(res.levels_xlsx, {rows[0]["excel_row"]: -1500.0, rows[-1]["excel_row"]: None})
-    back = level_rows_for_editing(res.levels_xlsx)
-    assert back[0]["elevation_mm"] == -1500.0
-    assert back[-1]["elevation_mm"] is None
-    assert back[0]["floor_name"] == rows[0]["floor_name"], "editing heights must not disturb the rest"
+    schedule = StoreySchedule.load(res.storeys_json)
+    assert len(schedule) == len(res.plan_floors) >= 2
+    assert schedule.ok([fid for fid, _ in res.plan_floors])
+    assert all(s.plan_floor_id for s in schedule.storeys), "every storey is built from a plan"
+    assert schedule.elevations() == sorted(schedule.elevations())
 
 
-def test_the_window_shows_the_next_step_and_offers_the_heights_editor():
+def test_what_the_storey_window_saves_is_what_the_next_run_builds(tmp_path):
+    """levels.xlsx takes its data from the storey window now, so the edit has to survive."""
+    from c2b.export.levels import read_levels
+    from c2b.storeys import StoreySchedule
+
+    dxf = build_demo_drawing(tmp_path / "demo.dxf")
+    _lines, progress = _collect()
+    first = run_job(JobSettings(drawing=dxf, out_dir=tmp_path / "out"), progress)
+
+    # what the window does: retype an elevation, repeat a storey, save
+    schedule = StoreySchedule.load(first.storeys_json)
+    schedule.set_elevation(0, -1500.0)
+    schedule.repeat(len(schedule) - 1, times=2)
+    schedule.save(first.storeys_json)
+    before = schedule.elevations()
+
+    _lines, progress = _collect()
+    second = run_job(JobSettings(drawing=dxf, out_dir=tmp_path / "out"), progress)
+
+    assert StoreySchedule.load(second.storeys_json).elevations() == before
+    assert [r.elevation for r in read_levels(second.levels_xlsx)] == before
+    assert second.counts["levels"] == len(before)
+
+
+def test_a_level_workbook_named_on_purpose_still_wins(tmp_path):
+    """A scripted run pointing --levels at its own workbook is a deliberate instruction."""
+    from c2b.export.levels import write_levels_from_storeys
+    from c2b.storeys import StoreySchedule
+
+    dxf = build_demo_drawing(tmp_path / "demo.dxf")
+    _lines, progress = _collect()
+    first = run_job(JobSettings(drawing=dxf, out_dir=tmp_path / "out"), progress)
+
+    mine = StoreySchedule.load(first.storeys_json)
+    mine.set_elevation(0, 12345.0)
+    chosen = write_levels_from_storeys(mine, tmp_path / "mine.xlsx")
+
+    _lines, progress = _collect()
+    second = run_job(JobSettings(drawing=dxf, out_dir=tmp_path / "out", levels=chosen), progress)
+    assert StoreySchedule.load(second.storeys_json).elevations()[0] == 12345.0
+
+
+def test_the_window_shows_the_next_step_and_offers_the_storey_editor():
     """A log of forty lines does not tell a drafter which line is addressed to them."""
     import ast
 
     source = (Path(__file__).resolve().parent.parent / "src" / "c2b" / "gui" / "app.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     names = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
-    assert "_edit_levels" in names
+    assert "_edit_storeys" in names
 
     finish = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_finish")
     body = ast.unparse(finish)
     assert "next_step" in body, "the window never shows the next step"
-    assert "levels_btn.pack" in body, "the heights editor is never offered"
-    # it is offered when the heights are what is missing, not always
-    assert "not result.revit_json" in body
+    assert "storeys_btn.pack" in body, "the storey editor is never offered"
+    # offered on every run that read a drawing, not only when something went wrong
+    assert "result.storeys_json" in body and "not result.revit_json" not in body
+
+
+def test_saving_storeys_drops_a_level_workbook_chosen_on_an_earlier_run():
+    """Otherwise the workbook would contradict the storeys on the very next run."""
+    import ast
+
+    source = (Path(__file__).resolve().parent.parent / "src" / "c2b" / "gui" / "app.py").read_text(encoding="utf-8")
+    edit = next(n for n in ast.walk(ast.parse(source))
+                if isinstance(n, ast.FunctionDef) and n.name == "_edit_storeys")
+    body = ast.unparse(edit)
+    assert "schedule.save(path)" in body
+    assert "self.vars['levels'].set('')" in body
+    assert body.index("schedule.save(path)") < body.index("self.start()")
 
 
 def test_the_firms_template_dxf_is_found_not_asked_for(tmp_path):

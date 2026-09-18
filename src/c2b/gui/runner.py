@@ -80,6 +80,10 @@ class JobResult:
     verify_md: Path | None = None
     review_dxf: Path | None = None
     levels_xlsx: Path | None = None
+    storeys_json: Path | None = None
+    #: The floor plans the drawing has, as (floor_id, name), for the storey editor's
+    #: "Built from" column. Without it the editor can only offer ids.
+    plan_floors: list[tuple[str, str]] = field(default_factory=list)
     revit_json: Path | None = None
     revit_xlsx: Path | None = None
     next_step: str = ""                      # the one thing to do next, in plain words
@@ -94,7 +98,6 @@ def run_job(settings: JobSettings, progress: Progress) -> JobResult:
     from ..dwg import ensure_dxf
     from ..export.excel import write_workbook
     from ..export.jsonout import write_json
-    from ..export.levels import read_level_settings, read_levels, write_levels_template
     from ..export.normalized_excel import write_normalized_workbook
     from ..export.report import write_report
     from ..export.review_dxf import write_review_dxf
@@ -137,19 +140,8 @@ def run_job(settings: JobSettings, progress: Progress) -> JobResult:
         for f in p.floors:
             progress("info", f"           {f.id}  {f.name}")
 
-        levels_path = Path(settings.levels) if settings.levels else out / f"{stem}.levels.xlsx"
-        res.levels_xlsx = levels_path
-        rows = ref = None
-        if levels_path.exists():
-            rows = read_levels(levels_path)
-            ref = read_level_settings(levels_path).get("level_reference")
-            filled = [r for r in rows if r.elevation is not None]
-            progress("info" if filled else "warn",
-                     f"         levels: {len(filled)} of {len(rows)} floors have an elevation in {levels_path.name}")
-            rows = rows if filled else None
-        else:
-            write_levels_template(p, levels_path)
-            progress("warn", f"         fill {levels_path.name} with floor elevations and run again for the elevation frame")
+        res.plan_floors = [(f.id, f.name) for f in p.floors]
+        rows, ref, res.levels_xlsx, res.storeys_json = _levels_from_storeys(p, settings, out, stem, progress)
 
         progress("step", "2 of 4   Drawing it in the template")
         seed = Path(settings.seed) if settings.seed else _find_beside(out, drawing, SEED_TEMPLATE_NAMES)
@@ -203,6 +195,74 @@ def run_job(settings: JobSettings, progress: Progress) -> JobResult:
         progress("bad", f"Stopped: {res.error}")
         progress("info", traceback.format_exc(limit=3))
     return res
+
+
+def storey_sidecar(out: Path, stem: str) -> Path:
+    """Where a drawing's storey schedule is kept. One file, beside its other output."""
+    return out / f"{stem}.storeys.json"
+
+
+def load_storeys(project, out: Path, stem: str, levels: Path | None = None):
+    """The storey schedule for this drawing, from the best source available.
+
+    In order: the sidecar the storey window wrote, then a level workbook somebody filled in
+    before the window existed, then the drawing itself. The sidecar wins because the storey
+    window owns the levels now -- ``levels.xlsx`` is written from it on every run, so reading
+    the workbook back in preference would undo the last edit made in the window.
+
+    A workbook named explicitly (``--levels``) is a deliberate instruction and does win: that
+    is how a scripted run drives its own levels.
+    """
+    from ..export.levels import read_levels
+    from ..storeys import StoreySchedule, from_level_rows, from_project
+
+    if levels is not None and Path(levels).exists():
+        return from_level_rows(read_levels(levels), source_file=stem), "the workbook you chose"
+    sidecar = storey_sidecar(out, stem)
+    if sidecar.exists():
+        try:
+            return StoreySchedule.load(sidecar), "your storeys"
+        except Exception:
+            pass                       # a damaged sidecar is re-seeded rather than fatal
+    workbook = out / f"{stem}.levels.xlsx"
+    if workbook.exists():
+        schedule = from_level_rows(read_levels(workbook), source_file=stem)
+        if len(schedule):
+            return schedule, f"{workbook.name}, from before the storey window"
+    return from_project(project), "the drawing"
+
+
+def _levels_from_storeys(project, settings: JobSettings, out: Path, stem: str, progress: Progress):
+    """Load the storeys, write the level workbook from them, and hand the rows on.
+
+    Returns ``(level rows, level reference, workbook path, sidecar path)``.
+    """
+    from ..export.levels import read_level_settings, write_levels_from_storeys
+
+    levels = Path(settings.levels) if settings.levels else None
+    schedule, where = load_storeys(project, out, stem, levels)
+    sidecar = storey_sidecar(out, stem)
+    schedule.save(sidecar)
+
+    workbook = levels if levels is not None else out / f"{stem}.levels.xlsx"
+    reference = read_level_settings(workbook).get("level_reference") if workbook.exists() else None
+    if levels is None:
+        write_levels_from_storeys(schedule, workbook, project, level_reference=reference or "SSL")
+
+    problems = schedule.problems([f.id for f in project.floors])
+    errors = [x for x in problems if x.severity == "ERROR"]
+    if not len(schedule):
+        progress("warn", "         no storeys yet - press 'Storeys' to set the building up")
+    else:
+        elevations = schedule.elevations()
+        progress("good" if not errors else "warn",
+                 f"         {len(schedule)} storeys from {where}, {elevations[0]:.0f} to {elevations[-1]:.0f} mm")
+    for x in errors[:5]:
+        progress("bad", f"         {x.message}")
+    for x in [y for y in problems if y.severity == "WARNING"][:5]:
+        progress("warn", f"         {x.message}")
+    return (schedule.level_rows() if len(schedule) and not errors else None,
+            reference, workbook, sidecar)
 
 
 def _write_revit_plan(np_, out: Path, stem: str, drawing: Path, progress: Progress, defaults: dict):

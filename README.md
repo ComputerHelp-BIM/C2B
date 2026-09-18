@@ -133,7 +133,8 @@ c2b verify out/client/client.template.dxf
 #    -> client.reread.json, client.reread.xlsx, client.verify.xlsx, client.verify.md
 ```text
 
-See `docs/template-spec.md` for what the normaliser does and how every template
+See [docs/storeys.md](docs/storeys.md) for the storey editor -- where the building's levels
+are decided -- `docs/template-spec.md` for what the normaliser does and how every template
 convention is configured, `docs/round-trip.md` for the verification, and
 [docs/revit-run.md](docs/revit-run.md) for the whole Revit round trip step by step.
 
@@ -197,6 +198,8 @@ src/c2b/
                      legend.py     the client's hatch legend → meanings
                      outlines.py   closed shapes out of polylines, hatches, line loops
   pipeline.py      utility 1 orchestration
+  storeys.py       the building's storeys: add, remove, move, repeat    docs/storeys.md
+  ui/              WPF windows (Python drives WPF), brand tokens, Tk fallback
   normalize/       utility 3: spec, stacks, spans, naming, geometry, model    docs/template-spec.md
                      pipeline.py   phase order and the floor/level frame
                      columns.py    stacks → template columns and their marks
