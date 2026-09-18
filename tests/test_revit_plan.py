@@ -713,3 +713,29 @@ def test_a_default_never_overrides_a_size_the_drawing_gave():
             if x.kind == "beam"]
     assert a.params["h"] == 600.0, "the drawing's own depth must win"
     assert "assumed" not in (a.comment or "")
+
+
+def test_a_column_between_two_levels_at_one_height_is_never_emitted_with_none():
+    """Revit refuses a column of no height, and it is an error that cannot be ignored.
+
+    One of them stops the whole import: Test17 produced 171 and nothing but the levels was built.
+    """
+    model = _two_floor_model()
+    model.levels[1].elevation_mm = 0.0            # a workbook where two floors share a height
+    plan = build_plan(model, RevitMapping())
+    for a in [x for x in plan.actions if x.kind == "column"]:
+        base = next(lv.elevation_mm for lv in plan.levels if lv.id == a.level_id)
+        top = next(lv.elevation_mm for lv in plan.levels if lv.id == a.top_level_id)
+        assert top - (base + a.base_offset_mm) >= 3000.0 - 1e-6, "a column of no height got out"
+    assert [d for d in plan.diagnostics if d.code == "REVIT_LEVELS_NOT_APART"], \
+        "the workbook that caused it is not reported"
+
+
+def test_levels_in_the_wrong_order_are_caught_too():
+    model = _two_floor_model()
+    model.levels[1].elevation_mm = -500.0         # the floor above is below
+    plan = build_plan(model, RevitMapping())
+    for a in [x for x in plan.actions if x.kind == "column"]:
+        base = next(lv.elevation_mm for lv in plan.levels if lv.id == a.level_id)
+        top = next(lv.elevation_mm for lv in plan.levels if lv.id == a.top_level_id)
+        assert top - (base + a.base_offset_mm) > 0

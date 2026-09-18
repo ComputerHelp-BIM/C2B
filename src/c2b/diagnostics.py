@@ -96,6 +96,7 @@ CODES: dict[str, str] = {
     "REVIT_COLUMN_ON_FOOTING": "Column on the lowest founded plan: the floor above already builds it down to here",
     "REVIT_DEPTH_ASSUMED": "The drawing never sized this member, so the default set in the window was used",
     "REVIT_NO_OUTLINE": "Outline has no corners Revit can close a boundary with, so it is not built",
+    "REVIT_LEVELS_NOT_APART": "Two levels are at the same height, so a column between them would have none",
 }
 
 

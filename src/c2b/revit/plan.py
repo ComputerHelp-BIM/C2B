@@ -260,9 +260,13 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
     # Floors the drawing gives something to stand on. A column on the lowest level of a founded
     # plan is the same member the floor above already builds, drawn again at its base.
     founded_floors = {f.floor_id for f in np_.footings}
+    elevation = {lv.id: lv.elevation_mm for lv in levels}
 
     def levels_for(floor_id: str) -> list[str]:
         return floor_levels.get(floor_id, [])
+
+    def plan_level_name(level_id: str | None) -> str:
+        return next((lv.name for lv in levels if lv.id == level_id), str(level_id))
 
     # ---- grids (once, from the lowest floor that has them) -----------------
     if mapping.build.get("grids") and mapping.create_grids:
@@ -294,6 +298,19 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
                     # nothing is drawn to hold it, so it hangs below its own level by a stated
                     # depth rather than not being built at all
                     base, base_offset = lid, -abs(mapping.column_min_height_mm)
+
+                # Two levels at the same height, or a workbook where one is above the next, make
+                # a column of no height at all. Revit refuses it outright -- "Change Offset Value
+                # so that Column height is not 0.0" is an error that cannot be ignored, and one
+                # of them stops the whole import -- so the member is given the stated minimum
+                # and the workbook is reported rather than the run being lost.
+                height = (elevation.get(top, 0.0)) - (elevation.get(base, 0.0) + base_offset)
+                if height <= 1.0:
+                    diag.warning("REVIT_LEVELS_NOT_APART",
+                                 f"Column {c.mark} spans {plan_level_name(base)} to {plan_level_name(top)}, "
+                                 f"which are {height:.0f} mm apart; built {mapping.column_min_height_mm:.0f} mm "
+                                 "tall instead. Check the floor heights.", floor_id=c.floor_id, element_id=c.id)
+                    base_offset = elevation.get(top, 0.0) - elevation.get(base, 0.0) - abs(mapping.column_min_height_mm)
                 if as_wall:
                     # a leg modelled as a wall: it runs along its own longer side, and the
                     # shorter side is the wall thickness

@@ -357,7 +357,7 @@ def check_offsets_of(placed, rows):
     """
     wrong = {}
     for action, element, level in placed:
-        if level is None or action.get("kind") not in ("footing", "column", "pile"):
+        if level is None or not alive(element) or action.get("kind") not in ("footing", "column", "pile"):
             continue
         want = action.get("base_offset_mm", 0.0)
         try:
@@ -383,7 +383,7 @@ def check_levels_of(placed, rows):
     """
     wrong = {}
     for action, element, level in placed:
-        if level is None:
+        if level is None or not alive(element):
             continue
         try:
             actual = level_id_of(element)
@@ -401,6 +401,14 @@ def check_levels_of(placed, rows):
             found = "another level"
         rows.append((False, "%d %ss meant for %s" % (count, kind, wanted), wanted, found,
                      "Revit hosted them elsewhere, so they are in the wrong place and counted twice"))
+
+
+def alive(element):
+    """Is this handle still a real element? After a rollback, nothing created in the run is."""
+    try:
+        return element is not None and element.IsValidObject
+    except Exception:
+        return False
 
 
 def check_what_was_built(plan, symbols, floor_types, wall_types, levels_by_id, made, placed):
@@ -444,6 +452,10 @@ def check_what_was_built(plan, symbols, floor_types, wall_types, levels_by_id, m
         if element is None:
             rows.append((False, "type %s" % name, "exists", "missing",
                          "everything of this type failed"))
+            continue
+        if not alive(element):
+            rows.append((False, "type %s" % name, "exists", "no longer in the model",
+                         "the run was rolled back, so nothing it made is there"))
             continue
         for param, value in want.items():
             if param == "__thickness__":
@@ -681,7 +693,11 @@ def main():
     t.Commit()
 
     # ---- check what was built, without leaving Revit ----------------------
-    checked = check_what_was_built(plan, symbols, floor_types, wall_types, levels_by_id, made, placed)
+    try:
+        checked = check_what_was_built(plan, symbols, floor_types, wall_types, levels_by_id, made, placed)
+    except Exception as ex:
+        checked = []
+        note("failed", "the check could not run: %s" % ex)
     wrong = [row for row in checked if not row[0]]
 
     # ---- report ----------------------------------------------------------

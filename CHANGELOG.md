@@ -13,6 +13,25 @@ importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes
 values.
 
+## [0.20.1] - 2026-09-18
+
+Two failures from the Test17 run, where nothing but the levels was built.
+
+### Fixed (0.20.1)
+
+- **171 columns of no height stopped the import.** *"Change Offset Value so that Column height is
+  not 0.0"* is an error Revit cannot ignore, and one of them ends the whole transaction -- so
+  every other element went with it. It happens when the level workbook puts two floors at the
+  same height, or one above the next in the wrong order. The planner now works out each column's
+  real height from the two elevations and never emits one that is not positive: it builds the
+  member at the stated minimum and reports the workbook rows that caused it
+  (`REVIT_LEVELS_NOT_APART`), rather than losing the run to it.
+- **The import's own check crashed the run.** After Revit rolled the transaction back, every
+  element the run created became a dead handle, and reading one threw *"The referenced object is
+  not valid"* -- so a run that had already failed ended in a traceback instead of a report. Every
+  read-back now tests the handle first, and the whole check is advisory: it can report that it
+  could not run, but it can never be the reason a run ends.
+
 ## [0.20.0] - 2026-09-18
 
 ### Fixed (0.20.0)

@@ -9,7 +9,7 @@ schema with diagnostics, and normalising them into the firm's template drawing
 (`CH-` layers, `C12-300X900` marks, spans between supports, slab panels, level
 frame).
 
-Version `0.20.0` (tool) — extraction schema `0.7.2`, normalised schema `0.10.1`.
+Version `0.20.1` (tool) — extraction schema `0.7.2`, normalised schema `0.10.1`.
 See [CHANGELOG.md](CHANGELOG.md).
 
 ## Using it
@@ -220,7 +220,7 @@ profiles/          client profiles (YAML)
 samples/           client drawings, in Git LFS                          docs/git-lfs.md
 ```
 
-## Known limits of v0.20.0
+## Known limits of v0.20.1
 
 - Cantilever slabs, chajjas and balconies need the client's slab edge lines;
   without them a
