@@ -9,8 +9,6 @@ dist/
 venv/
 
 # Client drawings and generated outputs never go into git
-samples/*.dxf
-samples/*.dwg
 samples/**/out/
 out/
 *.xlsx
