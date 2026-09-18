@@ -1,4 +1,4 @@
-# Canonical schema v0.7.1
+# Canonical schema v0.7.2
 
 Written by `c2b extract` as `<stem>.c2b.json`. All lengths are millimetres, all
 angles

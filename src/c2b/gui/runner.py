@@ -40,6 +40,9 @@ class JobSettings:
     levels: Path | None = None
     units: str | None = None                 # None = read from the drawing
     column_size_from: str = "tag"            # "tag" (the client's stated size) or "outline" (measure the drawing)
+    # What to build a beam or a slab the drawing never sized. Empty means do not build it.
+    default_beam_depth_mm: float | None = None
+    default_slab_thickness_mm: float | None = None
 
 
 #: Where the firm's Revit template description lives. Looked for beside the output, then in a
@@ -178,7 +181,9 @@ def run_job(settings: JobSettings, progress: Progress) -> JobResult:
             res.next_step = ("Fill in the floor elevations below and press Run again. "
                              "Until then the Revit model cannot be built.")
         else:
-            res.revit_json, res.revit_xlsx = _write_revit_plan(np_, out, stem, dxf, progress)
+            res.revit_json, res.revit_xlsx = _write_revit_plan(
+                np_, out, stem, dxf, progress,
+                {"beam": settings.default_beam_depth_mm, "slab": settings.default_slab_thickness_mm})
             res.next_step = ("Open Revit on your structural template, press C2B and pick "
                              f"{res.revit_json.name}." if res.revit_json else
                              "The Revit plan could not be written; see the messages above.")
@@ -200,7 +205,7 @@ def run_job(settings: JobSettings, progress: Progress) -> JobResult:
     return res
 
 
-def _write_revit_plan(np_, out: Path, stem: str, drawing: Path, progress: Progress):
+def _write_revit_plan(np_, out: Path, stem: str, drawing: Path, progress: Progress, defaults: dict):
     """The Revit build plan, checked against the firm's template, as part of the ordinary run.
 
     Nobody should have to open a terminal to reach the last step of the pipeline, and nobody
@@ -213,8 +218,11 @@ def _write_revit_plan(np_, out: Path, stem: str, drawing: Path, progress: Progre
 
     mapping_path = out / f"{stem}.revit-mapping.yaml"
     mapping = RevitMapping.load(mapping_path) if mapping_path.exists() else RevitMapping()
-    if not mapping_path.exists():
-        mapping.save(mapping_path)
+    if defaults.get("beam") is not None:
+        mapping.default_beam_depth_mm = defaults["beam"]
+    if defaults.get("slab") is not None:
+        mapping.default_slab_thickness_mm = defaults["slab"]
+    mapping.save(mapping_path)
     plan = build_plan(np_, mapping)
 
     template = _find_beside(out, drawing, REVIT_TEMPLATE_NAMES)
@@ -232,6 +240,13 @@ def _write_revit_plan(np_, out: Path, stem: str, drawing: Path, progress: Progre
 
     built = ", ".join(f"{n} {kind}s" for kind, n in sorted(plan.counts.items()) if kind != "levels" and n)
     progress("good", f"         {built or 'nothing to build'}")
+    assumed = sum(1 for d in plan.diagnostics if d.code == "REVIT_DEPTH_ASSUMED")
+    unsized = sum(1 for d in plan.diagnostics if d.code == "REVIT_NO_SIZE")
+    if assumed:
+        progress("info", f"         {assumed} members the drawing never sized were built at the default")
+    if unsized:
+        progress("warn", f"         {unsized} members have no size and no default, so they are not built - "
+                         "set a default beam depth and slab thickness to include them")
     check = plan.template_check
     if check is not None:
         c = check.summary()

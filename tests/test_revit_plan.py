@@ -645,3 +645,71 @@ def test_every_panel_the_planner_emits_has_corners_revit_can_use():
                 continue
             twice = abs((p1[0] - p0[0]) * (p2[1] - p0[1]) - (p1[1] - p0[1]) * (p2[0] - p0[0]))
             assert twice / base > 1.0, f"a vertex only {twice / base:.3f} mm off the line survived"
+
+
+# ------------------------------- a column stands on something, or it is not built
+def _founded_model():
+    """The lowest plan is a foundation: it draws footings, and the columns again at their base."""
+    from c2b.normalize.model import NFooting
+
+    model = _two_floor_model()
+    model.footings = [NFooting(id="F1", floor_id="L01", mark="F1-600THK", kind="footing", shape="rect",
+                               center=_pt(1000, 2000), width_mm=1200.0, depth_mm=1200.0,
+                               thickness_mm=600.0, rotation_deg=0.0,
+                               outline=[_pt(400, 1400), _pt(1600, 1400), _pt(1600, 2600), _pt(400, 2600)])]
+    return model
+
+
+def test_a_column_is_not_hung_below_a_foundation_that_holds_it():
+    """The ground floor's column already reaches down to the foundation.
+
+    A second one hanging 3 m below it stands on nothing and counts the member twice.
+    """
+    plan = build_plan(_founded_model(), RevitMapping())
+    columns = [a for a in plan.actions if a.kind == "column"]
+    assert [a.top_level_id for a in columns] == ["LV2"], "only the founded one should go"
+    assert columns[0].level_id == "LV1" and columns[0].base_offset_mm == 0.0
+    assert [d.code for d in plan.diagnostics if d.code == "REVIT_COLUMN_ON_FOOTING"]
+
+
+def test_with_nothing_drawn_to_hold_it_the_column_still_hangs():
+    """A plan with no foundation at all: the member is kept rather than lost."""
+    plan = build_plan(_two_floor_model(), RevitMapping())
+    lowest = next(a for a in plan.actions if a.kind == "column" and a.top_level_id == "LV1")
+    assert lowest.base_offset_mm == -3000.0
+
+
+def test_the_founded_rule_can_be_turned_off():
+    plan = build_plan(_founded_model(), RevitMapping(column_below_lowest_when_founded=True))
+    assert len([a for a in plan.actions if a.kind == "column"]) == 2
+
+
+# ------------------------------------ a member the drawing never sized
+def test_an_unsized_beam_is_built_at_the_default_rather_than_dropped():
+    model = _model(beams=[_beam(depth_mm=None)])
+    assert not [a for a in build_plan(model, RevitMapping()).actions if a.kind == "beam"]
+
+    (a,) = [x for x in build_plan(model, RevitMapping(default_beam_depth_mm=600.0)).actions
+            if x.kind == "beam"]
+    assert a.type_name == "CH-300 X 600"
+    assert a.params == {"b": 300.0, "h": 600.0}
+    assert "depth assumed" in (a.comment or ""), "nothing says the depth was not the drawing's"
+
+
+def test_an_unsized_slab_is_built_at_the_default_rather_than_dropped():
+    panel = NPanel(id="P1", floor_id="L01", mark="S1", kind="slab", thickness_mm=None,
+                   outline=[_pt(0, 0), _pt(5000, 0), _pt(5000, 4000), _pt(0, 4000)],
+                   centroid=_pt(2500, 2000), area_m2=20.0, mark_position=_pt(2500, 2000))
+    assert not [a for a in build_plan(_model(panels=[panel]), RevitMapping()).actions if a.kind == "floor"]
+
+    (a,) = [x for x in build_plan(_model(panels=[panel]), RevitMapping(default_slab_thickness_mm=125.0)).actions
+            if x.kind == "floor"]
+    assert a.thickness_mm == 125.0 and a.type_name == "125 THK. RCC SLAB"
+    assert "thickness assumed" in (a.comment or "")
+
+
+def test_a_default_never_overrides_a_size_the_drawing_gave():
+    (a,) = [x for x in build_plan(_model(beams=[_beam()]), RevitMapping(default_beam_depth_mm=900.0)).actions
+            if x.kind == "beam"]
+    assert a.params["h"] == 600.0, "the drawing's own depth must win"
+    assert "assumed" not in (a.comment or "")

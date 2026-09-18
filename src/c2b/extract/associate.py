@@ -250,23 +250,30 @@ def associate_tags(
                     tag_owner[ti] = j
                     break
 
-    # pass 5: relaxed radius for orphans, only to elements lacking that kind (and parallel for beams)
+    # pass 5: relaxed radius for orphans, only to elements lacking that kind.
+    #
+    # Running along the member is how a beam label is usually written, so it is preferred -- but
+    # it is not required here, because this pass is the last chance for a tag nobody claimed to
+    # reach an element with no tag of its kind, and both sides are otherwise lost. Test10's
+    # drafter writes "B_300 X 600" horizontally beside vertical beams: 71 beams of 271 came out
+    # with no depth and were dropped from the Revit model, for the orientation of the lettering.
     for ti, tag in enumerate(tags):
         if ti in tag_owner:
             continue
         pt = Point(tag.center)
-        best_i, best_d = None, None
+        best = None                       # (not parallel, distance, index): parallel wins a tie
         for i in (int(k) for k in tree.query(pt.buffer(max_search_mm), predicate="intersects")):
-            if has_kind(i, kinds[ti]) or not is_parallel(i, tag):
+            if has_kind(i, kinds[ti]):
                 continue
             d = polys[i].distance(pt)
             if d > relaxed_factor * radius_fn(i, tag):
                 continue
-            if best_d is None or d < best_d:
-                best_i, best_d = i, d
-        if best_i is not None:
-            assigned.setdefault(best_i, []).append(ti)
-            tag_owner[ti] = best_i
+            here = (not is_parallel(i, tag), d, i)
+            if best is None or here < best:
+                best = here
+        if best is not None:
+            assigned.setdefault(best[2], []).append(ti)
+            tag_owner[ti] = best[2]
 
     unassigned = [ti for ti in range(len(tags)) if ti not in tag_owner]
     return assigned, unassigned

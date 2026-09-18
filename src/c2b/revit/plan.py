@@ -257,6 +257,9 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
     # hang under it, and the columns hold it up from the level beneath. So a column's top is its
     # own floor's level and its base is the one under that.
     level_under = {l.id: (levels[i - 1].id if i > 0 else None) for i, l in enumerate(levels)}
+    # Floors the drawing gives something to stand on. A column on the lowest level of a founded
+    # plan is the same member the floor above already builds, drawn again at its base.
+    founded_floors = {f.floor_id for f in np_.footings}
 
     def levels_for(floor_id: str) -> list[str]:
         return floor_levels.get(floor_id, [])
@@ -282,8 +285,14 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
                 top, base = lid, level_under.get(lid)
                 base_offset = 0.0
                 if base is None:
-                    # the lowest level has nothing under it, so the column hangs below its own
-                    # level by a stated depth rather than not being built at all
+                    if c.floor_id in founded_floors and not mapping.column_below_lowest_when_founded:
+                        diag.info("REVIT_COLUMN_ON_FOOTING",
+                                  f"Column {c.mark} sits on a footing on the lowest plan, and the floor above "
+                                  "already builds it down to here; a second one below the foundation would "
+                                  "stand on nothing", floor_id=c.floor_id, element_id=c.id)
+                        continue
+                    # nothing is drawn to hold it, so it hangs below its own level by a stated
+                    # depth rather than not being built at all
                     base, base_offset = lid, -abs(mapping.column_min_height_mm)
                 if as_wall:
                     # a leg modelled as a wall: it runs along its own longer side, and the
@@ -324,8 +333,14 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
     if mapping.build.get("beams"):
         for b in np_.beams:
             w, d = _round(b.width_mm, step), _round(b.depth_mm, step)
+            assumed = False
+            if w and not d and mapping.default_beam_depth_mm:
+                d, assumed = _round(mapping.default_beam_depth_mm, step), True
+                diag.info("REVIT_DEPTH_ASSUMED", f"Beam {b.mark} ({b.id}) has no depth in the drawing; "
+                          f"built at the {d:.0f} mm default", floor_id=b.floor_id, element_id=b.id)
             if not w or not d:
-                diag.warning("REVIT_NO_SIZE", f"Beam {b.mark} ({b.id}) has no depth; it is skipped", floor_id=b.floor_id, element_id=b.id)
+                diag.warning("REVIT_NO_SIZE", f"Beam {b.mark} ({b.id}) has no depth and no default is set, "
+                             "so it is not built", floor_id=b.floor_id, element_id=b.id)
                 continue
             # a beam the drawing gives two depths is a different family: stepped, or tapered
             # when the second depth is at a free end
@@ -339,6 +354,8 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
                 type_name = _fmt(rule.type_name, w=w, d=d)
                 params = {k: v for k, v in ((rule.width_param, w), (rule.depth_param, d)) if k}
             note = "inverted" if b.inverted else ("cantilever" if b.cantilever else None)
+            if assumed:
+                note = f"{note}, depth assumed" if note else "depth assumed"
             if b.depth_rule:
                 note = f"{note}, depth from {b.depth_rule}" if note else f"depth from {b.depth_rule}"
             for lid in levels_for(b.floor_id):
@@ -356,8 +373,14 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
             if p.kind not in ("slab", "cantilever", "ramp"):
                 continue
             thk = _round(p.thickness_mm, step)
+            thk_assumed = False
+            if not thk and mapping.default_slab_thickness_mm:
+                thk, thk_assumed = _round(mapping.default_slab_thickness_mm, step), True
+                diag.info("REVIT_DEPTH_ASSUMED", f"Slab panel {p.mark} ({p.id}) has no thickness in the drawing; "
+                          f"built at the {thk:.0f} mm default", floor_id=p.floor_id, element_id=p.id)
             if not thk:
-                diag.warning("REVIT_NO_SIZE", f"Slab panel {p.mark} ({p.id}) has no thickness; it is skipped", floor_id=p.floor_id, element_id=p.id)
+                diag.warning("REVIT_NO_SIZE", f"Slab panel {p.mark} ({p.id}) has no thickness and no default is "
+                             "set, so it is not built", floor_id=p.floor_id, element_id=p.id)
                 continue
             rule = mapping.ramp_floor if p.kind == "ramp" else mapping.floor
             outer = _loop(p.outline)
@@ -372,7 +395,9 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
                     id=f"{p.id}@{lid}", kind="floor", category="Floors", type_name=_fmt(rule.type_name, thk=thk),
                     base_type=rule.base_type, params={}, level_id=lid, top_offset_mm=p.top_offset_mm,
                     loops=loops, height_mm=thk, thickness_mm=thk, mark=p.mark,
-                    comment=f"{p.kind}" + (f", sunk {p.sunk_mm:.0f}" if p.sunk_mm else "") + (f", {p.slope_ratio} {p.direction or ''}" if p.slope_ratio else "")))
+                    comment=f"{p.kind}" + (f", sunk {p.sunk_mm:.0f}" if p.sunk_mm else "")
+                            + (f", {p.slope_ratio} {p.direction or ''}" if p.slope_ratio else "")
+                            + (", thickness assumed" if thk_assumed else "")))
 
     # ---- foundations, PCC, piles -------------------------------------------
     if mapping.build.get("foundations"):

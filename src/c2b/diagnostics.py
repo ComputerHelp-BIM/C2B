@@ -93,6 +93,9 @@ CODES: dict[str, str] = {
     "REVIT_FLOOR_NO_LEVEL": "A plan floor has no level in the workbook; its elements are skipped",
     "REVIT_NO_SIZE": "Element has no size and cannot be created in Revit",
     "REVIT_COLUMN_NO_TOP": "Column on the highest level has no level above it",
+    "REVIT_COLUMN_ON_FOOTING": "Column on the lowest founded plan: the floor above already builds it down to here",
+    "REVIT_DEPTH_ASSUMED": "The drawing never sized this member, so the default set in the window was used",
+    "REVIT_NO_OUTLINE": "Outline has no corners Revit can close a boundary with, so it is not built",
 }
 
 

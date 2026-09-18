@@ -132,6 +132,18 @@ class RevitMapping(BaseModel):
     # its base. On the lowest level there is nothing beneath, so it hangs this far below its own
     # level instead of not being built.
     column_min_height_mm: float = 3000.0
+    # ...but only where nothing is drawn to hold it. A foundation plan draws the columns again
+    # at their base, and the column between foundation and ground is already built from the
+    # ground floor's own outline, so hanging another one below the foundation makes a column
+    # standing on nothing and counts the same member twice.
+    column_below_lowest_when_founded: bool = False
+
+    # A beam or a slab the drawing never sizes. C2B leaves it empty through the model and the
+    # template DXF, where "300X?" is a drafter's cue, but a Revit model cannot hold a beam with
+    # no depth and dropping it loses the member altogether. A default set here builds it and
+    # says so on the element.
+    default_beam_depth_mm: float | None = None
+    default_slab_thickness_mm: float | None = None
     # A beam's height in Revit is decided by its family's own z justification and offset unless
     # something states them. CH-Concrete-Rectangular-Beam carries Top / -1500, so every beam sat
     # 1500 below its level on every floor whatever the plan said. C2B states them instead: the

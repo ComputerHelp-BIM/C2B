@@ -113,3 +113,22 @@ def test_size_source_outline_measures_the_drawing_instead(tmp_path):
     assert (by_outline.width_mm, by_outline.depth_mm) == (200.0, 640.0)
     assert by_outline.size_source == "geometry"
     assert by_outline.mark == "SW1", "the tag still names the column even when the drawing sizes it"
+
+
+def test_an_orphan_tag_reaches_an_untagged_beam_whichever_way_it_is_written():
+    """Test10's drafter writes "B_300 X 600" horizontally beside vertical beams.
+
+    Requiring the label to run along the member left 71 of 271 beams with no depth, and every
+    one of them was dropped from the Revit model.
+    """
+    import ast
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parent.parent / "src" / "c2b" / "extract" / "associate.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "associate_tags")
+    body = ast.unparse(fn)
+    # the last-chance pass prefers a parallel candidate but does not insist on one
+    assert "not is_parallel(i, tag)" in body, "orientation is no longer even a preference"
+    assert "has_kind(i, kinds[ti]) or not is_parallel(i, tag)" not in body, \
+        "the last-chance pass still refuses a tag for the orientation of its lettering"

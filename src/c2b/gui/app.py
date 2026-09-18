@@ -48,7 +48,8 @@ class C2BWindow(tk.Tk):
         self.queue: queue.Queue = queue.Queue()
         self.result: JobResult | None = None
         self.worker: threading.Thread | None = None
-        self.vars = {k: tk.StringVar() for k in ("drawing", "seed", "profile", "levels", "out", "units", "col_size")}
+        self.vars = {k: tk.StringVar() for k in ("drawing", "seed", "profile", "levels", "out", "units",
+                                                 "col_size", "beam_depth", "slab_thk")}
         self.vars["units"].set(UNITS[0])
         self.vars["col_size"].set(COLUMN_SIZE_DEFAULT)
         self._build()
@@ -84,6 +85,17 @@ class C2BWindow(tk.Tk):
         ttk.Combobox(opts, textvariable=self.vars["col_size"], values=list(COLUMN_SIZE_FROM), width=16,
                      state="readonly").pack(side="left", padx=(6, 8))
         ttk.Label(opts, text="what the client stated, or the drawing measured", foreground="#6B6B6B").pack(side="left")
+
+        # A beam or a slab the drawing never sizes cannot go into Revit without one, and
+        # dropping it loses the member. Typed once, remembered, and the run says how many used it.
+        sizes = ttk.Frame(top)
+        sizes.grid(row=6, column=1, columnspan=3, sticky="w", pady=(6, 0))
+        ttk.Label(sizes, text="When the drawing gives no size —  beam depth:").pack(side="left")
+        ttk.Entry(sizes, textvariable=self.vars["beam_depth"], width=8, justify="right").pack(side="left", padx=(6, 4))
+        ttk.Label(sizes, text="mm     slab thickness:").pack(side="left")
+        ttk.Entry(sizes, textvariable=self.vars["slab_thk"], width=8, justify="right").pack(side="left", padx=(6, 4))
+        ttk.Label(sizes, text="mm     leave empty to leave those members out of the Revit model",
+                  foreground="#6B6B6B").pack(side="left")
 
         # The buttons get their own strip on the window rather than a cell of the entry grid:
         # inside the grid a wider option box pushes them past the window edge and out of sight.
@@ -177,6 +189,7 @@ class C2BWindow(tk.Tk):
             drawing=Path(drawing),
             out_dir=Path(self.vars["out"].get()) if self.vars["out"].get().strip() else None,
             seed=self._path("seed"), spec=None, profile=self._path("profile"), levels=self._path("levels"),
+            default_beam_depth_mm=self._number("beam_depth"), default_slab_thickness_mm=self._number("slab_thk"),
             units=None if units == UNITS[0] else units,
             column_size_from=column_size_value(self.vars["col_size"].get()),
         )
@@ -201,6 +214,16 @@ class C2BWindow(tk.Tk):
 
     def _report(self, level: str, message: str) -> None:
         self.queue.put(("log", (level, message)))
+
+    def _number(self, key: str) -> float | None:
+        """A millimetre value typed in the window, or None when it is empty or not a number."""
+        text = self.vars[key].get().strip().replace(",", "")
+        if not text:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            return None
 
     def _path(self, key: str) -> Path | None:
         value = self.vars[key].get().strip()
@@ -331,7 +354,7 @@ class C2BWindow(tk.Tk):
     def _load_settings(self) -> None:
         try:
             data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-            for key in ("seed", "profile", "out", "units", "col_size"):
+            for key in ("seed", "profile", "out", "units", "col_size", "beam_depth", "slab_thk"):
                 if not data.get(key):
                     continue
                 if key == "col_size" and column_size_label(data[key]) is None:
@@ -343,7 +366,9 @@ class C2BWindow(tk.Tk):
     def _save_settings(self) -> None:
         try:
             SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-            SETTINGS_FILE.write_text(json.dumps({k: self.vars[k].get() for k in ("seed", "profile", "out", "units", "col_size")}, indent=2), encoding="utf-8")
+            SETTINGS_FILE.write_text(json.dumps({k: self.vars[k].get() for k in
+                                                 ("seed", "profile", "out", "units", "col_size",
+                                                  "beam_depth", "slab_thk")}, indent=2), encoding="utf-8")
         except Exception:
             pass
 

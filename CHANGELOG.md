@@ -13,6 +13,40 @@ importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes
 values.
 
+## [0.20.0] - 2026-09-18
+
+### Fixed (0.20.0)
+
+- **Columns were being built below the foundation.** 0.19.0 hung a column below its own level
+  wherever there was no level beneath, which is right when nothing is drawn to hold it and wrong
+  when a foundation plan is. A foundation plan draws the footings *and* the columns again at
+  their base, and the column between foundation and ground is already built from the ground
+  floor's own outline -- so the extra one stood on nothing and counted the member twice. A floor
+  the drawing founds no longer gets one (`REVIT_COLUMN_ON_FOOTING`); a plan with no foundation
+  at all still does. **Test10: 66 columns below the foundation → none.**
+- **71 of Test10's 271 beams came out with no depth, for the orientation of their lettering.**
+  The tag says `B_300 X 600` and sits 572 mm from its beam, but the last-chance pass that gives
+  an orphan tag to an untagged element refused any tag not running along the member -- and this
+  drafter writes beam labels horizontally beside vertical beams. Running along the member is now
+  preferred rather than required, which is safe because that pass only ever pairs a tag nobody
+  claimed with an element that has none. **Beams with no depth: 71 → 59.**
+
+### Added (0.20.0)
+
+- **A default beam depth and slab thickness, in the window.** The other 59 beams are genuinely
+  untagged -- the drawing sizes nothing near them -- and a Revit model cannot hold a beam with no
+  depth, so they were dropped and the members were simply lost. Typed once in the window and
+  remembered, they build instead, each marked `depth assumed` on the element and counted in the
+  run. Leaving them empty keeps the old behaviour. The extraction and the template DXF are
+  untouched: `300X?` there is still a drafter's cue that the drawing never said.
+  **Test10 with 600/150 set: 363 → 521 beams, 160 → 222 floors, nothing dropped for want of a
+  size.**
+
+### Changed (0.20.0)
+
+- Extraction schema `0.7.2`: no field changed, but a beam that only a crosswise tag names now
+  carries the depth that tag states.
+
 ## [0.19.0] - 2026-09-18
 
 Test17 in Revit: 8737 elements, and three things wrong with them.
