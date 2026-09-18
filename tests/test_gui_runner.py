@@ -170,3 +170,22 @@ def test_the_window_shows_the_next_step_and_offers_the_heights_editor():
     assert "levels_btn.pack" in body, "the heights editor is never offered"
     # it is offered when the heights are what is missing, not always
     assert "not result.revit_json" in body
+
+
+def test_the_firms_template_dxf_is_found_not_asked_for(tmp_path):
+    """It lives in the repository now, so the window has one less thing to ask for."""
+    from c2b.gui.runner import SEED_TEMPLATE_NAMES, _find_beside
+
+    found = _find_beside(tmp_path, tmp_path / "x.dxf", SEED_TEMPLATE_NAMES)
+    assert found is not None and found.suffix == ".dxf", "the shipped CH template was not found"
+
+    dxf = build_demo_drawing(tmp_path / "demo.dxf")
+    lines, progress = _collect()
+    res = run_job(JobSettings(drawing=dxf, out_dir=tmp_path / "out"), progress)
+    assert res.template_dxf and Path(res.template_dxf).exists()
+    assert [m for _lvl, m in lines if "found without being asked for" in m]
+
+    # one given by hand still wins
+    lines, progress = _collect()
+    run_job(JobSettings(drawing=dxf, out_dir=tmp_path / "out2", seed=found), progress)
+    assert not [m for _lvl, m in lines if "found without being asked for" in m]

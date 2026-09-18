@@ -13,6 +13,39 @@ importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes
 values.
 
+## [0.18.0] - 2026-09-18
+
+The second live run. The grids and the stacking were right; the beams were not, and the check
+said the model matched the plan while they were not.
+
+### Fixed (0.18.0)
+
+- **Every floor's beams were built on top of each other at the ground.** Revit reads a beam's
+  reference level off the curve it is drawn on, and the curve was drawn at elevation zero --
+  `point()` defaults its height to nothing, and nobody had passed one. So 363 beams from seven
+  floors landed in one place: 779 *"identical instances in the same place, this will result in
+  double counting in schedules"* warnings, and a beam reporting `01 GROUND LVL.` as its
+  reference level while its own `CH-LEVEL`, written from the plan, said the fifth floor.
+  Everything placed by a point, a curve or a loop is now built at its level's elevation, and a
+  beam's reference level is stated rather than left to Revit to infer.
+- **A beam's offset was applied twice.** Its start and end level offsets carried the element's
+  offset *and* so did the z offset, which places the section about that line. The reference line
+  now sits on the level and the z offset does the placing, once.
+- **The check called that model a match.** It counted elements, checked every type's size and
+  every level's height, and never asked where an element actually ended up -- which is the one
+  thing that was wrong. It now reads back the level each created element landed on and compares
+  it with the level the plan gave it. The plan being right is not evidence that the model is.
+- The `-1500` was the beam family's own default, not C2B's: setting the z justification and
+  offset explicitly (0.17.0) was the right fix, and the screenshot confirms it now reads 0.
+
+### Added (0.18.0)
+
+- **The firm's template DXF is found rather than asked for**, the same way the Revit template
+  description already was. It is in the repository now, so the window's *Our template* box can
+  stay empty.
+- A test that no function in the Revit script reads a name only `main()` defines. IronPython
+  finds that halfway through building a model, or never.
+
 ## [0.17.0] - 2026-09-18
 
 The first run against a live Revit model, on Test10. It built 852 elements and found four

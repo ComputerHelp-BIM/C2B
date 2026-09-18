@@ -47,6 +47,9 @@ class JobSettings:
 #: to type a path to a file that only ever sits in one place.
 REVIT_TEMPLATE_NAMES = ("R25_TEMPLATE.template.md", "*.template.md")
 SHARED_PARAM_NAMES = ("CH-shared-parameters.txt", "*shared*parameter*.txt")
+#: The firm's own template DXF, which every drawing is redrawn into. It lives in the repository
+#: now, so the window has one less thing to ask for.
+SEED_TEMPLATE_NAMES = ("CH-TEMPLATE.dxf", "CH-TEMPLATE*.dxf", "*TEMPLATE*.dxf")
 
 
 def _find_beside(out: Path, drawing: Path, patterns) -> Path | None:
@@ -146,12 +149,15 @@ def run_job(settings: JobSettings, progress: Progress) -> JobResult:
             progress("warn", f"         fill {levels_path.name} with floor elevations and run again for the elevation frame")
 
         progress("step", "2 of 4   Drawing it in the template")
+        seed = Path(settings.seed) if settings.seed else _find_beside(out, drawing, SEED_TEMPLATE_NAMES)
+        if settings.seed is None and seed is not None:
+            progress("info", f"         drawn into {seed.name}, found without being asked for")
         spec = TemplateSpec.load(settings.spec) if settings.spec else TemplateSpec()
         np_ = normalize(p, spec, rows, source_file=dxf.name, level_reference=ref)
         (out / f"{stem}.normalized.json").write_text(np_.model_dump_json(indent=2), encoding="utf-8")
         res.schedules_xlsx = write_normalized_workbook(np_, out / f"{stem}.schedules.xlsx")
         spec.save(out / f"{stem}.template-spec.yaml")
-        res.template_dxf = write_template_dxf(np_, out / f"{stem}.template.dxf", spec, settings.seed)
+        res.template_dxf = write_template_dxf(np_, out / f"{stem}.template.dxf", spec, seed)
         s2 = np_.summary
         progress("good", f"         {s2.columns} columns in {s2.stacks} stacks, {s2.beams} beam spans, {s2.panels} slab panels, {s2.levels} levels")
 

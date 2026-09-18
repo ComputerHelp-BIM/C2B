@@ -65,11 +65,16 @@ def point(xy, z_mm=0.0):
     return XYZ(mm(xy[0]), mm(xy[1]), mm(z_mm))
 
 
-def loop_from(points):
+def level_z_mm(level):
+    """A level's elevation in millimetres, or 0 when there is no level."""
+    return to_mm(level.Elevation) if level is not None else 0.0
+
+
+def loop_from(points, z_mm=0.0):
     """A closed CurveLoop from a list of [x, y] in millimetres. Duplicate and tiny edges are dropped."""
     pts = []
     for p in points:
-        q = point(p)
+        q = point(p, z_mm)
         if not pts or q.DistanceTo(pts[-1]) > mm(1.0):
             pts.append(q)
     if len(pts) > 2 and pts[0].DistanceTo(pts[-1]) <= mm(1.0):
@@ -119,6 +124,15 @@ def set_bip_length(element, bip, value_mm):
     return True
 
 
+def set_bip_id(element, bip, element_id):
+    """A built-in parameter holding an element id, such as a beam's reference level."""
+    p = element.get_Parameter(bip)
+    if p is None or p.IsReadOnly:
+        return False
+    p.Set(element_id)
+    return True
+
+
 def set_bip_int(element, bip, value):
     p = element.get_Parameter(bip)
     if p is None or p.IsReadOnly:
@@ -160,6 +174,9 @@ def set_length(element, name, value_mm):
 param_hits = {}
 param_misses = {}
 
+#: (action, element, level) for everything created, so the run can read back what it made.
+placed = []
+
 
 def set_text(element, names, value):
     """Write a text value to every named parameter the element has. Returns how many took."""
@@ -178,7 +195,12 @@ def set_text(element, names, value):
 
 
 def stamp(element, action, plan, level=None):
-    """Mark, C2B id, level and note, written to every name the model carries them under."""
+    """Mark, C2B id, level and note, written to every name the model carries them under.
+
+    Also the one place every created element passes through, so it is where the run records
+    what it made and on which level, for the check afterwards.
+    """
+    placed.append((action, element, level))
     set_text(element, plan.get("mark_params"), action.get("mark"))
     set_text(element, plan.get("id_params"), action.get("id"))
     if level is not None:
@@ -259,7 +281,64 @@ def read_length(element, name):
     return to_mm(p.AsDouble())
 
 
-def check_what_was_built(plan, symbols, floor_types, wall_types, levels_by_id, made):
+#: Where each kind of element records the level it belongs to, when Element.LevelId cannot say.
+_LEVEL_BIPS = (BuiltInParameter.INSTANCE_REFERENCE_LEVEL_PARAM,     # structural framing
+               BuiltInParameter.FAMILY_BASE_LEVEL_PARAM,            # columns, footings
+               BuiltInParameter.LEVEL_PARAM,                        # floors
+               BuiltInParameter.WALL_BASE_CONSTRAINT)               # walls
+
+
+def level_id_of(element):
+    """The level an element actually ended up on, however its category records it."""
+    try:
+        found = element.LevelId                      # Revit 2022 and newer
+        if found is not None and found.IntegerValue > 0:
+            return found
+    except Exception:
+        pass
+    for bip in _LEVEL_BIPS:
+        try:
+            p = element.get_Parameter(bip)
+        except Exception:
+            continue
+        if p is not None and p.StorageType.ToString() == "ElementId":
+            found = p.AsElementId()
+            if found is not None and found.IntegerValue > 0:
+                return found
+    return None
+
+
+def check_levels_of(placed, rows):
+    """Did each element land on the level the plan gave it?
+
+    Revit picks a beam's reference level from the curve it is drawn on, so a curve at the wrong
+    height is silently hosted on the wrong level -- every floor's beams at the ground, in one
+    place, counted twice in every schedule. The plan being right is not evidence that the model
+    is: the two have to be compared.
+    """
+    wrong = {}
+    for action, element, level in placed:
+        if level is None:
+            continue
+        try:
+            actual = level_id_of(element)
+        except Exception:
+            continue
+        if actual is None or actual.IntegerValue == level.Id.IntegerValue:
+            continue
+        key = (action.get("kind"), level.Name)
+        wrong.setdefault(key, [0, actual])
+        wrong[key][0] += 1
+    for (kind, wanted), (count, actual_id) in sorted(wrong.items()):
+        try:
+            found = doc.GetElement(actual_id).Name
+        except Exception:
+            found = "another level"
+        rows.append((False, "%d %ss meant for %s" % (count, kind, wanted), wanted, found,
+                     "Revit hosted them elsewhere, so they are in the wrong place and counted twice"))
+
+
+def check_what_was_built(plan, symbols, floor_types, wall_types, levels_by_id, made, placed):
     """Read the model back and compare it with the plan, without leaving Revit.
 
     The import saying "finished" is not evidence. Three things go wrong quietly and none of
@@ -318,6 +397,9 @@ def check_what_was_built(plan, symbols, floor_types, wall_types, levels_by_id, m
             elif abs(got - value) > 1.0:
                 rows.append((False, "type %s" % name, "%s %.0f" % (label, value), "%s %.0f" % (label, got),
                              "it kept the size of the type it was copied from -- every element of it is wrong"))
+
+    # -- did every element land on the level it was given? --------------------
+    check_levels_of(placed, rows)
 
     # -- are the levels where the plan put them? -----------------------------
     for row in plan.get("levels", []):
@@ -435,7 +517,8 @@ def main():
                 symbol = ensure_symbol(action, symbols)
                 if symbol is None or level is None:
                     continue
-                inst = doc.Create.NewFamilyInstance(point(action["point"]), symbol, level, Structure.StructuralType.Column)
+                inst = doc.Create.NewFamilyInstance(point(action["point"], level_z_mm(level)), symbol, level,
+                                                    Structure.StructuralType.Column)
                 if top is not None:
                     inst.get_Parameter(BuiltInParameter.FAMILY_TOP_LEVEL_PARAM).Set(top.Id)
                     inst.get_Parameter(BuiltInParameter.FAMILY_TOP_LEVEL_OFFSET_PARAM).Set(mm(action.get("top_offset_mm", 0.0)))
@@ -451,13 +534,22 @@ def main():
                 symbol = ensure_symbol(action, symbols)
                 if symbol is None or level is None:
                     continue
-                curve = Line.CreateBound(point(action["start"]), point(action["end"]))
+                # The curve decides where the beam physically is, and Revit picks the
+                # reference level from it. Drawn at z = 0 every floor's beams landed on top of
+                # each other at the ground: one place, 779 "identical instances" warnings, and
+                # a reference level of 01 GROUND LVL. on a beam whose own CH-LEVEL said the
+                # fifth floor. It is drawn at its level's elevation, and the reference level is
+                # then stated rather than inferred.
+                z = level_z_mm(level)
+                curve = Line.CreateBound(point(action["start"], z), point(action["end"], z))
                 inst = doc.Create.NewFamilyInstance(curve, symbol, level, Structure.StructuralType.Beam)
-                offset = action.get("top_offset_mm", 0.0)
+                set_bip_id(inst, BuiltInParameter.INSTANCE_REFERENCE_LEVEL_PARAM, level.Id)
+                # the reference line sits on the level; where the section sits about that line is
+                # the z offset's job, and setting both put the beam at twice its own offset
                 for bip in (BuiltInParameter.STRUCTURAL_BEAM_END0_ELEVATION, BuiltInParameter.STRUCTURAL_BEAM_END1_ELEVATION):
                     p = inst.get_Parameter(bip)
                     if p is not None and not p.IsReadOnly:
-                        p.Set(mm(offset))
+                        p.Set(mm(0.0))
                 place_across_section(inst, action)
                 stamp(inst, action, plan, level)
                 tally("beams")
@@ -469,7 +561,7 @@ def main():
                     continue
                 loops = []
                 for ring in action["loops"]:
-                    made_loop = loop_from(ring)
+                    made_loop = loop_from(ring, level_z_mm(level))
                     if made_loop is not None:
                         loops.append(made_loop)
                 if not loops:
@@ -485,14 +577,16 @@ def main():
                 symbol = ensure_symbol(action, symbols)
                 if symbol is None or level is None:
                     continue
-                inst = doc.Create.NewFamilyInstance(point(action["point"]), symbol, level, Structure.StructuralType.Footing)
+                inst = doc.Create.NewFamilyInstance(point(action["point"], level_z_mm(level)), symbol, level,
+                                                    Structure.StructuralType.Footing)
                 stamp(inst, action, plan, level)
                 tally("footings")
             elif kind == "wall":
                 wtype = ensure_system_type(action, wall_types, WallType)
                 if wtype is None or level is None:
                     continue
-                curve = Line.CreateBound(point(action["start"]), point(action["end"]))
+                z = level_z_mm(level)
+                curve = Line.CreateBound(point(action["start"], z), point(action["end"], z))
                 height = mm(3000.0)
                 if top is not None:
                     height = top.Elevation - level.Elevation + mm(action.get("top_offset_mm", 0.0))
@@ -503,7 +597,7 @@ def main():
                 stamp(wall, action, plan, level)
                 tally("walls")
             elif kind == "shaft" and action.get("loops"):
-                ring = loop_from(action["loops"][0])
+                ring = loop_from(action["loops"][0], level_z_mm(level))
                 if ring is None or level is None:
                     continue
                 arr = CurveArray()
@@ -516,7 +610,7 @@ def main():
     t.Commit()
 
     # ---- check what was built, without leaving Revit ----------------------
-    checked = check_what_was_built(plan, symbols, floor_types, wall_types, levels_by_id, made)
+    checked = check_what_was_built(plan, symbols, floor_types, wall_types, levels_by_id, made, placed)
     wrong = [row for row in checked if not row[0]]
 
     # ---- report ----------------------------------------------------------

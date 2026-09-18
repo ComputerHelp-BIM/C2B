@@ -71,7 +71,7 @@ class C2BWindow(tk.Tk):
         top.columnconfigure(1, weight=1)
 
         self._row(top, 0, "Client drawing", "drawing", self._pick_drawing, "DXF from the client (DWG works when a converter is installed)")
-        self._row(top, 1, "Our template", "seed", lambda: self._pick_file("seed", [("Template DXF", "*.dxf")]), "the firm's CH template DXF, remembered for next time")
+        self._row(top, 1, "Our template", "seed", lambda: self._pick_file("seed", [("Template DXF", "*.dxf")]), "leave empty to use the firm's CH template from the C2B folder")
         self._row(top, 2, "Layer profile", "profile", lambda: self._pick_file("profile", [("Profile", "*.yaml *.yml")]), "optional: saved layer roles for this client")
         self._row(top, 3, "Level heights", "levels", lambda: self._pick_file("levels", [("Level workbook", "*.xlsx")]), "optional: the filled levels workbook")
         self._row(top, 4, "Save results in", "out", self._pick_out, "leave empty to write next to the drawing")

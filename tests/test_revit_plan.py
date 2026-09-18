@@ -237,6 +237,8 @@ def test_a_duplicated_system_type_is_given_its_thickness():
 # millimetre value handed straight to the API is read as feet -- 300 becomes 91.4 m -- and
 # nothing complains, so the mistake shows up as a model that is 3.28 times too big.
 _LENGTH_SINKS = ("Set", "SetLayerWidth", "Create", "CreateBound", "NewFamilyInstance")
+#: the script's own helpers that take millimetres and convert inside
+_MM_HELPERS = ("point", "loop_from", "level_z_mm")
 
 
 def _length_args(tree):
@@ -263,8 +265,11 @@ def test_no_millimetre_value_reaches_revit_unconverted():
         # a bare number (bool is an int in Python, and Wall.Create's last arguments are flags)
         bare_number = (isinstance(arg, ast.Constant) and isinstance(arg.value, (int, float))
                        and not isinstance(arg.value, bool) and arg.value != 0)
-        # action["top_offset_mm"] or action.get("top_offset_mm", 0.0) straight into the API
-        bare_mm = ("_mm" in text and not text.startswith("mm(")
+        # action["top_offset_mm"] or action.get("top_offset_mm", 0.0) straight into the API.
+        # point(), loop_from() and level_z_mm() take millimetres and convert inside, so a call
+        # to one of them is already converted.
+        wrapped = isinstance(arg, ast.Call) and getattr(arg.func, "id", "") in _MM_HELPERS
+        bare_mm = ("_mm" in text and not text.startswith("mm(") and not wrapped
                    and isinstance(arg, (ast.Subscript, ast.Call)))
         if bare_number or bare_mm:
             offenders.append(f"{call}( {text} ) at line {arg.lineno}")
@@ -425,3 +430,103 @@ def test_every_stamped_element_is_told_its_level():
     main = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "main")
     calls = [c for c in ast.walk(main) if isinstance(c, ast.Call) and getattr(c.func, "id", "") == "stamp"]
     assert calls and all(len(c.args) == 4 for c in calls), "an element is stamped without its level"
+
+
+# ------------------------------------------- where an element physically ends up
+def _script_tree():
+    return ast.parse(SCRIPT.read_text(encoding="utf-8"))
+
+
+def _function(tree, name):
+    return next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name)
+
+
+@pytest.mark.skipif(not SCRIPT.exists(), reason="the pyRevit extension is not in this checkout")
+def test_geometry_is_built_at_the_level_it_belongs_to():
+    """Revit reads a beam's reference level off the curve it is drawn on.
+
+    Drawn at z = 0 every floor's beams landed on top of each other at the ground: one place,
+    779 "identical instances" warnings, and a reference level of 01 GROUND LVL. on a beam whose
+    own CH-LEVEL said the fifth floor.
+    """
+    tree = _script_tree()
+    assert "level_z_mm" in {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    source = SCRIPT.read_text(encoding="utf-8").splitlines()
+    main = _function(tree, "main")
+
+    # A point with no elevation is at zero. Two of them are meant to be: a grid is a datum that
+    # spans every level, and the axis a column is rotated about is vertical, so its own height
+    # changes nothing. Everything else has to be built at the level it belongs to.
+    at_zero = [n for n in ast.walk(main)
+               if isinstance(n, ast.Call) and getattr(n.func, "id", "") in ("point", "loop_from")
+               and len(n.args) == 1]
+    for call in at_zero:
+        line = source[call.lineno - 1]
+        assert "Grid.Create" in line or "axis" in line, \
+            f"line {call.lineno} places an element at elevation zero: {line.strip()}"
+
+    assert ast.unparse(main).count("level_z_mm(level)") >= 5, "some category is still built at zero"
+
+
+@pytest.mark.skipif(not SCRIPT.exists(), reason="the pyRevit extension is not in this checkout")
+def test_a_beams_reference_level_is_stated_not_inferred():
+    main = ast.unparse(_function(_script_tree(), "main"))
+    assert "INSTANCE_REFERENCE_LEVEL_PARAM" in main, "Revit is left to guess the beam's level"
+    # the reference line sits on the level; the z offset places the section about it. Setting
+    # both put the beam at twice its own offset.
+    assert "STRUCTURAL_BEAM_END0_ELEVATION" in main and "p.Set(mm(0.0))" in main
+
+
+@pytest.mark.skipif(not SCRIPT.exists(), reason="the pyRevit extension is not in this checkout")
+def test_the_check_reads_back_the_level_each_element_landed_on():
+    """The plan being right is not evidence that the model is: it said so while every beam was
+    on the ground."""
+    tree = _script_tree()
+    names = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    assert {"check_levels_of", "level_id_of"} <= names
+
+    check = ast.unparse(_function(tree, "check_what_was_built"))
+    assert "check_levels_of(placed, rows)" in check, "the levels are never read back"
+
+    stamp = ast.unparse(_function(tree, "stamp"))
+    assert "placed.append" in stamp, "nothing records what was created, so nothing can check it"
+
+
+@pytest.mark.skipif(not SCRIPT.exists(), reason="the pyRevit extension is not in this checkout")
+def test_no_function_reaches_into_mains_local_names():
+    """IronPython finds this at run time, halfway through building a model, or not at all."""
+    import builtins
+
+    tree = _script_tree()
+
+    def bound(node):
+        out = set()
+        for n in ast.walk(node):
+            targets = []
+            if isinstance(n, ast.Assign):
+                targets = n.targets
+            elif isinstance(n, (ast.For, ast.comprehension)):
+                targets = [n.target]
+            elif isinstance(n, ast.withitem) and n.optional_vars:
+                targets = [n.optional_vars]
+            elif isinstance(n, ast.ExceptHandler) and n.name:
+                out.add(n.name)
+            for t in targets:
+                out |= {x.id for x in ast.walk(t) if isinstance(x, ast.Name)}
+        return out
+
+    main = _function(tree, "main")
+    main_locals = bound(main) | {a.arg for a in main.args.args}
+    module = {n.targets[0].id for n in tree.body if isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name)}
+    module |= {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    module |= {(a.asname or a.name) for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))
+               for a in n.names}
+
+    reaching = []
+    for fn in [n for n in tree.body if isinstance(n, ast.FunctionDef)]:
+        scope = bound(fn) | {a.arg for a in fn.args.args} | {a.arg for a in fn.args.kwonlyargs}
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in main_locals \
+                    and n.id not in scope and n.id not in module and not hasattr(builtins, n.id):
+                reaching.append(f"{fn.name} reads '{n.id}' at line {n.lineno}")
+    assert not reaching, "; ".join(sorted(set(reaching)))
