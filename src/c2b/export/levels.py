@@ -120,6 +120,52 @@ def read_levels(path: str | Path) -> list:
     return rows
 
 
+def level_rows_for_editing(path: str | Path) -> list[dict]:
+    """The level sheet as plain rows, for an editor that is not Excel.
+
+    A drafter should not have to leave the window, find a workbook, type into it and come back:
+    the elevations are the one thing the drawing cannot supply, and asking for them in the app
+    is the difference between one run and three.
+    """
+    wb = load_workbook(str(path), data_only=True)
+    ws = wb["Levels"] if "Levels" in wb.sheetnames else wb.active
+    header = [str(c.value).strip() if c.value is not None else "" for c in ws[1]]
+    idx = {h: i for i, h in enumerate(header)}
+    rows = []
+    for n, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+        if not row or all(v is None for v in row):
+            continue
+
+        def cell(key, row=row):
+            i = idx.get(key)
+            return row[i] if i is not None and i < len(row) else None
+
+        elevation = cell("elevation_mm")
+        rows.append({"excel_row": n,
+                     "floor_id": str(cell("floor_id") or "").strip(),
+                     "floor_name": str(cell("floor_name") or "").strip(),
+                     "revit_level_name": str(cell("revit_level_name") or "").strip(),
+                     "elevation_mm": float(elevation) if isinstance(elevation, (int, float)) else None,
+                     "notes": str(cell("notes") or "").strip()})
+    return rows
+
+
+def write_level_elevations(path: str | Path, elevations: dict[int, float | None]) -> int:
+    """Write elevations back by worksheet row, keeping everything else in the workbook."""
+    wb = load_workbook(str(path))
+    ws = wb["Levels"] if "Levels" in wb.sheetnames else wb.active
+    header = [str(c.value).strip() if c.value is not None else "" for c in ws[1]]
+    if "elevation_mm" not in header:
+        raise ValueError("this level workbook has no 'elevation_mm' column")
+    column = header.index("elevation_mm") + 1
+    written = 0
+    for excel_row, value in elevations.items():
+        ws.cell(row=excel_row, column=column).value = value
+        written += 1
+    wb.save(str(path))
+    return written
+
+
 def read_level_settings(path: str | Path) -> dict[str, str]:
     """Key/value pairs from the workbook's Settings sheet (e.g. level_reference)."""
     wb = load_workbook(str(path), data_only=True)

@@ -9,8 +9,21 @@ schema with diagnostics, and normalising them into the firm's template drawing
 (`CH-` layers, `C12-300X900` marks, spans between supports, slab panels, level
 frame).
 
-Version `0.15.0` (tool) — extraction schema `0.7.1`, normalised schema `0.10.1`.
+Version `0.16.0` (tool) — extraction schema `0.7.1`, normalised schema `0.10.1`.
 See [CHANGELOG.md](CHANGELOG.md).
+
+## Using it
+
+Three steps, all of them in the window (`windows\C2B.bat`, or `c2b gui`):
+
+1. Pick the client drawing, press **Run**.
+2. Press **Set floor heights…**, type a height per floor, press **Save and run again**.
+3. In Revit: **C2B → Import C2B model**, and pick the file the window names.
+
+The window says which step you are on in one line at the bottom. Everything below is what
+happens inside those three, and every part of it is also a command for anyone who wants one.
+See [QUICKSTART.md](QUICKSTART.md) to install, and [docs/revit-run.md](docs/revit-run.md) for
+the Revit half.
 
 ## Pipeline
 
@@ -207,7 +220,7 @@ profiles/          client profiles (YAML)
 samples/           client drawings (git-ignored)
 ```
 
-## Known limits of v0.15.0
+## Known limits of v0.16.0
 
 - Cantilever slabs, chajjas and balconies need the client's slab edge lines;
   without them a

@@ -71,15 +71,29 @@ before.
 
 ## 4. The window (what drafters use)
 
-Double-click `windows\C2B.bat`, or run `c2b gui`. Pick the client drawing, pick
-the firm's
-template once (it is remembered), press **Run**. The three steps appear as they
-happen, the
-issues are listed in plain language underneath, and the buttons at the bottom
-open the
-template DXF, the workbooks or the folder. **Re-check an edited template DXF**
-lists every
-change a drafter made after the drawing was generated.
+Double-click `windows\C2B.bat`, or run `c2b gui`. **The whole job is three
+things:**
+
+1. Pick the client drawing, press **Run**.
+2. Press **Set floor heights…**, type a height per floor, press **Save and run
+  again**.
+3. In Revit: **C2B → Import C2B model**, and pick the file the window names.
+
+The window says which of the three you are on, in one line at the bottom:
+**Next: …**. The four
+steps appear as they happen, anything unclear is listed in plain language
+underneath, and the
+buttons along the bottom open the template DXF, the workbooks, what Revit will
+build, or the
+folder. **Re-check an edited template DXF** lists every change a drafter made
+after the drawing
+was generated.
+
+Step 2 exists because a drawing cannot say how high each floor is. It is the one
+thing you have
+to supply, and it is asked for in the window — no spreadsheet.
+
+See [docs/revit-run.md](docs/revit-run.md) for the Revit half in full.
 
 ## 5. Run your own drawing from the command line
 
@@ -144,33 +158,16 @@ a floor, a location and an element id, in both the workbook and the report.
 
 ## 8. Into Revit (utility 5)
 
-```bash
-c2b revit-plan out\TowerA\TowerA.normalized.json --template templates\R25_TEMPLATE.template.md ^
-                                                 --shared-params templates\CH-shared-parameters.txt
-```
+**There is nothing to run.** A Run with floor heights filled in has already prepared the Revit
+model: the window names the file, and the button **What Revit will build** opens the workbook
+listing every family type it will use and whether your template already has it.
 
-The defaults already match **R25_TEMPLATE**, so nothing needs editing for that template. The
-`--template` check answers, before Revit is opened, which family types are already there and
-which will be created, and whether the marks C2B writes will survive. Add `--write-mapping`
-to write the mapping file out and change a family or type name.
+In Revit, open a project from the structural template and press **C2B → Import C2B model**.
+It builds the model, reads it back, and reports anything that does not match the plan.
 
-Check `TowerA.revit.xlsx`, sheet **Types to create**, then in Revit press **C2B
-→ Import C2B
-model** and pick `TowerA.revit.json`. Afterwards, run your **Extract Template**
-tool on the
-project and compare what was built with what was planned:
-
-```bash
-c2b revit-verify out\TowerA\TowerA.revit.json "TowerA-template.md"
-```
-
-**`docs\revit-run.md` walks through all of it step by step** — the one-time
-pyRevit setup,
-what to read in the workbook before importing, what the import reports, and what
-to send when
-something breaks. The Revit script has not yet been run against a live model, so
-expect to
-adjust one or two API calls on the first project.
+**[docs/revit-run.md](docs/revit-run.md) is the guide** — the one-time pyRevit setup, what the
+import reports, and what to send when something breaks. The Revit script has not yet been run
+against a live model, so expect to adjust one or two API calls on the first project.
 
 ## 9. When something looks wrong
 

@@ -93,3 +93,80 @@ def test_the_run_button_is_not_inside_the_settings_grid():
     assert made_on_window, f"{parent} is not a frame on the window"
     assert re.search(rf"\b{parent}\.pack\(", src), f"{parent} must be packed, not gridded"
     assert not re.search(rf"\b{parent}\.grid\(", src), f"{parent} is gridded and can be clipped"
+
+
+# ----------------------------------------------------------- the last step, in the window
+def test_the_run_prepares_the_revit_model_too(tmp_path):
+    """A drafter should never open a terminal to reach the last step of the pipeline."""
+    from c2b.export.levels import level_rows_for_editing, write_level_elevations
+
+    dxf = build_demo_drawing(tmp_path / "demo.dxf")
+    lines, progress = _collect()
+    first = run_job(JobSettings(drawing=dxf, out_dir=tmp_path / "out"), progress)
+
+    # no elevations yet: there is nothing to place, and the window says exactly that
+    assert first.revit_json is None
+    assert "elevation" in first.next_step.lower() and "run again" in first.next_step.lower()
+
+    rows = level_rows_for_editing(first.levels_xlsx)
+    write_level_elevations(first.levels_xlsx, {r["excel_row"]: 3000.0 * i for i, r in enumerate(rows)})
+
+    lines, progress = _collect()
+    second = run_job(JobSettings(drawing=dxf, out_dir=tmp_path / "out", levels=first.levels_xlsx), progress)
+    assert second.revit_json and Path(second.revit_json).exists()
+    assert second.revit_xlsx and Path(second.revit_xlsx).exists()
+    assert "Revit" in second.next_step and Path(second.revit_json).name in second.next_step
+    assert [m for level, m in lines if m.startswith("4 of 4")], "the Revit step has to be visible as a step"
+
+
+def test_the_template_description_is_found_not_asked_for(tmp_path):
+    """Nobody should type a path to a file that only ever sits in one place."""
+    from c2b.gui.runner import REVIT_TEMPLATE_NAMES, SHARED_PARAM_NAMES, _find_beside
+
+    repo = Path(__file__).resolve().parent.parent
+    found = _find_beside(tmp_path, tmp_path / "x.dxf", REVIT_TEMPLATE_NAMES)
+    assert found is not None and found.name.endswith(".template.md"), "the shipped template was not found"
+    assert _find_beside(tmp_path, tmp_path / "x.dxf", SHARED_PARAM_NAMES) is not None
+
+    # one sitting beside the drawing wins over the shipped one
+    beside = tmp_path / "templates"
+    beside.mkdir()
+    mine = beside / "MINE.template.md"
+    mine.write_text("# MINE\n", encoding="utf-8")
+    assert _find_beside(tmp_path / "out", tmp_path / "x.dxf", REVIT_TEMPLATE_NAMES) == mine
+    assert repo.exists()
+
+
+def test_floor_heights_round_trip_without_excel(tmp_path):
+    from c2b.export.levels import level_rows_for_editing, write_level_elevations
+
+    dxf = build_demo_drawing(tmp_path / "demo.dxf")
+    _lines, progress = _collect()
+    res = run_job(JobSettings(drawing=dxf, out_dir=tmp_path / "out"), progress)
+
+    rows = level_rows_for_editing(res.levels_xlsx)
+    assert rows and all(r["elevation_mm"] is None for r in rows)
+    assert all(r["floor_id"] and r["excel_row"] >= 2 for r in rows)
+
+    write_level_elevations(res.levels_xlsx, {rows[0]["excel_row"]: -1500.0, rows[-1]["excel_row"]: None})
+    back = level_rows_for_editing(res.levels_xlsx)
+    assert back[0]["elevation_mm"] == -1500.0
+    assert back[-1]["elevation_mm"] is None
+    assert back[0]["floor_name"] == rows[0]["floor_name"], "editing heights must not disturb the rest"
+
+
+def test_the_window_shows_the_next_step_and_offers_the_heights_editor():
+    """A log of forty lines does not tell a drafter which line is addressed to them."""
+    import ast
+
+    source = (Path(__file__).resolve().parent.parent / "src" / "c2b" / "gui" / "app.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    names = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    assert "_edit_levels" in names
+
+    finish = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_finish")
+    body = ast.unparse(finish)
+    assert "next_step" in body, "the window never shows the next step"
+    assert "levels_btn.pack" in body, "the heights editor is never offered"
+    # it is offered when the heights are what is missing, not always
+    assert "not result.revit_json" in body

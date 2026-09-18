@@ -64,6 +64,7 @@ class C2BWindow(tk.Tk):
             style.theme_use("clam")
         style.configure("Run.TButton", font=("Segoe UI", 11, "bold"), padding=8)
         style.configure("Head.TLabel", font=("Segoe UI", 10, "bold"))
+        style.configure("Next.TLabel", font=("Segoe UI", 10, "bold"), foreground="#1A5FB4")
 
         top = ttk.Frame(self, padding=(14, 12, 14, 6))
         top.pack(fill="x")
@@ -93,7 +94,7 @@ class C2BWindow(tk.Tk):
         self.verify_btn = ttk.Button(run_row, text="Re-check an edited template DXF", command=self.start_verify)
         self.verify_btn.pack(side="left", padx=8)
 
-        self.progress = ttk.Progressbar(self, mode="determinate", maximum=3)
+        self.progress = ttk.Progressbar(self, mode="determinate", maximum=4)
         self.progress.pack(fill="x", padx=14, pady=(10, 4))
 
         body = ttk.Panedwindow(self, orient="vertical")
@@ -123,6 +124,14 @@ class C2BWindow(tk.Tk):
         self.issues.pack(side="left", fill="both", expand=True)
         iscroll.pack(side="right", fill="y")
         body.add(issues_frame, weight=2)
+
+        # The next step gets a strip of its own. A drafter reading a log of forty lines cannot
+        # tell which one is addressed to them, so the single thing to do next is said here.
+        self.next_frame = ttk.Frame(self, padding=(14, 6, 14, 0))
+        self.next_frame.pack(fill="x")
+        self.next_label = ttk.Label(self.next_frame, text="", style="Next.TLabel", anchor="w", wraplength=980)
+        self.next_label.pack(side="left", fill="x", expand=True)
+        self.levels_btn = ttk.Button(self.next_frame, text="Set floor heights…", command=self._edit_levels)
 
         self.actions = ttk.Frame(self, padding=(14, 0, 14, 12))
         self.actions.pack(fill="x")
@@ -230,7 +239,7 @@ class C2BWindow(tk.Tk):
         self.result = result
         self.run_btn.state(["!disabled"])
         self.verify_btn.state(["!disabled"])
-        self.progress.configure(value=3)
+        self.progress.configure(value=4)
         for severity, code, count, meaning in result.issues[:200]:
             self.issues.insert("", "end", values=(severity.title(), count, meaning or code), tags=(severity,))
         summary = "   ".join(f"{v} {k}" for k, v in result.counts.items() if v)
@@ -240,12 +249,83 @@ class C2BWindow(tk.Tk):
             self.status.configure(text=f"{summary}   —   {len(result.issues)} kinds of thing to check below", foreground=COLORS["warn"])
         else:
             self.status.configure(text=f"{summary}   —   nothing to flag", foreground=COLORS["good"])
+        self.next_label.configure(text=f"Next:  {result.next_step}" if result.next_step else "")
+        needs_levels = bool(result.levels_xlsx and Path(result.levels_xlsx).exists() and not result.revit_json)
+        self.levels_btn.pack_forget()
+        if needs_levels:
+            self.levels_btn.pack(side="right", padx=(10, 0))
+
         for label, path in (("Open the template DXF", result.template_dxf), ("Review workbook", result.review_xlsx),
                             ("Schedules", result.schedules_xlsx), ("Overlay on the client drawing", result.review_dxf),
-                            ("Level heights", result.levels_xlsx), ("Check report", result.verify_md),
+                            ("What Revit will build", result.revit_xlsx), ("Check report", result.verify_md),
                             ("Open the folder", result.out_dir)):
             if path and Path(path).exists():
                 ttk.Button(self.actions, text=label, command=lambda p=path: _open(p)).pack(side="left", padx=(0, 8), pady=6)
+
+    # ---------------------------------------------------------- floor heights
+    def _edit_levels(self) -> None:
+        """Type the floor elevations here rather than in Excel, then run again.
+
+        The elevations are the only thing a plan cannot tell us, and sending a drafter out to a
+        workbook to supply them is what turns one run into three.
+        """
+        from ..export.levels import level_rows_for_editing, write_level_elevations
+
+        path = self.result.levels_xlsx if self.result else None
+        if not path or not Path(path).exists():
+            messagebox.showinfo("C2B", "Run a drawing first: the floors come from it.")
+            return
+        try:
+            rows = level_rows_for_editing(path)
+        except Exception as ex:
+            messagebox.showerror("C2B", f"Could not read {Path(path).name}:\n{ex}")
+            return
+
+        win = tk.Toplevel(self)
+        win.title("Floor heights")
+        win.transient(self)
+        win.grab_set()
+        ttk.Label(win, text="Top of the structural slab for each floor, in millimetres.\n"
+                            "Below ground is negative. Leave a floor empty to skip it.",
+                  padding=(14, 12, 14, 6), justify="left").pack(fill="x")
+
+        table = ttk.Frame(win, padding=(14, 0, 14, 8))
+        table.pack(fill="both", expand=True)
+        ttk.Label(table, text="Floor", style="Head.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12))
+        ttk.Label(table, text="Height (mm)", style="Head.TLabel").grid(row=0, column=1, sticky="w")
+        entries = []
+        for i, row in enumerate(rows, start=1):
+            name = row["revit_level_name"] or row["floor_name"] or row["floor_id"]
+            ttk.Label(table, text=f"{row['floor_id']}  {name}").grid(row=i, column=0, sticky="w", pady=2, padx=(0, 12))
+            var = tk.StringVar(value="" if row["elevation_mm"] is None else f"{row['elevation_mm']:.0f}")
+            ttk.Entry(table, textvariable=var, width=14, justify="right").grid(row=i, column=1, sticky="w", pady=2)
+            entries.append((row["excel_row"], var))
+
+        def save_and_run() -> None:
+            values: dict[int, float | None] = {}
+            for excel_row, var in entries:
+                text = var.get().strip().replace(",", "")
+                if not text:
+                    values[excel_row] = None
+                    continue
+                try:
+                    values[excel_row] = float(text)
+                except ValueError:
+                    messagebox.showerror("C2B", f"'{text}' is not a number.", parent=win)
+                    return
+            try:
+                write_level_elevations(path, values)
+            except Exception as ex:
+                messagebox.showerror("C2B", f"Could not save the heights:\n{ex}", parent=win)
+                return
+            self.vars["levels"].set(str(path))
+            win.destroy()
+            self.start()
+
+        buttons = ttk.Frame(win, padding=(14, 0, 14, 12))
+        buttons.pack(fill="x")
+        ttk.Button(buttons, text="Save and run again", style="Run.TButton", command=save_and_run).pack(side="left")
+        ttk.Button(buttons, text="Cancel", command=win.destroy).pack(side="left", padx=8)
 
     # -------------------------------------------------------------- settings
     def _load_settings(self) -> None:
