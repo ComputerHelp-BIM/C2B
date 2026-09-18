@@ -13,6 +13,45 @@ importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes
 values.
 
+## [0.15.0] - 2026-09-18
+
+Utility 5 closes its loop. The plan went into Revit and nothing came back out; now the model
+is read back and compared with what was asked for, the same way utility 4 reads the template
+DXF back.
+
+### Added (0.15.0)
+
+- **`c2b revit-verify <plan>.revit.json <project>-template.md`.** The firm's *Extract Template*
+  tool describes any model, not only a template, so running it on the project after an import
+  gives a description of what was actually built. Comparing that with the plan answers what
+  nothing else can: whether every element was built, whether every type exists, whether each
+  created type is the size the plan asked for, whether the levels are at their planned height
+  and whether every grid label is there. It writes `<name>.revit-check.md`.
+  Nothing in it talks to Revit -- it compares two files, so a fault can be diagnosed away from
+  the Revit seat.
+- The check that matters most is the type sizes. A `175 THK. RCC SLAB` duplicated from the 150
+  and left 150 thick looks entirely normal in the project browser, and every floor of that type
+  is wrong. Same for a level that already existed at a different elevation: the import keeps it,
+  and everything hosted on it is built at the wrong height.
+- **`docs/revit-run.md`** -- the guide to follow at a Revit seat. The one-time pyRevit setup,
+  describing the template and keeping that description current, what to read in the workbook
+  before importing, what the import reports (including where the marks went), reading the model
+  back, and the four things to send when something breaks.
+
+### Changed (0.15.0)
+
+- The template description now also carries the **Categories** table, so a digest knows how many
+  elements of each category a model holds. That is what makes a re-export of an imported project
+  worth comparing against.
+- `mark_params` and `id_params` lead with `CH-ScheduleMark` and `CH-ID`, the names the firm
+  settled on. The older `S_ScheduleMark` and `ID` stay behind them, because a model built before
+  that change still carries them and every name that exists is written either way.
+- **The Revit tests no longer assert the contents of the firm's own template.** They are pinned
+  against `tests/data/mini-template.md` instead, written by hand. The firm edits their template
+  -- they moved the mark parameters to the `CH-` names -- and a template edit should not be a
+  failing test. The real file keeps one smoke test: every family the mapping names must still
+  be in it, which is the part that would actually break a project.
+
 ## [0.14.0] - 2026-09-17
 
 Utility 5 against the firm's real Revit template. Every family name, type-name pattern and

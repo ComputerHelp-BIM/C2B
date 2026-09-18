@@ -156,10 +156,21 @@ to write the mapping file out and change a family or type name.
 
 Check `TowerA.revit.xlsx`, sheet **Types to create**, then in Revit press **C2B
 → Import C2B
-model** and pick `TowerA.revit.json`. See `revit\README.md`. The Revit script
-has not yet been
-run against a live model, so expect to adjust family and parameter names on the
-first project.
+model** and pick `TowerA.revit.json`. Afterwards, run your **Extract Template**
+tool on the
+project and compare what was built with what was planned:
+
+```bash
+c2b revit-verify out\TowerA\TowerA.revit.json "TowerA-template.md"
+```
+
+**`docs\revit-run.md` walks through all of it step by step** — the one-time
+pyRevit setup,
+what to read in the workbook before importing, what the import reports, and what
+to send when
+something breaks. The Revit script has not yet been run against a live model, so
+expect to
+adjust one or two API calls on the first project.
 
 ## 9. When something looks wrong
 

@@ -12,13 +12,24 @@ import pytest
 from c2b.normalize.model import NBeam, NColumn, NFloor, NLevel, NormalizedProject, NPanel, Point2
 from c2b.revit.mapping import RevitMapping
 from c2b.revit.plan import build_plan, check_against_template
-from c2b.revit.template import parse_shared_parameters, parse_template_md
+from c2b.revit.template import parse_template_md
 
-TEMPLATES = Path(__file__).resolve().parent.parent / "templates"
-TEMPLATE_MD = TEMPLATES / "R25_TEMPLATE.template.md"
-SHARED_TXT = TEMPLATES / "CH-shared-parameters.txt"
-SCRIPT = (Path(__file__).resolve().parent.parent / "revit" / "C2B.extension" / "C2B.tab" /
+TESTS = Path(__file__).resolve().parent
+MINI = TESTS / "data" / "mini-template.md"
+TEMPLATE_MD = TESTS.parent / "templates" / "R25_TEMPLATE.template.md"
+SCRIPT = (TESTS.parent / "revit" / "C2B.extension" / "C2B.tab" /
           "Model.panel" / "Import C2B.pushbutton" / "script.py")
+
+
+def _mini_mapping(**kw):
+    """A mapping naming the fixture template's families, so the firm can edit theirs freely."""
+    mapping = RevitMapping(**kw)
+    mapping.column.family, mapping.column.fallback_type = "Test-Rectangular-Column", "T-300 X 600"
+    mapping.column.type_name = "T-{w:.0f} X {d:.0f}"
+    mapping.column_round.family, mapping.column_round.type_name = "Test-Round-Column", "T-{dia:.0f}"
+    mapping.beam.family, mapping.beam.type_name = "Test-Rectangular-Beam", "T-{w:.0f} X {d:.0f}"
+    mapping.floor.type_name, mapping.floor.base_type = "{thk:.0f} THK. TEST SLAB", "150 THK. TEST SLAB"
+    return mapping
 
 
 def _pt(x, y):
@@ -131,68 +142,68 @@ def test_a_floor_action_carries_the_thickness_its_type_needs():
 
 
 # ---------------------------------------------------------------- template check
-@pytest.mark.skipif(not TEMPLATE_MD.exists(), reason="the firm's template description is not in this checkout")
 def test_check_separates_types_the_template_has_from_types_it_must_make():
-    model = _model(columns=[_column(width_mm=300.0, depth_mm=600.0),           # CH-300 X 600 exists
-                            _column(id="C2", width_mm=450.0, depth_mm=750.0)])  # CH-450 X 750 does not
-    mapping = RevitMapping()
+    model = _model(columns=[_column(width_mm=300.0, depth_mm=600.0),            # T-300 X 600 exists
+                            _column(id="C2", width_mm=450.0, depth_mm=750.0)])   # T-450 X 750 does not
+    mapping = _mini_mapping()
     plan = build_plan(model, mapping)
-    check = check_against_template(plan, mapping, parse_template_md(TEMPLATE_MD))
+    check = check_against_template(plan, mapping, parse_template_md(MINI))
     by_name = {t.type_name: t for t in check.types}
-    assert by_name["CH-300 X 600"].exists and not by_name["CH-300 X 600"].will_create
-    assert by_name["CH-450 X 750"].will_create and not by_name["CH-450 X 750"].exists
-    assert by_name["CH-450 X 750"].base_type == "CH-300 X 600"
+    assert by_name["T-300 X 600"].exists and not by_name["T-300 X 600"].will_create
+    assert by_name["T-450 X 750"].will_create and not by_name["T-450 X 750"].exists
+    assert by_name["T-450 X 750"].base_type == "T-300 X 600"
     assert check.missing_families == []
 
 
-@pytest.mark.skipif(not TEMPLATE_MD.exists(), reason="the firm's template description is not in this checkout")
 def test_check_names_a_family_the_template_does_not_have():
-    mapping = RevitMapping()
+    mapping = _mini_mapping()
     mapping.column.family = "M_Concrete-Rectangular-Column"     # an Autodesk sample, not this template
     plan = build_plan(_model(columns=[_column()]), mapping)
-    check = check_against_template(plan, mapping, parse_template_md(TEMPLATE_MD))
+    check = check_against_template(plan, mapping, parse_template_md(MINI))
     assert check.missing_families == ["M_Concrete-Rectangular-Column"]
     assert not check.types[0].will_create      # a type cannot be duplicated inside a family that is absent
 
 
-@pytest.mark.skipif(not (TEMPLATE_MD.exists() and SHARED_TXT.exists()), reason="template files not in this checkout")
 def test_check_tells_an_unbound_name_from_one_that_exists_nowhere():
     """The two have different fixes, so the report must not call them the same thing."""
-    mapping = RevitMapping(mark_params=["S_ScheduleMark", "CH-ScheduleMark", "NOT_A_PARAM"], id_params=["ID"])
+    from c2b.revit.template import SharedParam
+
+    mapping = _mini_mapping(mark_params=["BOUND_EVERYWHERE", "DEFINED_NOT_BOUND", "NOT_A_PARAM", "Mark"],
+                            id_params=["A_PROJECT_PARAM"])
+    shared = {"DEFINED_NOT_BOUND": SharedParam(guid="g", name="DEFINED_NOT_BOUND", data_type="TEXT", group="x")}
     plan = build_plan(_model(columns=[_column()]), mapping)
-    check = check_against_template(plan, mapping, parse_template_md(TEMPLATE_MD),
-                                   parse_shared_parameters(SHARED_TXT))
+    check = check_against_template(plan, mapping, parse_template_md(MINI), shared)
     by_name = {p.name: p for p in check.params}
-    assert by_name["S_ScheduleMark"].bound and by_name["S_ScheduleMark"].survives
-    assert by_name["ID"].survives
+    assert by_name["BOUND_EVERYWHERE"].bound and by_name["BOUND_EVERYWHERE"].survives
+    assert by_name["A_PROJECT_PARAM"].survives              # a project parameter binds too
     # defined by the firm, not bound by the template: bind it
-    assert by_name["CH-ScheduleMark"].defined and not by_name["CH-ScheduleMark"].bound
-    assert "not bound in the template" in by_name["CH-ScheduleMark"].advice
+    assert by_name["DEFINED_NOT_BOUND"].defined and not by_name["DEFINED_NOT_BOUND"].bound
+    assert "not bound in the template" in by_name["DEFINED_NOT_BOUND"].advice
     # nothing anywhere carries this one: take it out of the mapping
     assert not by_name["NOT_A_PARAM"].defined and not by_name["NOT_A_PARAM"].bound
     assert "remove it from the mapping" in by_name["NOT_A_PARAM"].advice
+    # a Revit built-in is always there, whatever the template binds
+    assert by_name["Mark"].builtin and by_name["Mark"].survives
     assert by_name["Comments"].builtin and by_name["Comments"].survives
 
 
-@pytest.mark.skipif(not TEMPLATE_MD.exists(), reason="the firm's template description is not in this checkout")
 def test_check_flags_a_wall_leg_modelled_as_a_column():
     """It is what the firm asked for, and it is still worth seeing before Revit makes the type."""
-    mapping = RevitMapping()
+    mapping = _mini_mapping()
     plan = build_plan(_model(columns=[_column(wall_like=True, width_mm=12300.0, depth_mm=300.0)]), mapping)
-    check = check_against_template(plan, mapping, parse_template_md(TEMPLATE_MD))
+    check = check_against_template(plan, mapping, parse_template_md(MINI))
     (t,) = check.types
     assert t.note and "wall leg modelled as a column" in t.note
     assert check.summary()["types_to_look_at"] == 1
 
 
-@pytest.mark.skipif(not TEMPLATE_MD.exists(), reason="the firm's template description is not in this checkout")
 def test_check_lists_the_levels_that_do_not_exist_yet():
-    mapping = RevitMapping()
+    mapping = _mini_mapping()
     plan = build_plan(_model(columns=[_column()]), mapping)
-    check = check_against_template(plan, mapping, parse_template_md(TEMPLATE_MD))
-    assert check.new_levels == []                    # both level names are in the template
+    check = check_against_template(plan, mapping, parse_template_md(MINI))
+    assert check.new_levels == []                    # both level names are in the fixture
     plan.levels[0].name = "00 BASEMENT LVL."
-    check = check_against_template(plan, mapping, parse_template_md(TEMPLATE_MD))
+    check = check_against_template(plan, mapping, parse_template_md(MINI))
     assert check.new_levels == ["00 BASEMENT LVL."]
 
 

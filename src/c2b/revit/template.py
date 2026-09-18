@@ -75,6 +75,10 @@ class TemplateDigest(BaseModel):
     grid_names: list[str] = Field(default_factory=list)
     families: list[TemplateFamily] = Field(default_factory=list)
     bound_params: list[BoundParam] = Field(default_factory=list)
+    # from the Categories table: how many types a category carries and how many elements were
+    # built with them. A template has types and no instances; a finished model has both, which
+    # is what makes a re-export of an imported project worth comparing against the plan.
+    instances: dict[str, int] = Field(default_factory=dict)
 
     # -- lookups the planner uses -------------------------------------------
     def family(self, name: str) -> TemplateFamily | None:
@@ -101,7 +105,18 @@ class TemplateDigest(BaseModel):
 
     def counts(self) -> dict[str, int]:
         return {"families": len(self.families), "types": sum(len(f.types) for f in self.families),
-                "levels": len(self.levels), "grids": len(self.grid_names), "bound_params": len(self.bound_params)}
+                "levels": len(self.levels), "grids": len(self.grid_names), "bound_params": len(self.bound_params),
+                "instances": sum(self.instances.values())}
+
+    def type_params(self, family: str, type_name: str) -> dict[str, float] | None:
+        """The dimensions a type actually carries, or None when there is no such type."""
+        f = self.family(family)
+        if f is None:
+            return None
+        for t in f.types:
+            if t.name == type_name:
+                return t.params
+        return None
 
 
 def _parse_params(text: str | None) -> dict[str, float]:
@@ -171,6 +186,15 @@ def parse_template_md(path: str | Path) -> TemplateDigest:
                         digest.levels.append(TemplateLevel(name=_clean(r[0]), elevation_mm=float(r[1])))
                 elif sub == "Grids" and r:
                     digest.grid_names.append(_clean(r[0]))
+            continue
+
+        # -- what the model is made of ---------------------------------------
+        elif section == "Categories" and line.lstrip().startswith("|"):
+            rows, i = _parse_table(lines, i)
+            for r in rows:
+                if len(r) >= 3:
+                    with contextlib.suppress(ValueError):
+                        digest.instances[_clean(r[0])] = int(r[2])
             continue
 
         # -- families and types ----------------------------------------------

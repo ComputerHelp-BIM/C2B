@@ -423,6 +423,39 @@ def revit_plan(
     raise typer.Exit(1 if errors else 0)
 
 
+@app.command("revit-verify")
+def revit_verify(
+    plan_json: Path = typer.Argument(..., exists=True, help="<stem>.revit.json, the build plan that was run"),
+    built: Path = typer.Argument(..., exists=True, help="Extract Template .md of the Revit project AFTER the import"),
+    out: Path = typer.Option(None, "--out", "-o", help="Output folder (default: next to the plan)"),
+) -> None:
+    """Utility 5, step 2: check what Revit built against what the plan asked for.
+
+    Run the firm's Extract Template tool on the project after importing, and pass its markdown
+    here. Nothing talks to Revit: this compares two files.
+    """
+    from .revit.plan import RevitPlan
+    from .revit.template import parse_template_md
+    from .revit.verify import verify_after_import, write_import_report
+
+    plan = RevitPlan.model_validate_json(plan_json.read_text(encoding="utf-8"))
+    check = verify_after_import(plan, parse_template_md(built))
+    out = out or plan_json.parent
+    out.mkdir(parents=True, exist_ok=True)
+    report = out / f"{plan_json.name.replace('.revit.json', '')}.revit-check.md"
+    write_import_report(check, report)
+
+    s = check.summary()
+    for key, value in s.items():
+        typer.echo(f"  {key:16s} {value}")
+    for row in check.problems()[:20]:
+        typer.secho(f"  {row.what}: planned {row.planned}, model has {row.found}", fg=typer.colors.RED)
+        if row.note:
+            typer.echo(f"      {row.note}")
+    typer.secho(f"Import check: {report}", fg=typer.colors.RED if check.problems() else typer.colors.GREEN)
+    raise typer.Exit(1 if check.problems() else 0)
+
+
 @app.command()
 def render(json_file: Path = typer.Argument(..., exists=True, help="<stem>.c2b.json produced by extract"),
            out: Path = typer.Option(None, "--out", "-o", help="PNG path"), floor: Optional[str] = typer.Option(None, "--floor", help="Floor id, e.g. L01"),

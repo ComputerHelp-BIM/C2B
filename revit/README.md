@@ -1,5 +1,10 @@
 # Utility 5 — the Revit importer
 
+> **Running it, step by step: [docs/revit-run.md](../docs/revit-run.md).** That is the guide
+> to follow at a Revit seat — pyRevit setup, describing the template, what to read before
+> importing, what the import reports, reading the model back, and what to send when something
+> breaks. This page is the reference for how it works.
+
 C2B does the thinking outside Revit. `c2b revit-plan` turns the normalised model
 into a
 **build plan**: an ordered list of "create this family type, on this level, at
@@ -149,3 +154,20 @@ and tell me
 what breaks. The fixes belong in the mapping file or in this one script, not in
 the rest of
 the pipeline.
+
+## Reading the model back
+
+The import is not finished when it says it is. Run **Extract Template** on the project
+afterwards and compare:
+
+```bash
+c2b revit-verify out\TowerA\TowerA.revit.json "TowerA-template.md"
+```
+
+It answers what nothing else can: whether every element was built, whether every type exists,
+and whether each created type is the size the plan asked for. That last one is the reason it
+exists — a `175 THK. RCC SLAB` duplicated from the 150 and left 150 thick looks entirely
+normal in the project browser, and every floor of that type is wrong.
+
+Nothing in that command talks to Revit. It compares two files, so the fault can be diagnosed
+away from the Revit seat.
