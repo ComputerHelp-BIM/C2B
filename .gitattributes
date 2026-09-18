@@ -1,0 +1,18 @@
+# Git LFS — CAD files are stored by reference, not in the git history itself.
+#
+# A DXF is text, but a structural drawing is tens of megabytes of it and every edit rewrites
+# most of the file, so git cannot pack successive versions usefully: without this, one year of
+# revisions weighs more than the whole of the rest of the repository and every clone pays for
+# all of it forever. LFS keeps a small pointer in the commit and the file itself on the server,
+# so a clone fetches only the versions it checks out.
+#
+# See docs/git-lfs.md for installing, cloning, fetching and pushing.
+*.dxf   filter=lfs diff=lfs merge=lfs -text
+*.dwg   filter=lfs diff=lfs merge=lfs -text
+*.rvt   filter=lfs diff=lfs merge=lfs -text
+*.rfa   filter=lfs diff=lfs merge=lfs -text
+*.rte   filter=lfs diff=lfs merge=lfs -text
+
+# Not CAD, but binary and large for the same reason.
+*.rar   filter=lfs diff=lfs merge=lfs -text
+*.zip   filter=lfs diff=lfs merge=lfs -text

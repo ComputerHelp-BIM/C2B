@@ -14,5 +14,6 @@ out/
 *.xlsx
 !docs/**/*.xlsx
 
-# Firm template DXFs are not committed
+# The firm's template DXFs and the client drawings ARE committed, through Git LFS
+# (see .gitattributes and docs/git-lfs.md). Only what the tool generates is ignored.
 demo
