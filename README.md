@@ -9,7 +9,7 @@ schema with diagnostics, and normalising them into the firm's template drawing
 (`CH-` layers, `C12-300X900` marks, spans between supports, slab panels, level
 frame).
 
-Version `0.18.0` (tool) — extraction schema `0.7.1`, normalised schema `0.10.1`.
+Version `0.18.1` (tool) — extraction schema `0.7.1`, normalised schema `0.10.1`.
 See [CHANGELOG.md](CHANGELOG.md).
 
 ## Using it
@@ -214,13 +214,13 @@ src/c2b/
 tools/             compare_with_template.py (IoU check against the reference), compare_floor.py,
                    audit_client.py, render_dxf.py
 tests/             unit tests + synthetic end-to-end drawing + sample integration
-templates/         the firm's Revit template described in markdown, and its shared parameters
-                   (the DXF template itself is not committed)
+templates/         the firm's CH template DXF, its Revit template described in markdown,
+                   and its shared parameter file (the DXF is in Git LFS)
 profiles/          client profiles (YAML)
-samples/           client drawings (git-ignored)
+samples/           client drawings, in Git LFS                          docs/git-lfs.md
 ```
 
-## Known limits of v0.18.0
+## Known limits of v0.18.1
 
 - Cantilever slabs, chajjas and balconies need the client's slab edge lines;
   without them a

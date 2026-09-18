@@ -13,13 +13,22 @@ after installation.
 1. **Install Python 3.11 or newer** from
   [https://www.python.org/downloads/](https://www.python.org/downloads/).
    During setup tick **“Add python.exe to PATH”**.
-2. **Get the code.** Either download the repository as a ZIP from GitHub and
-  unzip it, or:
+2. **Get the code.** The client drawings and the firm's template DXF are stored
+  with **Git
+   LFS**, which Git for Windows already includes. Run `git lfs install` once on
+  the machine
+   *before* cloning, then:
 
    ```bash
+   git lfs install
    git clone https://github.com/ComputerHelp-BIM/C2B.git
    cd C2B
    ```
+
+   If you cloned first and the DXFs came out as 130-byte text files, run `git lfs
+  install`
+   then `git lfs pull` — no need to clone again. See
+  [docs/git-lfs.md](docs/git-lfs.md).
 
 3. **Double-click `windows\install.bat`.** It creates a private Python
   environment in

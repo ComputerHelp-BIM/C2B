@@ -13,6 +13,30 @@ importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes
 values.
 
+## [0.18.1] - 2026-09-18
+
+### Changed (0.18.1)
+
+- **The CAD files are on Git LFS.** Every `.dxf`, `.dwg`, `.rvt`, `.rfa` and `.rte` is a pointer
+  in the commit and a file on the LFS server. A DXF is text, so git *can* store it -- the
+  problem is the next version of it: a structural drawing is tens of megabytes and an edit
+  rewrites most of the file, so successive revisions cannot be packed against each other and
+  each one adds its whole self to the history, for everyone, forever. A revision now costs a
+  pointer, and a clone fetches only what it checks out.
+- The client drawings and the firm's `CH-TEMPLATE.dxf` are committed, so a clone can run the
+  tests and the demo without hunting for files. About 36 MB across seven files.
+- **`docs/git-lfs.md`** -- installing it, cloning, fetching, pushing, adding a drawing, what it
+  costs against GitHub's allowance, and what to do when a DXF turns out to be 130 bytes of text
+  because LFS was not installed before the clone.
+
+### Fixed (0.18.1)
+
+- The sample drawings went into 0.18.0 as ordinary git blobs. Their `.gitignore` change had
+  stopped excluding them and a `git add -A` swept them in, the same commit in which the decision
+  was supposed to be left open. They are on LFS from here on; the blobs already in the branch
+  pack to about 4 MB in total, which is less than a history rewrite would cost anyone holding a
+  clone, so they stay.
+
 ## [0.18.0] - 2026-09-18
 
 The second live run. The grids and the stacking were right; the beams were not, and the check
