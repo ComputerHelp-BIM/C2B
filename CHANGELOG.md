@@ -46,6 +46,13 @@ things, three of them ours.
 
 ### Changed (0.17.0)
 
+- **The template now binds the firm's own names**, so the mapping stops carrying the pair that
+  was there while the template and the shared parameter file disagreed. Marks go to
+  `CH-ScheduleMark` and Revit's built-in `Mark`; the C2B id goes to `CH-ID`. On Test10 both were
+  written on all 852 elements.
+- **The level name is written to `CH-LEVEL`** on every element. The template binds it, their
+  schedules read it, and C2B is the only thing in the chain that knows which level an element
+  was built on.
 - Build plan version `0.3.0`: an action carries `z_justification` and `z_offset_mm`, and the
   plan carries `grid_name_clash`, so where a member sits across its own section is decided in
   the place it can be tested rather than by whatever a family happens to carry.

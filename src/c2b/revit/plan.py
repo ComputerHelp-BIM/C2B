@@ -127,6 +127,7 @@ class RevitPlan(BaseModel):
     project_base_point: list[float] = Field(default_factory=lambda: [0.0, 0.0])
     mark_params: list[str] = Field(default_factory=list)     # every name the mark is written to
     id_params: list[str] = Field(default_factory=list)       # every name the C2B element id is written to
+    level_params: list[str] = Field(default_factory=list)    # every name the level's own name is written to
     comment_param: str | None = None
     grid_name_clash: str = "rename_existing"                 # what to do when the project already has that grid
     template_check: TemplateCheck | None = None              # what the Revit template does and does not carry
@@ -173,7 +174,8 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
     diag = diag or DiagnosticsCollector()
     plan = RevitPlan(source_file=np_.source_file, mapping_name=mapping.name,
                      mark_params=list(mapping.mark_params), id_params=list(mapping.id_params),
-                     comment_param=mapping.comment_param, grid_name_clash=mapping.grid_name_clash)
+                     level_params=list(mapping.level_params), comment_param=mapping.comment_param,
+                     grid_name_clash=mapping.grid_name_clash)
     step = mapping.round_sizes_to_mm
 
     # ---- levels ------------------------------------------------------------
@@ -457,7 +459,8 @@ def check_against_template(plan: RevitPlan, mapping: RevitMapping, digest: Templ
     # with no actions there is no category to check against, so ask whether the template binds
     # the name at all rather than declaring every name unbound
     categories = ({a.category for a in plan.actions} - {"Grids", "Shaft Openings"}) or {None}
-    for name in list(plan.mark_params) + list(plan.id_params) + ([plan.comment_param] if plan.comment_param else []):
+    for name in (list(plan.mark_params) + list(plan.id_params) + list(plan.level_params)
+                 + ([plan.comment_param] if plan.comment_param else [])):
         pc = ParamCheck(name=name, builtin=name in REVIT_BUILTIN_PARAMS,
                         bound=any(digest.binds(name, c) for c in categories),
                         defined=bool(shared and name in shared))

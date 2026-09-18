@@ -405,3 +405,23 @@ def test_the_import_makes_room_for_a_grid_name_the_project_already_has():
     assert "(template)" in body, "the placeholder is never moved out of the way"
     called = {getattr(c.func, "id", "") for c in ast.walk(main) if isinstance(c, ast.Call)}
     assert "place_across_section" in called, "a beam is placed without stating its z position"
+
+
+def test_the_level_name_is_written_where_the_firm_schedules_read_it():
+    """Their template binds CH-LEVEL, and C2B is the only thing that knows which level it is."""
+    plan = build_plan(_model(columns=[_column()]), RevitMapping())
+    assert plan.level_params == ["CH-LEVEL"]
+    assert plan.mark_params == ["CH-ScheduleMark", "Mark"]
+    assert plan.id_params == ["CH-ID"]
+
+
+@pytest.mark.skipif(not SCRIPT.exists(), reason="the pyRevit extension is not in this checkout")
+def test_every_stamped_element_is_told_its_level():
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    stamp = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "stamp")
+    assert [a.arg for a in stamp.args.args] == ["element", "action", "plan", "level"]
+    assert "level_params" in ast.unparse(stamp)
+    # no call site may forget it, or that element's level silently stays blank
+    main = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "main")
+    calls = [c for c in ast.walk(main) if isinstance(c, ast.Call) and getattr(c.func, "id", "") == "stamp"]
+    assert calls and all(len(c.args) == 4 for c in calls), "an element is stamped without its level"

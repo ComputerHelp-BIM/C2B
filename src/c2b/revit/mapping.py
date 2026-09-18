@@ -56,13 +56,13 @@ class RevitMapping(BaseModel):
     grid_prefix: str = ""
 
     # -- where the mark and the C2B id are written --------------------------
-    # Every name that exists on the element is written, and the run reports which ones took, so
-    # a project on an older template still works. The firm's own names come first: R25_TEMPLATE
-    # used to bind "ID" and "S_ScheduleMark" while the shared parameter file defined "CH-ID" and
-    # "CH-ScheduleMark", and the template was changed to the CH names. The older pair is kept
-    # behind them because a model made before that change still carries it.
-    mark_params: list[str] = Field(default_factory=lambda: ["CH-ScheduleMark", "S_ScheduleMark", "Mark"])
-    id_params: list[str] = Field(default_factory=lambda: ["CH-ID", "ID"])
+    # Every name that exists on the element is written, and the run reports which ones took.
+    # R25_TEMPLATE binds the firm's own CH- names; "Mark" is Revit's built-in and is always
+    # there, so a mark is never lost even on a template that binds nothing.
+    mark_params: list[str] = Field(default_factory=lambda: ["CH-ScheduleMark", "Mark"])
+    id_params: list[str] = Field(default_factory=lambda: ["CH-ID"])
+    # The level an element was built on, written where the firm's schedules read it from.
+    level_params: list[str] = Field(default_factory=lambda: ["CH-LEVEL"])
     comment_param: str | None = "Comments"
 
     # -- structural columns --------------------------------------------------

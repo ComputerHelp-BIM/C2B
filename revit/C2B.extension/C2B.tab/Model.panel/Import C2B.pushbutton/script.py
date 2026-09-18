@@ -177,10 +177,12 @@ def set_text(element, names, value):
     return taken
 
 
-def stamp(element, action, plan):
-    """Mark, C2B id and note, written to every name the model carries them under."""
+def stamp(element, action, plan, level=None):
+    """Mark, C2B id, level and note, written to every name the model carries them under."""
     set_text(element, plan.get("mark_params"), action.get("mark"))
     set_text(element, plan.get("id_params"), action.get("id"))
+    if level is not None:
+        set_text(element, plan.get("level_params"), level.Name)
     comment = plan.get("comment_param")
     if comment and action.get("comment"):
         set_text(element, [comment], action.get("comment"))
@@ -443,7 +445,7 @@ def main():
                     from Autodesk.Revit.DB import ElementTransformUtils
                     axis = Line.CreateBound(point(action["point"]), point(action["point"], 1000.0))
                     ElementTransformUtils.RotateElement(doc, inst.Id, axis, rotation * 3.141592653589793 / 180.0)
-                stamp(inst, action, plan)
+                stamp(inst, action, plan, level)
                 tally(kind)
             elif kind == "beam":
                 symbol = ensure_symbol(action, symbols)
@@ -457,7 +459,7 @@ def main():
                     if p is not None and not p.IsReadOnly:
                         p.Set(mm(offset))
                 place_across_section(inst, action)
-                stamp(inst, action, plan)
+                stamp(inst, action, plan, level)
                 tally("beams")
             # a raft, pile cap or pit comes with an outline and is built as a slab; an isolated
             # footing comes with a point and is built from its family, in the branch below
@@ -477,14 +479,14 @@ def main():
                 p = floor.get_Parameter(BuiltInParameter.FLOOR_HEIGHTABOVELEVEL_PARAM)
                 if p is not None and not p.IsReadOnly:
                     p.Set(mm(action.get("top_offset_mm", 0.0) + action.get("base_offset_mm", 0.0)))
-                stamp(floor, action, plan)
+                stamp(floor, action, plan, level)
                 tally(kind)
             elif kind == "footing":
                 symbol = ensure_symbol(action, symbols)
                 if symbol is None or level is None:
                     continue
                 inst = doc.Create.NewFamilyInstance(point(action["point"]), symbol, level, Structure.StructuralType.Footing)
-                stamp(inst, action, plan)
+                stamp(inst, action, plan, level)
                 tally("footings")
             elif kind == "wall":
                 wtype = ensure_system_type(action, wall_types, WallType)
@@ -498,7 +500,7 @@ def main():
                 if top is not None:
                     wall.get_Parameter(BuiltInParameter.WALL_HEIGHT_TYPE).Set(top.Id)
                     wall.get_Parameter(BuiltInParameter.WALL_TOP_OFFSET).Set(mm(action.get("top_offset_mm", 0.0)))
-                stamp(wall, action, plan)
+                stamp(wall, action, plan, level)
                 tally("walls")
             elif kind == "shaft" and action.get("loops"):
                 ring = loop_from(action["loops"][0])
