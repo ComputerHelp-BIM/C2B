@@ -17,18 +17,39 @@ import os
 import traceback
 
 from Autodesk.Revit.DB import (BuiltInParameter, CurveArray, CurveLoop, Floor, FilteredElementCollector,
-                               FamilySymbol, FloorType, Grid, Level, Line, Structure, Transaction, UnitUtils, Wall, WallType,
-                               XYZ)
+                               FamilySymbol, FloorType, Grid, Level, Line, SpecTypeId, Structure, Transaction,
+                               UnitUtils, Wall, WallType, XYZ)
 from pyrevit import forms, revit, script
 
+# ---------------------------------------------------------------------- units
+# Revit stores every length internally in DECIMAL FEET, whatever the project's display unit is
+# set to. A plan is in millimetres, so every length crossing into the API goes through mm() and
+# every length read back out goes through to_mm(). A raw millimetre value handed to Revit is
+# read as feet: 300 becomes 91.4 metres, and nothing complains.
+#
+# The project's own unit setting changes what a user SEES and nothing else, so an imperial
+# project imports exactly the same model. The run reports the setting anyway, so the log is
+# never ambiguous about it.
 try:                                  # Revit 2021 and newer
     from Autodesk.Revit.DB import UnitTypeId
+
     def mm(value):
+        """Millimetres -> Revit's internal feet."""
         return UnitUtils.ConvertToInternalUnits(float(value), UnitTypeId.Millimeters)
+
+    def to_mm(value):
+        """Revit's internal feet -> millimetres."""
+        return UnitUtils.ConvertFromInternalUnits(float(value), UnitTypeId.Millimeters)
 except ImportError:                   # Revit 2020 and older
     from Autodesk.Revit.DB import DisplayUnitType
+
     def mm(value):
+        """Millimetres -> Revit's internal feet."""
         return UnitUtils.ConvertToInternalUnits(float(value), DisplayUnitType.DUT_MILLIMETERS)
+
+    def to_mm(value):
+        """Revit's internal feet -> millimetres."""
+        return UnitUtils.ConvertFromInternalUnits(float(value), DisplayUnitType.DUT_MILLIMETERS)
 
 doc = revit.doc
 output = script.get_output()
@@ -39,8 +60,9 @@ def note(kind, message):
     log.append((kind, message))
 
 
-def point(xy, z=0.0):
-    return XYZ(mm(xy[0]), mm(xy[1]), z)
+def point(xy, z_mm=0.0):
+    """A plan point in millimetres -> an internal-unit XYZ. Every argument is millimetres."""
+    return XYZ(mm(xy[0]), mm(xy[1]), mm(z_mm))
 
 
 def loop_from(points):
@@ -187,9 +209,104 @@ def ensure_system_type(action, pool, cls):
     return new
 
 
+# ------------------------------------------------------------------- checking
+def read_length(element, name):
+    """A length parameter read back in millimetres, or None when the element has not got it."""
+    p = element.LookupParameter(name)
+    if p is None or p.StorageType.ToString() != "Double":
+        return None
+    return to_mm(p.AsDouble())
+
+
+def check_what_was_built(plan, symbols, floor_types, wall_types, levels_by_id, made):
+    """Read the model back and compare it with the plan, without leaving Revit.
+
+    The import saying "finished" is not evidence. Three things go wrong quietly and none of
+    them look wrong in the project browser: elements that failed while the rest carried on, a
+    type that was duplicated but kept the size it was copied from, and a level that already
+    existed at a different height so everything on it sits at the wrong elevation.
+    """
+    rows = []          # (ok, what, planned, found, why it matters)
+
+    # -- did everything get built? -------------------------------------------
+    planned = {}
+    for action in plan.get("actions", []):
+        kind = "floors" if action.get("kind") == "floor" else action.get("kind") + "s"
+        planned[kind] = planned.get(kind, 0) + 1
+    planned["levels"] = len(plan.get("levels", []))
+    for kind in sorted(planned):
+        want, got = planned[kind], made.get(kind, 0)
+        rows.append((got >= want, kind, want, got,
+                     "" if got >= want else "%d were not created -- see the failures above" % (want - got)))
+
+    # -- is every type the size the plan asked for? --------------------------
+    wanted_types = {}
+    for action in plan.get("actions", []):
+        name = action.get("type_name")
+        if not name:
+            continue
+        want = dict(action.get("params") or {})
+        if not want and action.get("thickness_mm"):
+            want = {"__thickness__": action["thickness_mm"]}
+        wanted_types.setdefault((action.get("family"), name), want)
+
+    for (family, name), want in sorted(wanted_types.items(), key=lambda kv: (kv[0][0] or "", kv[0][1])):
+        element = None
+        if family and family in symbols:
+            element = symbols[family].get(name)
+        else:
+            element = floor_types.get(name) or wall_types.get(name)
+        if element is None:
+            rows.append((False, "type %s" % name, "exists", "missing",
+                         "everything of this type failed"))
+            continue
+        for param, value in want.items():
+            if param == "__thickness__":
+                structure = element.GetCompoundStructure()
+                if structure is None:
+                    continue
+                index = structure.GetFirstCoreLayerIndex() if structure.LayerCount > 1 else 0
+                got = to_mm(structure.GetLayerWidth(index))
+                label = "thickness"
+            else:
+                got = read_length(element, param)
+                label = param
+            if got is None:
+                rows.append((False, "type %s" % name, "%s %.0f" % (label, value), "no such parameter",
+                             "the family does not carry it, so the size was never set"))
+            elif abs(got - value) > 1.0:
+                rows.append((False, "type %s" % name, "%s %.0f" % (label, value), "%s %.0f" % (label, got),
+                             "it kept the size of the type it was copied from -- every element of it is wrong"))
+
+    # -- are the levels where the plan put them? -----------------------------
+    for row in plan.get("levels", []):
+        level = levels_by_id.get(row["id"])
+        if level is None:
+            rows.append((False, "level %s" % row["name"], "%.0f mm" % row["elevation_mm"], "missing",
+                         "nothing hosted on it was built"))
+            continue
+        got = to_mm(level.Elevation)
+        if abs(got - row["elevation_mm"]) > 1.0:
+            rows.append((False, "level %s" % row["name"], "%.0f mm" % row["elevation_mm"], "%.0f mm" % got,
+                         "it already existed at another height, so everything on it is at the wrong level"))
+    return rows
+
+
 # ---------------------------------------------------------------------- run
+def pick_plan():
+    """The build plan, opening where the last one was picked so nobody hunts for the folder."""
+    config = script.get_config()
+    last = getattr(config, "last_folder", None)
+    path = forms.pick_file(file_ext="json", title="Pick the C2B build plan (*.revit.json)",
+                           init_dir=last if last and os.path.isdir(last) else None)
+    if path:
+        config.last_folder = os.path.dirname(path)
+        script.save_config()
+    return path
+
+
 def main():
-    path = forms.pick_file(file_ext="json", title="Pick the C2B build plan (*.revit.json)")
+    path = pick_plan()
     if not path:
         return
     with open(path, "r") as handle:
@@ -197,7 +314,13 @@ def main():
 
     counts = plan.get("counts", {})
     summary = "\n".join("  %-10s %s" % (k, v) for k, v in sorted(counts.items()))
-    if not forms.alert("C2B plan: %s\n\n%s\n\nBuild this in the current model?" % (os.path.basename(path), summary),
+    # Revit works in decimal feet internally whatever this says; it changes only what is shown.
+    try:
+        unit_name = doc.GetUnits().GetFormatOptions(SpecTypeId.Length).GetUnitTypeId().TypeId.split(":")[-1]
+    except Exception:
+        unit_name = "unknown"
+    if not forms.alert("C2B plan: %s\n\n%s\n\nThis model displays lengths in %s.\n"
+                       "Build this in the current model?" % (os.path.basename(path), summary, unit_name),
                        title="C2B", ok=False, yes=True, no=True):
         return
 
@@ -251,7 +374,7 @@ def main():
                 rotation = action.get("rotation_deg") or 0.0
                 if abs(rotation) > 1e-6:
                     from Autodesk.Revit.DB import ElementTransformUtils
-                    axis = Line.CreateBound(point(action["point"]), point(action["point"], mm(1000.0)))
+                    axis = Line.CreateBound(point(action["point"]), point(action["point"], 1000.0))
                     ElementTransformUtils.RotateElement(doc, inst.Id, axis, rotation * 3.141592653589793 / 180.0)
                 stamp(inst, action, plan)
                 tally(kind)
@@ -322,12 +445,25 @@ def main():
             note("failed", "%s %s: %s" % (kind, action.get("id"), ex))
     t.Commit()
 
+    # ---- check what was built, without leaving Revit ----------------------
+    checked = check_what_was_built(plan, symbols, floor_types, wall_types, levels_by_id, made)
+    wrong = [row for row in checked if not row[0]]
+
     # ---- report ----------------------------------------------------------
-    output.print_md("## C2B import finished")
+    if wrong:
+        output.print_md("# C2B import finished, with %d things to look at" % len(wrong))
+        output.print_md("| What | Should be | In the model | Why it matters |")
+        output.print_md("| --- | --- | --- | --- |")
+        for _ok, what, planned_value, found, why in wrong[:200]:
+            output.print_md("| %s | %s | %s | %s |" % (what, planned_value, found, why))
+    else:
+        output.print_md("# C2B import finished — the model matches the plan")
+
+    output.print_md("## What was created")
     output.print_md("\n".join("* **%s**: %s" % (k, v) for k, v in sorted(made.items())) or "* nothing was created")
     problems = [row for row in log if row[0] in ("failed", "missing")]
     if problems:
-        output.print_md("### %d problems" % len(problems))
+        output.print_md("### %d failures" % len(problems))
         for kind, message in problems[:200]:
             output.print_md("* `%s` %s" % (kind, message))
     created = [row for row in log if row[0] == "created"]

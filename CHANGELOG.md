@@ -13,6 +13,47 @@ importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes
 values.
 
+## [0.16.0] - 2026-09-18
+
+Three steps instead of eight, and no terminal. The pipeline was right and the way into it was
+not: reaching a Revit model meant a spreadsheet, two command lines, a second tool and reading
+three sheets to know what to do next. A drafter should pick a file and press a button.
+
+### Changed (0.16.0)
+
+- **The Run prepares the Revit model too.** Step 4 of 4 writes the build plan and checks it
+  against the firm's Revit template, which it finds rather than asks for: beside the output,
+  beside the drawing, or the one shipped with C2B. The command line still exists; nobody has to
+  reach it.
+- **Floor heights are typed in the window.** *Set floor heights…* lists the floors the drawing
+  found, takes a height for each and runs again. It was the one thing the drawing cannot supply
+  and the one thing that sent a drafter out to Excel, which is what turned one run into three.
+  The button appears only when the heights are what is missing.
+- **The window says what to do next, in one line.** A log of forty lines does not tell anyone
+  which line is addressed to them, so the next step is said once, on its own strip: fill the
+  heights, or open Revit and pick this file.
+- **The import checks its own work.** It reads the model back before it reports, so Extract
+  Template and a second command are no longer part of a normal run. It catches the three
+  failures that look completely normal in the project browser: elements that failed while the
+  rest carried on, a type duplicated that kept the size it was copied from, and a level that
+  already existed at another height so everything on it sits wrong. `c2b revit-verify` stays,
+  for looking at a model someone else imported.
+- The import opens the file dialog where the last plan was picked, and names the project's
+  display unit in the confirmation.
+- `docs/revit-run.md` now opens with the three steps and a table of what you do and what you
+  get. The detail is still there, below.
+
+### Fixed (0.16.0)
+
+- **A unit trap in the Revit script.** Revit stores every length in decimal feet whatever the
+  project's units say, so a millimetre value handed straight to it is read as feet -- 300 mm
+  becomes 91 m, and nothing complains. Every length was converted except one: `point(xy, z)`
+  converted x and y and left z raw, half a function in two unit systems. It now takes
+  millimetres for every axis, `to_mm()` exists for reading lengths back, and a test walks the
+  script's syntax tree and fails if any bare number or `*_mm` value reaches a Revit call
+  unconverted. Reverting the conversion on the level elevation makes that test fail, which is
+  the point of it.
+
 ## [0.15.0] - 2026-09-18
 
 Utility 5 closes its loop. The plan went into Revit and nothing came back out; now the model

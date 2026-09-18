@@ -230,3 +230,79 @@ def test_a_duplicated_system_type_is_given_its_thickness():
     ensure = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "ensure_system_type")
     called = {getattr(c.func, "id", "") for c in ast.walk(ensure) if isinstance(c, ast.Call)}
     assert "set_structure_thickness" in called
+
+
+# ---------------------------------------------------------------- units
+# Revit stores every length in decimal feet, whatever the project's display unit says. A
+# millimetre value handed straight to the API is read as feet -- 300 becomes 91.4 m -- and
+# nothing complains, so the mistake shows up as a model that is 3.28 times too big.
+_LENGTH_SINKS = ("Set", "SetLayerWidth", "Create", "CreateBound", "NewFamilyInstance")
+
+
+def _length_args(tree):
+    """Every argument passed to a call that takes a length, with the call's name."""
+    import ast as _ast
+
+    for node in _ast.walk(tree):
+        if not isinstance(node, _ast.Call):
+            continue
+        name = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
+        if name in _LENGTH_SINKS:
+            for arg in node.args:
+                yield name, arg
+
+
+@pytest.mark.skipif(not SCRIPT.exists(), reason="the pyRevit extension is not in this checkout")
+def test_no_millimetre_value_reaches_revit_unconverted():
+    """Every length crossing into the API must go through mm(); nothing else may."""
+    source = SCRIPT.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    offenders = []
+    for call, arg in _length_args(tree):
+        text = ast.unparse(arg)
+        # a bare number (bool is an int in Python, and Wall.Create's last arguments are flags)
+        bare_number = (isinstance(arg, ast.Constant) and isinstance(arg.value, (int, float))
+                       and not isinstance(arg.value, bool) and arg.value != 0)
+        # action["top_offset_mm"] or action.get("top_offset_mm", 0.0) straight into the API
+        bare_mm = ("_mm" in text and not text.startswith("mm(")
+                   and isinstance(arg, (ast.Subscript, ast.Call)))
+        if bare_number or bare_mm:
+            offenders.append(f"{call}( {text} ) at line {arg.lineno}")
+    assert not offenders, "millimetres handed to Revit as feet: " + "; ".join(offenders)
+
+
+@pytest.mark.skipif(not SCRIPT.exists(), reason="the pyRevit extension is not in this checkout")
+def test_point_takes_millimetres_for_every_axis():
+    """It used to convert x and y and leave z raw, which is half a function in two unit systems."""
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "point")
+    assert [a.arg for a in fn.args.args] == ["xy", "z_mm"]
+    body = ast.unparse(fn.body[-1])
+    assert body.count("mm(") == 3, f"not every axis is converted: {body}"
+
+
+@pytest.mark.skipif(not SCRIPT.exists(), reason="the pyRevit extension is not in this checkout")
+def test_both_directions_of_the_conversion_exist():
+    """Reading a length back out of Revit needs the opposite conversion, not a bare number."""
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    names = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    assert {"mm", "to_mm"} <= names
+
+
+# ---------------------------------------------------------------- the import checks itself
+@pytest.mark.skipif(not SCRIPT.exists(), reason="the pyRevit extension is not in this checkout")
+def test_the_import_reads_the_model_back_before_it_reports():
+    """"Finished" is not evidence. The three quiet failures have to be looked for."""
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    names = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    assert {"check_what_was_built", "read_length", "pick_plan"} <= names
+
+    main = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "main")
+    called = {getattr(c.func, "id", "") or getattr(c.func, "attr", "") for c in ast.walk(main) if isinstance(c, ast.Call)}
+    assert "check_what_was_built" in called, "the import reports without checking what it built"
+
+    check = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "check_what_was_built")
+    body = ast.unparse(check)
+    assert "GetCompoundStructure" in body, "a duplicated system type's thickness is not read back"
+    assert "Elevation" in body, "a level that already existed at another height is not caught"
+    assert "to_mm(" in body, "lengths are read back without converting out of Revit's feet"

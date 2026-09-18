@@ -42,6 +42,28 @@ class JobSettings:
     column_size_from: str = "tag"            # "tag" (the client's stated size) or "outline" (measure the drawing)
 
 
+#: Where the firm's Revit template description lives. Looked for beside the output, then in a
+#: "templates" folder next to the drawing, then in the one shipped with C2B. Nobody should have
+#: to type a path to a file that only ever sits in one place.
+REVIT_TEMPLATE_NAMES = ("R25_TEMPLATE.template.md", "*.template.md")
+SHARED_PARAM_NAMES = ("CH-shared-parameters.txt", "*shared*parameter*.txt")
+
+
+def _find_beside(out: Path, drawing: Path, patterns) -> Path | None:
+    """The first file matching any pattern, in the places it is worth looking."""
+    roots = [out, drawing.parent, drawing.parent / "templates",
+             Path.cwd() / "templates", Path(__file__).resolve().parents[3] / "templates"]
+    for root in roots:
+        for pattern in patterns:
+            try:
+                hits = sorted(root.glob(pattern)) if root.is_dir() else []
+            except OSError:
+                continue
+            if hits:
+                return hits[0]
+    return None
+
+
 @dataclass
 class JobResult:
     ok: bool = False
@@ -52,6 +74,9 @@ class JobResult:
     verify_md: Path | None = None
     review_dxf: Path | None = None
     levels_xlsx: Path | None = None
+    revit_json: Path | None = None
+    revit_xlsx: Path | None = None
+    next_step: str = ""                      # the one thing to do next, in plain words
     counts: dict[str, int] = field(default_factory=dict)
     issues: list[tuple[str, str, int, str]] = field(default_factory=list)   # severity, code, count, meaning
     error: str | None = None
@@ -89,7 +114,7 @@ def run_job(settings: JobSettings, progress: Progress) -> JobResult:
         if converted:
             progress("info", f"Converted {drawing.name} to DXF")
 
-        progress("step", f"1 of 3   Reading {dxf.name}")
+        progress("step", f"1 of 4   Reading {dxf.name}")
         profile = Profile.load(settings.profile) if settings.profile else Profile()
         profile.size_sources.column = settings.column_size_from
         if settings.column_size_from == "outline":
@@ -120,7 +145,7 @@ def run_job(settings: JobSettings, progress: Progress) -> JobResult:
             write_levels_template(p, levels_path)
             progress("warn", f"         fill {levels_path.name} with floor elevations and run again for the elevation frame")
 
-        progress("step", "2 of 3   Drawing it in the template")
+        progress("step", "2 of 4   Drawing it in the template")
         spec = TemplateSpec.load(settings.spec) if settings.spec else TemplateSpec()
         np_ = normalize(p, spec, rows, source_file=dxf.name, level_reference=ref)
         (out / f"{stem}.normalized.json").write_text(np_.model_dump_json(indent=2), encoding="utf-8")
@@ -130,7 +155,7 @@ def run_job(settings: JobSettings, progress: Progress) -> JobResult:
         s2 = np_.summary
         progress("good", f"         {s2.columns} columns in {s2.stacks} stacks, {s2.beams} beam spans, {s2.panels} slab panels, {s2.levels} levels")
 
-        progress("step", "3 of 3   Checking the drawing against the data")
+        progress("step", "3 of 4   Checking the drawing against the data")
         drawing_model = read_template(res.template_dxf, spec)
         (out / f"{stem}.reread.json").write_text(drawing_model.model_dump_json(indent=2), encoding="utf-8")
         write_normalized_workbook(drawing_model, out / f"{stem}.reread.xlsx")
@@ -139,6 +164,18 @@ def run_job(settings: JobSettings, progress: Progress) -> JobResult:
         res.verify_md = write_verify_report(diff, np_, drawing_model, out / f"{stem}.verify.md")
         progress("good" if diff.ok() else "warn",
                  f"         {'the drawing matches the data exactly' if diff.ok() else f'{diff.errors} errors, {diff.warnings} differences'}")
+
+        # ---- 4: the Revit build plan ------------------------------------
+        progress("step", "4 of 4   Preparing the Revit model")
+        if not np_.levels:
+            progress("warn", "         no floor elevations yet, so there is nothing to place in Revit")
+            res.next_step = ("Fill in the floor elevations below and press Run again. "
+                             "Until then the Revit model cannot be built.")
+        else:
+            res.revit_json, res.revit_xlsx = _write_revit_plan(np_, out, stem, dxf, progress)
+            res.next_step = ("Open Revit on your structural template, press C2B and pick "
+                             f"{res.revit_json.name}." if res.revit_json else
+                             "The Revit plan could not be written; see the messages above.")
 
         res.counts = {"floors": s1.floors, "columns": s2.columns, "beam spans": s2.beams, "slab panels": s2.panels,
                       "footings": s2.footings, "grids": s2.grids, "cut-outs": s2.openings, "levels": s2.levels}
@@ -155,6 +192,52 @@ def run_job(settings: JobSettings, progress: Progress) -> JobResult:
         progress("bad", f"Stopped: {res.error}")
         progress("info", traceback.format_exc(limit=3))
     return res
+
+
+def _write_revit_plan(np_, out: Path, stem: str, drawing: Path, progress: Progress):
+    """The Revit build plan, checked against the firm's template, as part of the ordinary run.
+
+    Nobody should have to open a terminal to reach the last step of the pipeline, and nobody
+    should have to know where the template description lives: it is found, not asked for.
+    """
+    from ..export.revit_excel import write_revit_workbook
+    from ..revit.mapping import RevitMapping
+    from ..revit.plan import build_plan, check_against_template
+    from ..revit.template import parse_shared_parameters, parse_template_md
+
+    mapping_path = out / f"{stem}.revit-mapping.yaml"
+    mapping = RevitMapping.load(mapping_path) if mapping_path.exists() else RevitMapping()
+    if not mapping_path.exists():
+        mapping.save(mapping_path)
+    plan = build_plan(np_, mapping)
+
+    template = _find_beside(out, drawing, REVIT_TEMPLATE_NAMES)
+    if template is not None:
+        shared_path = _find_beside(out, drawing, SHARED_PARAM_NAMES)
+        shared = parse_shared_parameters(shared_path) if shared_path else None
+        plan.template_check = check_against_template(plan, mapping, parse_template_md(template), shared)
+    else:
+        progress("warn", "         no Revit template description found, so the plan could not be checked "
+                         "against it; put it in a 'templates' folder beside the drawing")
+
+    json_path = out / f"{stem}.revit.json"
+    json_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+    xlsx_path = write_revit_workbook(plan, out / f"{stem}.revit.xlsx")
+
+    built = ", ".join(f"{n} {kind}s" for kind, n in sorted(plan.counts.items()) if kind != "levels" and n)
+    progress("good", f"         {built or 'nothing to build'}")
+    check = plan.template_check
+    if check is not None:
+        c = check.summary()
+        progress("info", f"         against {check.template_name}: {c['types_present']} of {c['types_needed']} "
+                         f"types already there, {c['types_to_create']} will be created")
+        for fam in check.missing_families:
+            progress("bad", f"         {fam} is not in your Revit template - load it, or nothing using it can be built")
+        for pc in [x for x in check.params if not x.survives]:
+            progress("warn", f"         {pc.name}: {pc.advice}")
+        for t in [x for x in check.types if x.note]:
+            progress("warn", f"         {t.type_name} x{t.count}: {t.note}")
+    return json_path, xlsx_path
 
 
 def run_verify(template_dxf: Path, spec_path: Path | None, progress: Progress) -> JobResult:

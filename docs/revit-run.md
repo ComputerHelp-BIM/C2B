@@ -1,199 +1,152 @@
-# Running C2B inside Revit (utility 5)
+# From a client drawing to a Revit model
 
-From a client DXF to a native Revit model, and back out again to prove it worked. Everything
-here runs on one Windows machine with Revit and pyRevit; nothing needs internet after the
-install.
+## The whole thing is three steps
 
-The loop is the same one utilities 3 and 4 use. C2B writes a plan, Revit builds it, and the
-model is read back and compared with the plan. Nothing is trusted because it looked right on
-screen.
+| | You do | You get |
+| --- | --- | --- |
+| **1** | Open **C2B**, pick the client drawing, press **Run** | The drawing in the firm's template, plus a list of anything unclear |
+| **2** | Press **Set floor heights…**, type a height per floor, press **Save and run again** | The same, now with levels — and the Revit model prepared |
+| **3** | In Revit, open a project from the structural template, press **C2B → Import C2B model**, pick the file the window named | The native model, checked against the plan, with a report of anything that did not match |
 
-```text
- client DXF ──► c2b run ──► <name>.normalized.json
-                                    │
-                    c2b revit-plan  │  --template <your template>.md
-                                    ▼
-                          <name>.revit.json      the build plan
-                          <name>.revit.xlsx      read this before you open Revit
-                                    │
-                    pyRevit ► C2B ► │ Import C2B model
-                                    ▼
-                            the Revit model
-                                    │
-                  Extract Template  │  (your own tool, on the project)
-                                    ▼
-                          <project>-template.md
-                                    │
-                  c2b revit-verify  │
-                                    ▼
-                          <name>.revit-check.md   what was built vs what was planned
-```
+That is all of it. The window tells you which of the three you are on, in one line, at the
+bottom: **Next: …**. If you only read one thing on the screen, read that line.
+
+Step 2 exists because a plan cannot tell anyone how high each floor is. It is the only thing
+you have to supply by hand, and it is asked for in the window — no spreadsheet.
 
 ---
 
-## 1. Once per machine
+## Step 1 — Run
 
-1. **Install pyRevit** from [github.com/eirannejad/pyRevit/releases](https://github.com/eirannejad/pyRevit/releases).
-   Take the installer, not the zip.
-2. Open Revit once so pyRevit registers, then close it.
-3. **Add the C2B extension.** In Revit: **pyRevit → Settings → Custom Extension Directories →
-   Add folder**, and pick the `revit` folder of this repository (the one holding
-   `C2B.extension`). Press **Save Settings and Reload**.
-4. A **C2B** tab appears with one button, **Import C2B model**. If it does not, use
-   **pyRevit → Reload**, and check the extension path points at `revit`, not at
-   `revit\C2B.extension`.
+Double-click `windows\C2B.bat`, or drag the client DXF onto `windows\C2B-run.bat`.
 
-You only do this once. Updating C2B is `git pull`; pyRevit picks up the new script on the next
-**Reload**.
+Pick the **client drawing**. Pick **our template** once (it is remembered). Press **Run**.
+
+Four steps go past in the Progress panel. When it stops, look at:
+
+- the **Next:** line at the bottom — the one thing to do now;
+- **Things to check** — anything C2B could not resolve, in plain language, worst first.
+
+The buttons along the bottom open what was produced. The ones worth opening on a first run are
+**Open the template DXF** (the drawing) and **Overlay on the client drawing** (what was
+recognised, drawn over the original).
+
+## Step 2 — Floor heights
+
+Press **Set floor heights…**. Every floor found in the drawing is listed. Type the top of the
+structural slab for each, in millimetres; below ground is negative. Leave a floor blank to skip
+it.
+
+Press **Save and run again**. That is the whole of step 2.
+
+## Step 3 — Revit
+
+1. Open Revit. **Start a project from your structural template**, or open the project you are
+   adding to. **Save it.**
+2. **C2B tab → Import C2B model.** It opens in the folder you used last. Pick the
+   `…revit.json` the window named.
+3. It shows what it is about to create and which units the project displays. Say yes.
+4. When it finishes it reports, in this order:
+   - **anything that does not match the plan** — and nothing at all if everything does;
+   - what was created, by kind;
+   - every type it created, with the size it set;
+   - where the marks went — each parameter name and how many elements carry it. A name reading
+     *not in this model* is one nobody bound in your template, so nothing C2B wrote to it
+     arrived;
+   - anything that failed, with the element and Revit's own error.
+
+**Copy that report out** (pyRevit's output window has a copy button) before closing it. It is
+the record of what happened.
+
+Nothing is deleted, ever. Running the import twice creates a second set of elements. Undo, or
+work in a fresh file.
 
 ---
 
-## 2. Once per template — describe it, and check it
+## What the import checks by itself
 
-This is the step that makes everything after it safe. A `.rvt` is a compound binary, so
-nothing outside Revit can read it; your **Extract Template** tool writes it out as markdown,
-and C2B reads that.
+The import saying "finished" is not evidence, so it reads the model back before it reports.
+Three things go wrong quietly, and none of them look wrong in the project browser:
 
-1. Open the structural template (`R25_TEMPLATE.rvt`) in Revit.
-2. Run **Extract Template**. It writes `R25_TEMPLATE-template.md`.
-3. Copy that file into the repository as `templates/R25_TEMPLATE.template.md`, replacing the
-   one already there, and commit it. It is text: git will show you exactly what changed in the
-   template since last time, which is worth having on its own.
-
-Re-do this **whenever the template changes** — a family loaded, a type added, a parameter
-bound. C2B checks every plan against this file, so a stale copy means the check is answering
-about a template that no longer exists.
-
----
-
-## 3. Every project — plan it, and read the plan
-
-```bat
-c2b run "C:\Projects\Tower A\STR-PLANS.dxf" --seed templates\CH-TEMPLATE.dxf
-```
-
-Fill `STR-PLANS.levels.xlsx` with the floor elevations and run it again — **without
-elevations there are no levels, and with no levels nothing can be placed.** Then:
-
-```bat
-c2b revit-plan "C:\Projects\Tower A\out\STR-PLANS\STR-PLANS.normalized.json" ^
-    --template templates\R25_TEMPLATE.template.md ^
-    --shared-params templates\CH-shared-parameters.txt
-```
-
-It prints a summary and writes two files:
-
-| File | What it is |
+| What | Why you would never notice |
 | --- | --- |
-| `STR-PLANS.revit.json` | the build plan — what the Revit button reads |
-| `STR-PLANS.revit.xlsx` | what it will create, checked against your template |
+| Some elements failed while the rest carried on | The model looks complete until someone counts |
+| A type was created by duplication and kept the size it was copied from | A `175 THK. RCC SLAB` that is 150 thick is named correctly and looks right |
+| A level already existed at a different height | Everything hosted on it is at the wrong elevation, consistently, so nothing looks odd |
 
-**Open the workbook before you open Revit.** Three sheets decide whether the import is worth
-running:
-
-- **Types to create** — every family type the plan needs. `in template` means it is already
-  there; `create` means Revit will duplicate the base type named beside it and set its
-  dimensions; `FAMILY MISSING` means the family is not loaded and **everything using it will
-  fail**. The last column flags types that are legitimate but odd — a 12 m "column" that is
-  really a shear wall leg, a 450 m² "footing" the client never marked as a raft.
-- **Template check** — where the marks will go. A row saying *Mark would vanish* means Revit
-  will accept the write and drop the value, which you cannot see afterwards by looking at the
-  model. Fix it before importing, not after.
-- **Diagnostics** — anything C2B could not place, with the element id and the reason.
-
-Fix what that workbook tells you, re-run, and only then open Revit.
+You do not have to do anything to get this — it is part of pressing the button.
 
 ---
 
-## 4. Import
+## Once per template
 
-1. Open Revit and **start a project from your structural template** — or open the project you
-   are adding to.
-2. **Save it.** The import is one transaction group and undo removes it cleanly, but a save
-   costs nothing and an undo of nine thousand elements is slow.
-3. **C2B tab → Import C2B model.** Pick `STR-PLANS.revit.json`.
-4. It shows what it is about to create and asks. Say yes.
-5. When it finishes, pyRevit's output window reports:
-   - how many of each kind were created,
-   - every type it created and the thickness it set,
-   - **where the marks went** — each parameter name with how many elements it was written on.
-     A name reading *not in this model* is one nobody bound: nothing C2B meant for it arrived.
-   - anything that failed, with the element id and the Revit error.
+Do this when the Revit template changes — a family loaded, a type added, a parameter bound.
 
-**Keep that output window.** Copy it out (pyRevit's output has a copy button) — it is the only
-record of what happened, and it is the first thing to look at when something is wrong.
+1. Open the structural template in Revit, run **Extract Template**. It writes a `.md` file.
+2. Put it in the `templates` folder of this repository, replacing the one there.
 
-A large project takes a while. Test17 is about nine thousand elements; expect minutes, not
-seconds, and do not touch Revit while it runs.
+C2B finds it by itself after that. It uses it to tell you, before Revit is ever opened, which
+family types already exist, which it will have to create, and whether the marks it writes will
+survive. If it is a stale copy, that check is answering about a template that no longer exists.
+
+You can also drop it in a `templates` folder beside the client drawing, and that one wins.
 
 ---
 
-## 5. Prove it — read the model back
-
-Do not trust the model because the import said it finished. Read it back:
-
-1. With the imported project open, run **Extract Template** on it. It writes
-   `<project>-template.md` — the same format as the template description, but now describing
-   what was actually built.
-2. Compare it with the plan:
-
-```bat
-c2b revit-verify "...\STR-PLANS.revit.json" "...\Tower A-template.md"
-```
-
-It writes `STR-PLANS.revit-check.md` and answers three questions:
-
-| Check | The failure it catches |
-| --- | --- |
-| Element counts per category | Revit created 2 of 3 columns and said nothing |
-| Every planned type exists | A type was never created, so everything needing it failed |
-| Every created type is the right size | A `175 THK. RCC SLAB` duplicated from the 150 and kept its thickness — it looks completely normal in the project browser |
-| Levels are at their planned height | The level already existed at a different elevation and was kept, so everything on it is at the wrong height |
-| Every grid label is there | A grid label collided with an existing one |
-
-If it reports nothing, the model matches the plan. That is the point at which the import is
-finished.
-
----
-
-## 6. When something breaks
+## When something breaks
 
 This script has been written against the Revit 2021–2025 API but has **not yet been run
-against a live model**, so the first run on a real project is the one that finds what is
-wrong. What the template check already guarantees is that every family, type and parameter
-name is real; what it cannot guarantee is the API calls themselves.
+against a live model**, so the first run on a real project is the one that finds what is wrong.
 
-Start small: run it on **Test10** rather than Test17 — 404 columns, 9 levels, and it exercises
+Start on a small job. **Test10** is a good first run — 404 columns, 9 levels, and it exercises
 round columns, rafts and shaft openings without taking minutes.
 
-To get a problem fixed, send these four things:
+Send three things and the failure can be reproduced and fixed without a Revit seat:
 
-1. **The pyRevit output window**, copied out in full. The `failed` lines carry the element id
-   and Revit's own error text, which is usually enough on its own.
-2. **`<name>.revit.json`** — the plan that was run.
-3. **`<project>-template.md`** — Extract Template on the project after the import.
-4. **Your Revit version** (2021 … 2025), since a few API calls differ.
-
-With those four, the failure can be reproduced and fixed without a Revit seat: the plan says
-what was asked for, the model description says what came out, and the log says what Revit
-objected to. That is the whole loop, and none of it needs anyone watching Revit.
-
-**Nothing is deleted, ever.** Running the import twice creates a second set of elements. Undo,
-or work in a fresh file.
+1. the **pyRevit output**, copied out in full;
+2. **`<name>.revit.json`** — the plan that was run;
+3. your **Revit version** (2021 … 2025).
 
 ---
 
-## The settings you are most likely to change
+## A note on units, if you are wondering
 
-They live in `<name>.revit-mapping.yaml`, written next to the plan the first time you run
-`revit-plan`. Edit it and re-run; the defaults already match R25_TEMPLATE.
+Revit stores every length internally in **decimal feet**, whatever the project's units are set
+to. A millimetre value handed straight to it is read as feet — 300 becomes 91 metres — and
+nothing complains.
+
+Every length crossing into Revit goes through one conversion, every length read back out goes
+through its opposite, and a test refuses to let a raw number past. The project's own unit
+setting changes only what you see on screen: an imperial project imports exactly the same
+model. The import prints the setting anyway, so the log is never ambiguous about it.
+
+---
+
+## The settings you might change
+
+In the window: **Units** (leave it alone unless the drawing has none) and **Column size from**
+(the client's stated size, or the drawing measured).
+
+Everything else lives in `<name>.revit-mapping.yaml`, written beside the results. Edit it and
+press Run again; the defaults already match the firm's template.
 
 | Setting | What it decides |
 | --- | --- |
-| `wall_like_as` | `column` (default) makes each tagged shear wall leg a Structural Column, one to one with the drawing and the schedule. `wall` makes them Basic Walls instead |
-| `wall_like_min_thickness_mm` | with `wall_like_as: wall`, legs thinner than this stay columns |
-| `two_depth_beam` | whether a mark like `B5-200X900/600` is a `step` beam (default) or a `taper` on this client's drawings |
-| `mark_params`, `id_params` | every parameter name the mark and the C2B id are written to. All of them are tried, and the run reports which existed |
-| `build` | switch whole categories off — useful for importing columns first, checking them, then the rest |
-| `structural_only` | skip non-structural walls |
-| `round_sizes_to_mm` | sizes are rounded to this before a type is named, so 299.6 and 300.2 do not make two types |
+| `wall_like_as` | `column` (default) makes each tagged shear wall leg a Structural Column, one to one with the drawing and the schedule. `wall` makes them Basic Walls |
+| `two_depth_beam` | whether a mark like `B5-200X900/600` is a `step` beam (default) or a `taper` |
+| `build` | switch whole categories off — import columns first, check them, then the rest |
+| `mark_params`, `id_params` | the parameter names the mark and the C2B id are written to |
+
+## Running it from a terminal instead
+
+The window does all of this, but every step is a command if you want one:
+
+```bash
+c2b run client.dxf --seed templates\CH-TEMPLATE.dxf   # steps 1 and 2, including the Revit plan
+c2b revit-plan out\client\client.normalized.json --template templates\R25_TEMPLATE.template.md
+c2b revit-verify out\client\client.revit.json "project-template.md"
+```
+
+`c2b revit-verify` is the same check the import already does, run from outside Revit against an
+Extract Template description of the finished project. It is there for looking at a model
+someone else imported.
