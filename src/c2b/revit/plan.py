@@ -19,7 +19,7 @@ from ..schema import Diagnostic
 from .mapping import REVIT_BUILTIN_PARAMS, RevitMapping
 from .template import SharedParam, TemplateDigest
 
-REVIT_PLAN_VERSION = "0.2.0"
+REVIT_PLAN_VERSION = "0.3.0"
 
 
 class TypeNeed(BaseModel):
@@ -59,6 +59,7 @@ class TemplateCheck(BaseModel):
     missing_families: list[str] = Field(default_factory=list)
     params: list[ParamCheck] = Field(default_factory=list)
     new_levels: list[str] = Field(default_factory=list)
+    grid_clashes: list[str] = Field(default_factory=list)   # grid labels the template already uses
 
     @property
     def bound_params(self) -> list[str]:
@@ -76,7 +77,8 @@ class TemplateCheck(BaseModel):
                 "missing_families": len(self.missing_families),
                 "params_that_survive": len(self.bound_params),
                 "params_that_vanish": len(self.unbound_params),
-                "new_levels": len(self.new_levels)}
+                "new_levels": len(self.new_levels),
+                "grid_clashes": len(self.grid_clashes)}
 
 
 class RevitLevel(BaseModel):
@@ -106,6 +108,11 @@ class RevitAction(BaseModel):
     loops: list[list[list[float]]] = Field(default_factory=list)  # [outer, hole, hole...] each a list of [x, y]
     height_mm: float | None = None
     thickness_mm: float | None = None      # system types (floor, wall, raft, PCC) are duplicated, then set to this
+    # Where the member sits across its own section, stated rather than left to the family. A
+    # family carries its own z justification and offset, and whatever it carries wins over
+    # everything the plan says until the plan says otherwise.
+    z_justification: str | None = None     # top | center | bottom | origin
+    z_offset_mm: float = 0.0
     mark: str | None = None
     comment: str | None = None
 
@@ -121,6 +128,7 @@ class RevitPlan(BaseModel):
     mark_params: list[str] = Field(default_factory=list)     # every name the mark is written to
     id_params: list[str] = Field(default_factory=list)       # every name the C2B element id is written to
     comment_param: str | None = None
+    grid_name_clash: str = "rename_existing"                 # what to do when the project already has that grid
     template_check: TemplateCheck | None = None              # what the Revit template does and does not carry
     levels: list[RevitLevel] = Field(default_factory=list)
     actions: list[RevitAction] = Field(default_factory=list)
@@ -146,16 +154,26 @@ def _fmt(pattern: str, **kw) -> str:
         return pattern
 
 
-def _loop(points, ox: float, oy: float) -> list[list[float]]:
-    return [[round(p.x + ox, 2), round(p.y + oy, 2)] for p in points]
+def _loop(points) -> list[list[float]]:
+    """A ring in floor-local millimetres, which is what stacks floor to floor."""
+    return [[round(p.x, 2), round(p.y, 2)] for p in points]
 
 
 def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsCollector | None = None) -> RevitPlan:
-    """Model + mapping -> an ordered build plan. Coordinates become project coordinates (floor origin applied)."""
+    """Model + mapping -> an ordered build plan.
+
+    Coordinates stay **floor-local**, which is what makes the building stack. Each plan in the
+    client drawing sits somewhere else in model space, and the ``Origin`` point the firm draws
+    inside every boundary is the datum that says which point of each plan is the same point of
+    the building. Elements are already stored relative to it, so a column at (1000, 2000) on one
+    floor is directly above the column at (1000, 2000) on the next. Adding the origin back would
+    put every floor where its plan happens to sit on the sheet, which is a staircase of floors
+    across the site rather than a building.
+    """
     diag = diag or DiagnosticsCollector()
     plan = RevitPlan(source_file=np_.source_file, mapping_name=mapping.name,
                      mark_params=list(mapping.mark_params), id_params=list(mapping.id_params),
-                     comment_param=mapping.comment_param)
+                     comment_param=mapping.comment_param, grid_name_clash=mapping.grid_name_clash)
     step = mapping.round_sizes_to_mm
 
     # ---- levels ------------------------------------------------------------
@@ -178,7 +196,6 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
         if f.id not in floor_levels:
             diag.warning("REVIT_FLOOR_NO_LEVEL", f"Floor {f.id} '{f.name}' has no level in the workbook; its elements are skipped", floor_id=f.id)
     level_above = {l.id: (levels[i + 1].id if i + 1 < len(levels) else None) for i, l in enumerate(levels)}
-    origin = {f.id: (f.origin.x, f.origin.y) for f in np_.floors}
 
     def levels_for(floor_id: str) -> list[str]:
         return floor_levels.get(floor_id, [])
@@ -191,14 +208,12 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
             if not g.label or key in seen:
                 continue
             seen.add(key)
-            ox, oy = origin.get(g.floor_id, (0.0, 0.0))
             plan.actions.append(RevitAction(id=g.id, kind="grid", category="Grids", mark=f"{mapping.grid_prefix}{g.label}",
-                                            start=[g.start.x + ox, g.start.y + oy], end=[g.end.x + ox, g.end.y + oy]))
+                                            start=[g.start.x, g.start.y], end=[g.end.x, g.end.y]))
 
     # ---- columns -----------------------------------------------------------
     if mapping.build.get("columns"):
         for c in np_.columns:
-            ox, oy = origin.get(c.floor_id, (0.0, 0.0))
             as_wall = (mapping.wall_like_as == "wall" and c.wall_like and c.shape == "rect"
                        and min(c.width_mm or 0, c.depth_mm or 0) >= mapping.wall_like_min_thickness_mm)
             for lid in levels_for(c.floor_id):
@@ -217,8 +232,8 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
                         id=f"{c.id}@{lid}", kind="wall", category="Walls", family=mapping.wall.family,
                         type_name=_fmt(mapping.wall.type_name, thk=thk), base_type=mapping.wall.base_type,
                         level_id=lid, top_level_id=top,
-                        start=[c.center.x + ox - ux * half, c.center.y + oy - uy * half],
-                        end=[c.center.x + ox + ux * half, c.center.y + oy + uy * half],
+                        start=[c.center.x - ux * half, c.center.y - uy * half],
+                        end=[c.center.x + ux * half, c.center.y + uy * half],
                         thickness_mm=thk, mark=c.mark, comment=f"wall-like leg, stack {c.stack_id}"))
                     continue
                 if c.shape == "circle" and c.diameter_mm:
@@ -237,13 +252,12 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
                 plan.actions.append(RevitAction(
                     id=f"{c.id}@{lid}", kind="column", category="Structural Columns", family=rule.family, type_name=type_name,
                     base_type=rule.fallback_type, params=params, level_id=lid, top_level_id=top,
-                    point=[c.center.x + ox, c.center.y + oy], rotation_deg=c.rotation_deg, mark=c.mark,
+                    point=[c.center.x, c.center.y], rotation_deg=c.rotation_deg, mark=c.mark,
                     comment=f"stack {c.stack_id}" + (" (stops here)" if c.stops_here else "")))
 
     # ---- beams -------------------------------------------------------------
     if mapping.build.get("beams"):
         for b in np_.beams:
-            ox, oy = origin.get(b.floor_id, (0.0, 0.0))
             w, d = _round(b.width_mm, step), _round(b.depth_mm, step)
             if not w or not d:
                 diag.warning("REVIT_NO_SIZE", f"Beam {b.mark} ({b.id}) has no depth; it is skipped", floor_id=b.floor_id, element_id=b.id)
@@ -266,8 +280,10 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
                 plan.actions.append(RevitAction(
                     id=f"{b.id}@{lid}", kind="beam", category="Structural Framing", family=rule.family,
                     type_name=type_name, base_type=rule.fallback_type, params=params,
-                    level_id=lid, start=[b.start.x + ox, b.start.y + oy], end=[b.end.x + ox, b.end.y + oy],
-                    top_offset_mm=b.top_offset_mm, mark=b.mark, comment=note))
+                    level_id=lid, start=[b.start.x, b.start.y], end=[b.end.x, b.end.y],
+                    top_offset_mm=b.top_offset_mm, mark=b.mark, comment=note,
+                    z_justification=mapping.beam_z_justification,
+                    z_offset_mm=b.top_offset_mm if mapping.beam_top_at_level else 0.0))
 
     # ---- floors (slab, cantilever, ramp) -----------------------------------
     if mapping.build.get("floors"):
@@ -279,8 +295,7 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
                 diag.warning("REVIT_NO_SIZE", f"Slab panel {p.mark} ({p.id}) has no thickness; it is skipped", floor_id=p.floor_id, element_id=p.id)
                 continue
             rule = mapping.ramp_floor if p.kind == "ramp" else mapping.floor
-            ox, oy = origin.get(p.floor_id, (0.0, 0.0))
-            loops = [_loop(p.outline, ox, oy)] + [_loop(h, ox, oy) for h in p.holes]
+            loops = [_loop(p.outline)] + [_loop(h) for h in p.holes]
             for lid in levels_for(p.floor_id):
                 plan.actions.append(RevitAction(
                     id=f"{p.id}@{lid}", kind="floor", category="Floors", type_name=_fmt(rule.type_name, thk=thk),
@@ -294,7 +309,6 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
             lid = next(iter(levels_for(x.floor_id)), None)
             if lid is None:
                 continue
-            ox, oy = origin.get(x.floor_id, (0.0, 0.0))
             thk = _round(x.thickness_mm, step)
             if x.kind in ("fold", "sunk"):
                 continue          # drawn on the plan; the engineer models the step in Revit
@@ -305,7 +319,7 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
                     continue
                 plan.actions.append(RevitAction(
                     id=x.id, kind="footing", category="Structural Foundations", type_name=_fmt(rule.type_name, thk=thk),
-                    base_type=rule.base_type, level_id=lid, loops=[_loop(x.outline, ox, oy)], height_mm=thk,
+                    base_type=rule.base_type, level_id=lid, loops=[_loop(x.outline)], height_mm=thk,
                     thickness_mm=thk, base_offset_mm=-(x.pit_depth_mm or 0.0), mark=x.mark, comment=x.kind))
             else:
                 rule = mapping.footing
@@ -317,12 +331,12 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
                     id=x.id, kind="footing", category="Structural Foundations", family=rule.family,
                     type_name=_fmt(rule.type_name, w=w, d=d, thk=thk), base_type=rule.fallback_type,
                     params={k: v for k, v in ((rule.width_param, w), (rule.depth_param, d), (rule.thickness_param, thk)) if k},
-                    level_id=lid, point=[x.center.x + ox, x.center.y + oy], rotation_deg=x.rotation_deg, mark=x.mark, comment=x.kind))
+                    level_id=lid, point=[x.center.x, x.center.y], rotation_deg=x.rotation_deg, mark=x.mark, comment=x.kind))
             if mapping.build.get("pcc") and x.pcc_outline and x.pcc_thickness_mm:
                 pthk = _round(x.pcc_thickness_mm, step)
                 plan.actions.append(RevitAction(
                     id=f"{x.id}-PCC", kind="pcc", category="Structural Foundations", type_name=_fmt(mapping.pcc.type_name, thk=pthk),
-                    base_type=mapping.pcc.base_type, level_id=lid, loops=[_loop(x.pcc_outline, ox, oy)], height_mm=pthk,
+                    base_type=mapping.pcc.base_type, level_id=lid, loops=[_loop(x.pcc_outline)], height_mm=pthk,
                     thickness_mm=pthk, base_offset_mm=-((thk or 0.0) + (x.pit_depth_mm or 0.0)), mark="PCC", comment=f"under {x.mark}"))
     if mapping.build.get("piles"):
         rule = mapping.pile
@@ -330,12 +344,11 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
             lid = next(iter(levels_for(pl.floor_id)), None)
             if lid is None or not pl.diameter_mm:
                 continue
-            ox, oy = origin.get(pl.floor_id, (0.0, 0.0))
             dia = _round(pl.diameter_mm, step)
             plan.actions.append(RevitAction(
                 id=pl.id, kind="pile", category="Structural Columns", family=rule.family, type_name=_fmt(rule.type_name, dia=dia),
                 params={rule.diameter_param: dia} if rule.diameter_param else {}, level_id=lid,
-                point=[pl.center.x + ox, pl.center.y + oy], mark="PILE", comment=f"cap {pl.pilecap_id or '-'}"))
+                point=[pl.center.x, pl.center.y], mark="PILE", comment=f"cap {pl.pilecap_id or '-'}"))
 
     # ---- walls -------------------------------------------------------------
     if mapping.build.get("walls"):
@@ -346,11 +359,10 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
             thk = _round(w.thickness_mm, step)
             if not thk or not w.length_mm:
                 continue
-            ox, oy = origin.get(w.floor_id, (0.0, 0.0))
             half = w.length_mm / 2.0
             ux, uy = math.cos(math.radians(w.rotation_deg)), math.sin(math.radians(w.rotation_deg))
-            start = [w.center.x + ox - ux * half, w.center.y + oy - uy * half]
-            end = [w.center.x + ox + ux * half, w.center.y + oy + uy * half]
+            start = [w.center.x - ux * half, w.center.y - uy * half]
+            end = [w.center.x + ux * half, w.center.y + uy * half]
             for lid in levels_for(w.floor_id):
                 top = level_above.get(lid)
                 plan.actions.append(RevitAction(
@@ -367,11 +379,10 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
             lid = next(iter(levels_for(o.floor_id)), None)
             if lid is None:
                 continue
-            ox, oy = origin.get(o.floor_id, (0.0, 0.0))
             top = level_above.get(lid)
             plan.actions.append(RevitAction(
                 id=o.id, kind="shaft", category="Shaft Openings", level_id=lid, top_level_id=top,
-                loops=[_loop(o.outline, ox, oy)], mark=o.label, comment="cut-out through the floor"))
+                loops=[_loop(o.outline)], mark=o.label, comment="cut-out through the floor"))
 
     plan.diagnostics = diag.items
     plan.recount()
@@ -465,6 +476,13 @@ def check_against_template(plan: RevitPlan, mapping: RevitMapping, digest: Templ
     # -- levels ------------------------------------------------------------
     have = digest.level_names()
     check.new_levels = [lv.name for lv in plan.levels if lv.name not in have]
+
+    # -- grids the template already uses -------------------------------------
+    # Revit will not hold two grids of one name. The template's are samples and the client's are
+    # real, so a clash is not a detail: it is that many of the client's grids never arriving.
+    template_grids = set(digest.grid_names)
+    check.grid_clashes = sorted({a.mark for a in plan.actions
+                                 if a.kind == "grid" and a.mark and a.mark in template_grids})
     return check
 
 

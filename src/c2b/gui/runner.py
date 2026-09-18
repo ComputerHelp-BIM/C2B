@@ -235,6 +235,9 @@ def _write_revit_plan(np_, out: Path, stem: str, drawing: Path, progress: Progre
             progress("bad", f"         {fam} is not in your Revit template - load it, or nothing using it can be built")
         for pc in [x for x in check.params if not x.survives]:
             progress("warn", f"         {pc.name}: {pc.advice}")
+        if check.grid_clashes:
+            progress("warn", f"         your Revit template already has grids {', '.join(check.grid_clashes[:10])} - "
+                             "the template's will be renamed out of the way so the client's can be created")
         for t in [x for x in check.types if x.note]:
             progress("warn", f"         {t.type_name} x{t.count}: {t.note}")
     return json_path, xlsx_path

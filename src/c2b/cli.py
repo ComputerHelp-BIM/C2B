@@ -413,6 +413,9 @@ def revit_plan(
             typer.secho(f"  family not in the template: {fam} - load it, or nothing using it can be built", fg=typer.colors.RED)
         for pc in [x for x in c.params if not x.survives]:
             typer.secho(f"  {pc.name}: {pc.advice}", fg=typer.colors.YELLOW)
+        if c.grid_clashes:
+            typer.secho(f"  the template already has grids {', '.join(c.grid_clashes[:10])}; "
+                        "its own will be renamed so the client's can be created", fg=typer.colors.YELLOW)
         for t in [x for x in c.types if x.note]:
             typer.secho(f"  worth a look: {t.type_name} x{t.count} - {t.note}", fg=typer.colors.YELLOW)
     if errors:

@@ -47,6 +47,9 @@ def write_revit_workbook(plan: RevitPlan, path: str | Path) -> Path:
             *[["Mark goes to" if pc.survives else "Mark would vanish", pc.name, pc.advice] for pc in check.params],
             [],
             *[["Level to create", n, "not in the template"] for n in check.new_levels],
+            [],
+            *[["Grid name already used", n, "the template has a grid of this name; Revit will not hold two, "
+               "so the template's is renamed out of the way"] for n in check.grid_clashes],
         ])
     else:
         families = Counter((a.kind, a.category, a.family or "(system family)", a.type_name or "") for a in plan.actions)

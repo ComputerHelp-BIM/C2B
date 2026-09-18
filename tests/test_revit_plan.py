@@ -306,3 +306,102 @@ def test_the_import_reads_the_model_back_before_it_reports():
     assert "GetCompoundStructure" in body, "a duplicated system type's thickness is not read back"
     assert "Elevation" in body, "a level that already existed at another height is not caught"
     assert "to_mm(" in body, "lengths are read back without converting out of Revit's feet"
+
+
+# --------------------------------------------- what the first run in Revit found
+def _two_floor_model():
+    """Two plan floors whose Origin points sit far apart in the client's model space."""
+    floors = [NFloor(id="L01", index=0, name="GROUND", title="GROUND", source_name="GROUND",
+                     origin=_pt(0, 0), frame=[], plan_bottom_y=0.0),
+              NFloor(id="L02", index=1, name="FIRST", title="FIRST", source_name="FIRST",
+                     origin=_pt(80000, 45000), frame=[], plan_bottom_y=0.0)]
+    levels = [NLevel(id="LV1", index=0, name="01 GROUND LVL.", elevation_mm=0.0, plan_floor_id="L01"),
+              NLevel(id="LV2", index=1, name="02 FIRST FLOOR LVL.", elevation_mm=3300.0, plan_floor_id="L02"),
+              NLevel(id="LV3", index=2, name="03 ROOF LVL.", elevation_mm=6600.0, plan_floor_id=None)]
+    # the same column of the same stack, drawn on both plans at the same place on its own floor
+    cols = [_column(id="C1", floor_id="L01", center=_pt(1000, 2000)),
+            _column(id="C2", floor_id="L02", center=_pt(1000, 2000))]
+    beams = [_beam(id="B1", floor_id="L01"), _beam(id="B2", floor_id="L02")]
+    return NormalizedProject(source_file="t.dxf", source_schema_version="0.7.0", spec_name="test",
+                             floors=floors, levels=levels, columns=cols, beams=beams)
+
+
+def test_floors_stack_instead_of_spreading_across_the_site():
+    """The Origin in each boundary is the datum that makes a building, not decoration.
+
+    Adding it back puts every floor where its plan happens to sit on the sheet, which came out
+    of Revit as a staircase of floors marching across the site.
+    """
+    plan = build_plan(_two_floor_model(), RevitMapping())
+    columns = sorted([a for a in plan.actions if a.kind == "column"], key=lambda a: a.level_id)
+    assert len(columns) == 2
+    assert columns[0].point == columns[1].point == [1000.0, 2000.0]
+    assert columns[0].level_id != columns[1].level_id, "they differ in height, not in plan"
+
+    beams = [a for a in plan.actions if a.kind == "beam"]
+    assert {tuple(b.start) for b in beams} == {(0.0, 0.0)}, "beams drift with the floor origin too"
+
+
+def test_a_beam_states_where_it_sits_rather_than_letting_the_family_decide():
+    """The firm's beam family carries Top / -1500, so every beam sat 1500 low on every floor."""
+    (a,) = [x for x in build_plan(_model(beams=[_beam()]), RevitMapping()).actions if x.kind == "beam"]
+    assert a.z_justification == "top"
+    assert a.z_offset_mm == 0.0            # top face flush with the top of the structural slab
+
+
+def test_an_offset_beam_carries_its_offset_into_the_z_value():
+    (a,) = [x for x in build_plan(_model(beams=[_beam(top_offset_mm=-75.0)]), RevitMapping()).actions
+            if x.kind == "beam"]
+    assert a.z_justification == "top" and a.z_offset_mm == -75.0
+    assert a.top_offset_mm == -75.0
+
+    mapping = RevitMapping(beam_top_at_level=False)
+    (b,) = [x for x in build_plan(_model(beams=[_beam(top_offset_mm=-75.0)]), mapping).actions if x.kind == "beam"]
+    assert b.z_offset_mm == 0.0
+
+
+def test_the_plan_tells_revit_what_to_do_about_a_grid_name_it_already_has():
+    plan = build_plan(_model(), RevitMapping())
+    assert plan.grid_name_clash == "rename_existing"
+    assert build_plan(_model(), RevitMapping(grid_name_clash="skip")).grid_name_clash == "skip"
+
+
+def test_the_check_warns_about_grid_names_the_template_already_uses():
+    """Revit will not hold two grids of one name: the client's is refused and simply lost."""
+    from c2b.normalize.model import NGrid
+
+    model = _model()
+    model.grids = [NGrid(id="G1", floor_id="L01", label="1", axis="Y", offset_mm=0.0,
+                         start=_pt(0, 0), end=_pt(10000, 0), angle_deg=0.0),
+                   NGrid(id="G2", floor_id="L01", label="ZZ", axis="Y", offset_mm=5000.0,
+                         start=_pt(0, 5000), end=_pt(10000, 5000), angle_deg=0.0)]
+    mapping = _mini_mapping()
+    check = check_against_template(build_plan(model, mapping), mapping, parse_template_md(MINI))
+    assert check.grid_clashes == ["1"], "the fixture template has grids 1 and A"
+    assert check.summary()["grid_clashes"] == 1
+
+
+@pytest.mark.skipif(not SCRIPT.exists(), reason="the pyRevit extension is not in this checkout")
+def test_the_import_counts_what_it_made_under_one_spelling():
+    """made['column'] against a check reading 'columns' reported 320 built columns as none."""
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    tally = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "tally")
+    assert "endswith" in ast.unparse(tally), "the key is not normalised, so call sites can disagree"
+
+    # no call site may hand tally a hand-written plural that could drift from the action's kind
+    main = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "main")
+    literals = {c.args[0].value for c in ast.walk(main)
+                if isinstance(c, ast.Call) and getattr(c.func, "id", "") == "tally"
+                and c.args and isinstance(c.args[0], ast.Constant)}
+    assert literals <= {"levels", "grids", "beams", "footings", "walls", "shafts"}, literals
+
+
+@pytest.mark.skipif(not SCRIPT.exists(), reason="the pyRevit extension is not in this checkout")
+def test_the_import_makes_room_for_a_grid_name_the_project_already_has():
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    main = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "main")
+    body = ast.unparse(main)
+    assert "existing_grids" in body and "grid_name_clash" in body
+    assert "(template)" in body, "the placeholder is never moved out of the way"
+    called = {getattr(c.func, "id", "") for c in ast.walk(main) if isinstance(c, ast.Call)}
+    assert "place_across_section" in called, "a beam is placed without stating its z position"

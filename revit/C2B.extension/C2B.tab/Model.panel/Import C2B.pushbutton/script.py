@@ -106,6 +106,45 @@ def types_by_name(cls):
     return found
 
 
+#: Revit's ZJustification enum, by the name the plan uses.
+Z_JUSTIFICATION = {"top": 0, "center": 1, "centre": 1, "bottom": 2, "origin": 3}
+
+
+def set_bip_length(element, bip, value_mm):
+    """A built-in length parameter, in millimetres."""
+    p = element.get_Parameter(bip)
+    if p is None or p.IsReadOnly:
+        return False
+    p.Set(mm(value_mm))
+    return True
+
+
+def set_bip_int(element, bip, value):
+    p = element.get_Parameter(bip)
+    if p is None or p.IsReadOnly:
+        return False
+    p.Set(int(value))
+    return True
+
+
+def place_across_section(inst, action):
+    """State where the member sits across its own section, rather than letting the family decide.
+
+    A loadable family carries its own z justification and offset, and they win over everything
+    else until something sets them. The firm's beam family carries Top / -1500, which put every
+    beam 1500 below its level on every floor whatever the plan said.
+    """
+    justification = action.get("z_justification")
+    if not justification:
+        return
+    code = Z_JUSTIFICATION.get(str(justification).lower())
+    if code is None:
+        note("param", "%s: unknown z justification '%s'" % (action["id"], justification))
+        return
+    set_bip_int(inst, BuiltInParameter.Z_JUSTIFICATION, code)
+    set_bip_length(inst, BuiltInParameter.Z_OFFSET_VALUE, action.get("z_offset_mm", 0.0))
+
+
 def set_length(element, name, value_mm):
     p = element.LookupParameter(name)
     if p is None or p.IsReadOnly:
@@ -325,13 +364,17 @@ def main():
         return
 
     levels_by_id = {}
+    existing_grids = dict((g.Name, g) for g in all_of(Grid))
     symbols = symbols_by_family()
     floor_types = types_by_name(FloorType)
     wall_types = types_by_name(WallType)
     made = {}
 
     def tally(kind):
-        made[kind] = made.get(kind, 0) + 1
+        # one rule in one place: the check derives the same key from the action's kind, and a
+        # call site spelling it differently is how 320 created columns were reported as none
+        key = kind if kind.endswith("s") else kind + "s"
+        made[key] = made.get(key, 0) + 1
 
     # ---- levels ---------------------------------------------------------
     existing_levels = dict((l.Name, l) for l in all_of(Level))
@@ -360,7 +403,31 @@ def main():
             level = levels_by_id.get(action.get("level_id"))
             top = levels_by_id.get(action.get("top_level_id"))
             if kind == "grid":
-                Grid.Create(doc, Line.CreateBound(point(action["start"]), point(action["end"]))).Name = action.get("mark") or ""
+                # A project started from the firm's template already holds its sample grids
+                # (1, 2, 3, A-E). Revit will not have two grids of one name, so the client's
+                # grid is refused outright and simply lost -- thirteen of seventeen, on the
+                # first real run. The placeholder is moved out of the way instead.
+                name = action.get("mark") or ""
+                clash = existing_grids.get(name)
+                if clash is not None:
+                    policy = plan.get("grid_name_clash") or "rename_existing"
+                    if policy == "skip":
+                        note("skip", "grid %s already exists; the client's grid was not created" % name)
+                        continue
+                    if policy == "reuse":
+                        note("reused", "grid %s already existed and was left where it was" % name)
+                        tally("grids")
+                        continue
+                    spare, n = "%s (template)" % name, 2
+                    while spare in existing_grids:
+                        spare, n = "%s (template %d)" % (name, n), n + 1
+                    clash.Name = spare
+                    existing_grids[spare] = clash
+                    note("renamed", "the project already had grid %s from the template; it is now "
+                                    "%s, and the client's grid %s was created" % (name, spare, name))
+                grid = Grid.Create(doc, Line.CreateBound(point(action["start"]), point(action["end"])))
+                grid.Name = name
+                existing_grids[name] = grid
                 tally("grids")
             elif kind in ("column", "pile"):
                 symbol = ensure_symbol(action, symbols)
@@ -389,6 +456,7 @@ def main():
                     p = inst.get_Parameter(bip)
                     if p is not None and not p.IsReadOnly:
                         p.Set(mm(offset))
+                place_across_section(inst, action)
                 stamp(inst, action, plan)
                 tally("beams")
             # a raft, pile cap or pit comes with an outline and is built as a slab; an isolated
@@ -410,7 +478,7 @@ def main():
                 if p is not None and not p.IsReadOnly:
                     p.Set(mm(action.get("top_offset_mm", 0.0) + action.get("base_offset_mm", 0.0)))
                 stamp(floor, action, plan)
-                tally("floors" if kind == "floor" else kind)
+                tally(kind)
             elif kind == "footing":
                 symbol = ensure_symbol(action, symbols)
                 if symbol is None or level is None:

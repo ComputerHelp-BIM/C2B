@@ -13,6 +13,45 @@ importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes
 values.
 
+## [0.17.0] - 2026-09-18
+
+The first run against a live Revit model, on Test10. It built 852 elements and found four
+things, three of them ours.
+
+### Fixed (0.17.0)
+
+- **The building came out as a staircase of floors marching across the site.** Every element is
+  stored relative to the `Origin` point the firm draws inside each boundary -- that is what the
+  point is for, and it is what says which spot of each plan is the same spot of the building.
+  The planner added that origin back, putting every floor where its plan happens to sit on the
+  client's sheet. Coordinates now stay floor-local, which is what stacks them: on Test10 a
+  column stack went from seven plan positions to one, and the model from spread across the site
+  to a 28 m footprint.
+- **Every beam sat 1500 mm below its level, on every floor.** C2B set a beam's start and end
+  level offsets and never touched its z justification or z offset, so the family's own defaults
+  decided where it sat -- and `CH-Concrete-Rectangular-Beam` carries Top / -1500. The plan now
+  states both: the top face flush with the level (the top of the structural slab), moved by the
+  element's own offset, which is what carries an inverted beam up and a sunk one down.
+  `beam_z_justification` and `beam_top_at_level` change it.
+- **Thirteen of seventeen grids were lost: "Name must be unique".** A project started from the
+  firm's template already holds its sample grids (1, 2, 3, A-E), and Revit will not have two
+  grids of one name, so the client's were refused outright. The template's placeholder is now
+  renamed out of the way and the client's grid created in its place; `grid_name_clash` can
+  `reuse` or `skip` instead. The clash is also reported **before** the import, by name, since
+  the template description already lists the grids the template carries.
+- **The import's own check called 320 created columns none of them.** Its tally wrote
+  `made["column"]` while the check read `columns`; half the call sites were singular and half
+  plural. One rule now normalises the key where it is counted, and a test refuses a call site
+  that spells it by hand.
+
+### Changed (0.17.0)
+
+- Build plan version `0.3.0`: an action carries `z_justification` and `z_offset_mm`, and the
+  plan carries `grid_name_clash`, so where a member sits across its own section is decided in
+  the place it can be tested rather than by whatever a family happens to carry.
+- The template check reports grid-name clashes, and the window, the workbook and the CLI all
+  name them.
+
 ## [0.16.0] - 2026-09-18
 
 Three steps instead of eight, and no terminal. The pipeline was right and the way into it was

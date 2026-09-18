@@ -128,7 +128,16 @@ class RevitMapping(BaseModel):
     structural_only: bool = True                  # skip non-structural walls
     shaft_from: list[str] = Field(default_factory=lambda: ["LIFT", "SHAFT", "STAIR"])   # cut-out labels that become shafts
     column_top_attachment: Literal["level", "beam_soffit"] = "level"
+    # A beam's height in Revit is decided by its family's own z justification and offset unless
+    # something states them. CH-Concrete-Rectangular-Beam carries Top / -1500, so every beam sat
+    # 1500 below its level on every floor whatever the plan said. C2B states them instead: the
+    # top face flush with the level (top of structural slab), moved by the element's own offset,
+    # which is what carries an inverted beam up and a sunk one down.
+    beam_z_justification: Literal["top", "center", "bottom", "origin"] = "top"
     beam_top_at_level: bool = True                # beam top flush with the level, offset by the element's top offset
+    # The firm's template ships sample grids (1, 2, 3, A-E). A client grid of the same name
+    # cannot be created beside one: Revit refuses, and the grid is simply lost.
+    grid_name_clash: Literal["rename_existing", "reuse", "skip"] = "rename_existing"
     round_sizes_to_mm: float = 5.0                # sizes are rounded to this before naming a type
 
     @classmethod
