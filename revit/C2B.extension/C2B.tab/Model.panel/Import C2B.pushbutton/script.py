@@ -141,6 +141,30 @@ def set_bip_int(element, bip, value):
     return True
 
 
+#: "Height Offset From Level" as the firm's footing family shows it, with the built-ins Revit
+#: uses for the same idea when the name differs.
+_LEVEL_OFFSET_BIPS = (BuiltInParameter.INSTANCE_FREE_HOST_OFFSET_PARAM,
+                      BuiltInParameter.INSTANCE_ELEVATION_PARAM)
+
+
+def set_level_offset(inst, value_mm):
+    """How far a point-hosted instance sits above or below the level it is on.
+
+    A curve-driven element takes its height from the curve, but a family instance placed with a
+    level takes the point's z as an offset FROM that level -- so a point built at the level's own
+    elevation lands twice as low. A footing on a foundation at -2500 came out at -5000. The point
+    is given no height at all now, and the offset is stated here.
+    """
+    p = inst.LookupParameter("Height Offset From Level")
+    if p is not None and not p.IsReadOnly:
+        p.Set(mm(value_mm))
+        return True
+    for bip in _LEVEL_OFFSET_BIPS:
+        if set_bip_length(inst, bip, value_mm):
+            return True
+    return False
+
+
 def place_across_section(inst, action):
     """State where the member sits across its own section, rather than letting the family decide.
 
@@ -308,6 +332,47 @@ def level_id_of(element):
     return None
 
 
+def read_level_offset(element):
+    """A point-hosted instance's offset from its level, in millimetres."""
+    p = element.LookupParameter("Height Offset From Level")
+    if p is None or p.StorageType.ToString() != "Double":
+        for bip in _LEVEL_OFFSET_BIPS:
+            try:
+                p = element.get_Parameter(bip)
+            except Exception:
+                p = None
+            if p is not None and p.StorageType.ToString() == "Double":
+                break
+    if p is None or p.StorageType.ToString() != "Double":
+        return None
+    return to_mm(p.AsDouble())
+
+
+def check_offsets_of(placed, rows):
+    """Did each element end up as far above or below its level as the plan said?
+
+    A family instance placed with a level reads the point's height as an offset FROM that level,
+    so an element built at its level's own elevation lands twice as low. A footing on a
+    foundation at -2500 came out at -5000, and nothing in a count or a level name shows it.
+    """
+    wrong = {}
+    for action, element, level in placed:
+        if level is None or action.get("kind") not in ("footing", "column", "pile"):
+            continue
+        want = action.get("base_offset_mm", 0.0)
+        try:
+            got = read_level_offset(element)
+        except Exception:
+            continue
+        if got is None or abs(got - want) <= 1.0:
+            continue
+        key = (action.get("kind"), round(want), round(got))
+        wrong[key] = wrong.get(key, 0) + 1
+    for (kind, want, got), count in sorted(wrong.items()):
+        rows.append((False, "%d %ss offset from their level" % (count, kind), "%d mm" % want, "%d mm" % got,
+                     "they are built at the wrong height, which no count or level name shows"))
+
+
 def check_levels_of(placed, rows):
     """Did each element land on the level the plan gave it?
 
@@ -398,8 +463,9 @@ def check_what_was_built(plan, symbols, floor_types, wall_types, levels_by_id, m
                 rows.append((False, "type %s" % name, "%s %.0f" % (label, value), "%s %.0f" % (label, got),
                              "it kept the size of the type it was copied from -- every element of it is wrong"))
 
-    # -- did every element land on the level it was given? --------------------
+    # -- did every element land on the level it was given, and at the right height? --
     check_levels_of(placed, rows)
+    check_offsets_of(placed, rows)
 
     # -- are the levels where the plan put them? -----------------------------
     for row in plan.get("levels", []):
@@ -517,7 +583,7 @@ def main():
                 symbol = ensure_symbol(action, symbols)
                 if symbol is None or level is None:
                     continue
-                inst = doc.Create.NewFamilyInstance(point(action["point"], level_z_mm(level)), symbol, level,
+                inst = doc.Create.NewFamilyInstance(point(action["point"]), symbol, level,
                                                     Structure.StructuralType.Column)
                 if top is not None:
                     inst.get_Parameter(BuiltInParameter.FAMILY_TOP_LEVEL_PARAM).Set(top.Id)
@@ -577,8 +643,9 @@ def main():
                 symbol = ensure_symbol(action, symbols)
                 if symbol is None or level is None:
                     continue
-                inst = doc.Create.NewFamilyInstance(point(action["point"], level_z_mm(level)), symbol, level,
+                inst = doc.Create.NewFamilyInstance(point(action["point"]), symbol, level,
                                                     Structure.StructuralType.Footing)
+                set_level_offset(inst, action.get("base_offset_mm", 0.0))
                 stamp(inst, action, plan, level)
                 tally("footings")
             elif kind == "wall":
@@ -591,6 +658,10 @@ def main():
                 if top is not None:
                     height = top.Elevation - level.Elevation + mm(action.get("top_offset_mm", 0.0))
                 wall = Wall.Create(doc, curve, wtype.Id, level.Id, height, 0.0, False, True)
+                # stated both ways round, because the curve's height and the level argument can
+                # each be the one Revit believes and only one of them is right
+                set_bip_id(wall, BuiltInParameter.WALL_BASE_CONSTRAINT, level.Id)
+                set_bip_length(wall, BuiltInParameter.WALL_BASE_OFFSET, action.get("base_offset_mm", 0.0))
                 if top is not None:
                     wall.get_Parameter(BuiltInParameter.WALL_HEIGHT_TYPE).Set(top.Id)
                     wall.get_Parameter(BuiltInParameter.WALL_TOP_OFFSET).Set(mm(action.get("top_offset_mm", 0.0)))

@@ -338,10 +338,10 @@ def test_floors_stack_instead_of_spreading_across_the_site():
     of Revit as a staircase of floors marching across the site.
     """
     plan = build_plan(_two_floor_model(), RevitMapping())
-    columns = sorted([a for a in plan.actions if a.kind == "column"], key=lambda a: a.level_id)
+    columns = sorted([a for a in plan.actions if a.kind == "column"], key=lambda a: a.top_level_id)
     assert len(columns) == 2
     assert columns[0].point == columns[1].point == [1000.0, 2000.0]
-    assert columns[0].level_id != columns[1].level_id, "they differ in height, not in plan"
+    assert columns[0].top_level_id != columns[1].top_level_id, "they differ in height, not in plan"
 
     beams = [a for a in plan.actions if a.kind == "beam"]
     assert {tuple(b.start) for b in beams} == {(0.0, 0.0)}, "beams drift with the floor origin too"
@@ -442,30 +442,48 @@ def _function(tree, name):
 
 
 @pytest.mark.skipif(not SCRIPT.exists(), reason="the pyRevit extension is not in this checkout")
-def test_geometry_is_built_at_the_level_it_belongs_to():
+def test_curve_and_loop_geometry_carries_its_levels_elevation():
     """Revit reads a beam's reference level off the curve it is drawn on.
 
     Drawn at z = 0 every floor's beams landed on top of each other at the ground: one place,
     779 "identical instances" warnings, and a reference level of 01 GROUND LVL. on a beam whose
-    own CH-LEVEL said the fifth floor.
+    own CH-LEVEL said the fifth floor. Curves and loops carry their level's elevation.
     """
     tree = _script_tree()
     assert "level_z_mm" in {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    main = ast.unparse(_function(tree, "main"))
+    # beams, floor loops, walls and shaft openings: four places, all of them
+    assert main.count("level_z_mm(level)") >= 4, "some curve or loop is still built at zero"
+
+
+@pytest.mark.skipif(not SCRIPT.exists(), reason="the pyRevit extension is not in this checkout")
+def test_a_point_hosted_instance_is_given_no_height_and_states_its_offset():
+    """The opposite rule, and getting it wrong doubled a footing's depth.
+
+    A family instance placed with a level reads the point's height as an offset FROM that level,
+    so building it at its level's own elevation lands it twice as low: a footing on a foundation
+    at -2500 came out at -5000.
+    """
+    tree = _script_tree()
     source = SCRIPT.read_text(encoding="utf-8").splitlines()
     main = _function(tree, "main")
 
-    # A point with no elevation is at zero. Two of them are meant to be: a grid is a datum that
-    # spans every level, and the axis a column is rotated about is vertical, so its own height
-    # changes nothing. Everything else has to be built at the level it belongs to.
-    at_zero = [n for n in ast.walk(main)
-               if isinstance(n, ast.Call) and getattr(n.func, "id", "") in ("point", "loop_from")
-               and len(n.args) == 1]
-    for call in at_zero:
-        line = source[call.lineno - 1]
-        assert "Grid.Create" in line or "axis" in line, \
-            f"line {call.lineno} places an element at elevation zero: {line.strip()}"
+    for call in [n for n in ast.walk(main) if isinstance(n, ast.Call)
+                 and getattr(n.func, "attr", "") == "NewFamilyInstance"]:
+        first = ast.unparse(call.args[0])
+        if not first.startswith("point("):
+            continue
+        assert "level_z_mm" not in first, \
+            f"line {call.lineno} gives a point-hosted instance its level's height: {first}"
 
-    assert ast.unparse(main).count("level_z_mm(level)") >= 5, "some category is still built at zero"
+    body = ast.unparse(main)
+    assert "set_level_offset(inst" in body, "a footing's offset from its level is never stated"
+
+    names = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    assert {"set_level_offset", "read_level_offset", "check_offsets_of"} <= names
+    check = ast.unparse(_function(tree, "check_what_was_built"))
+    assert "check_offsets_of(placed, rows)" in check, "nothing reads back how high things ended up"
+    assert source
 
 
 @pytest.mark.skipif(not SCRIPT.exists(), reason="the pyRevit extension is not in this checkout")
@@ -530,3 +548,100 @@ def test_no_function_reaches_into_mains_local_names():
                     and n.id not in scope and n.id not in module and not hasattr(builtins, n.id):
                 reaching.append(f"{fn.name} reads '{n.id}' at line {n.lineno}")
     assert not reaching, "; ".join(sorted(set(reaching)))
+
+
+# --------------------------------------- a member holds up its own floor, from below
+def test_a_column_holds_up_its_own_floor_from_the_level_beneath():
+    """The beams and the slab of a floor hang under its level, and the column holds it up.
+
+    Built the other way round every column is one storey high, which is what put the ground
+    floor's columns between ground and first.
+    """
+    model = _two_floor_model()
+    plan = build_plan(model, RevitMapping())
+    by_top = {a.top_level_id: a for a in plan.actions if a.kind == "column"}
+
+    upper = by_top["LV2"]                       # the first floor's column
+    assert upper.level_id == "LV1", "its base is the level beneath, not its own"
+    assert upper.base_offset_mm == 0.0
+
+    lower = by_top["LV1"]                       # the ground floor's column
+    assert lower.level_id == "LV1", "nothing is beneath it, so it hangs off its own level"
+    assert lower.base_offset_mm == -3000.0
+
+
+def test_the_hang_below_the_lowest_level_is_a_setting():
+    mapping = RevitMapping(column_min_height_mm=2400.0)
+    plan = build_plan(_two_floor_model(), mapping)
+    lowest = next(a for a in plan.actions if a.kind == "column" and a.top_level_id == "LV1")
+    assert lowest.base_offset_mm == -2400.0
+
+
+def test_the_top_floors_columns_are_built_rather_than_skipped():
+    """Hung from the level above, a column on the highest floor had nothing to reach and was
+    dropped -- 57 of Test17's."""
+    model = _two_floor_model()
+    model.levels[-1].plan_floor_id = "L02"       # a floor on the very top level
+    plan = build_plan(model, RevitMapping())
+    assert len([a for a in plan.actions if a.kind == "column"]) == 3
+    assert not [d for d in plan.diagnostics if d.code == "REVIT_COLUMN_NO_TOP"]
+
+
+def test_a_wall_like_leg_spans_the_same_way():
+    plan = build_plan(_two_floor_model(), RevitMapping(wall_like_as="wall"))
+    model = _two_floor_model()
+    for c in model.columns:
+        c.wall_like = True
+    plan = build_plan(model, RevitMapping(wall_like_as="wall"))
+    upper = next(a for a in plan.actions if a.kind == "wall" and a.top_level_id == "LV2")
+    assert upper.level_id == "LV1" and upper.base_offset_mm == 0.0
+
+
+# --------------------------------------------------- loops Revit will actually accept
+def test_a_vertex_that_is_not_a_corner_is_dropped():
+    """Revit refuses a loop whose vertex is within its tolerance of the line through its
+    neighbours: 208 of Test17's 2330 panels, for a third of a millimetre."""
+    from c2b.revit.plan import _clean_ring
+
+    # a rectangle with a vertex 0.3 mm off the top edge
+    ring = [[0, 0], [5000, 0], [5000, 3000], [2500, 3000.3], [0, 3000]]
+    cleaned = _clean_ring(ring)
+    assert cleaned is not None and len(cleaned) == 4
+    assert [2500, 3000.3] not in cleaned
+
+    # a real corner is kept, however small the panel
+    square = [[0, 0], [700, 0], [700, 700], [0, 700]]
+    assert _clean_ring(square) == square
+
+
+def test_a_repeated_and_a_hairline_vertex_both_go():
+    from c2b.revit.plan import _clean_ring
+
+    ring = [[0, 0], [0.4, 0.2], [5000, 0], [5000, 3000], [0, 3000], [0, 0]]
+    cleaned = _clean_ring(ring)
+    assert cleaned is not None and len(cleaned) == 4, cleaned
+
+
+def test_a_ring_with_nothing_left_is_reported_not_built():
+    from c2b.revit.plan import _clean_ring
+
+    assert _clean_ring([[0, 0], [1000, 0], [2000, 0]]) is None        # a straight line
+    assert _clean_ring([[0, 0], [0.2, 0], [0.4, 0.1]]) is None        # a speck
+
+
+def test_every_panel_the_planner_emits_has_corners_revit_can_use():
+    import math
+
+    panel = NPanel(id="P1", floor_id="L01", mark="S1", kind="slab", thickness_mm=125.0,
+                   outline=[_pt(0, 0), _pt(5000, 0), _pt(5000, 3000), _pt(2500, 3000.3), _pt(0, 3000)],
+                   centroid=_pt(2500, 1500), area_m2=15.0, mark_position=_pt(2500, 1500))
+    (a,) = [x for x in build_plan(_model(panels=[panel]), RevitMapping()).actions if x.kind == "floor"]
+    for ring in a.loops:
+        n = len(ring)
+        for i in range(n):
+            p0, p1, p2 = ring[i - 1], ring[i], ring[(i + 1) % n]
+            base = math.dist(p0, p2)
+            if base < 1e-9:
+                continue
+            twice = abs((p1[0] - p0[0]) * (p2[1] - p0[1]) - (p1[1] - p0[1]) * (p2[0] - p0[0]))
+            assert twice / base > 1.0, f"a vertex only {twice / base:.3f} mm off the line survived"

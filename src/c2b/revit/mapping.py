@@ -128,6 +128,10 @@ class RevitMapping(BaseModel):
     structural_only: bool = True                  # skip non-structural walls
     shaft_from: list[str] = Field(default_factory=lambda: ["LIFT", "SHAFT", "STAIR"])   # cut-out labels that become shafts
     column_top_attachment: Literal["level", "beam_soffit"] = "level"
+    # A column holds up its own floor, so that floor's level is its top and the level beneath is
+    # its base. On the lowest level there is nothing beneath, so it hangs this far below its own
+    # level instead of not being built.
+    column_min_height_mm: float = 3000.0
     # A beam's height in Revit is decided by its family's own z justification and offset unless
     # something states them. CH-Concrete-Rectangular-Beam carries Top / -1500, so every beam sat
     # 1500 below its level on every floor whatever the plan said. C2B states them instead: the

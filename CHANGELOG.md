@@ -13,6 +13,43 @@ importer)
 must be updated; a MINOR bump adds fields or element types; a PATCH bump fixes
 values.
 
+## [0.19.0] - 2026-09-18
+
+Test17 in Revit: 8737 elements, and three things wrong with them.
+
+### Fixed (0.19.0)
+
+- **Every column was a storey too high.** A floor's beams and slab hang under its level and its
+  columns hold that level up from the one beneath, so a column's top is its own floor's level
+  and its base is the level under it. C2B had it the other way round -- base on its own level,
+  top on the one above -- so the ground floor's columns stood between ground and first. A column
+  on the topmost floor had nothing above it to reach and was dropped entirely: 57 of Test17's.
+  **Columns built: 2037 → 2094.** Where there is no level beneath, the column hangs
+  `column_min_height_mm` (3000) below its own level rather than not being built.
+- **A footing on the foundation came out at −5000 instead of −2500.** A family instance placed
+  with a level reads the point's height as an offset *from* that level, so building it at its
+  level's own elevation lands it twice as low. That is the opposite of a beam, whose reference
+  level Revit infers from the curve's absolute height -- and 0.18.0 gave both the same
+  treatment. Curves and loops keep their level's elevation; a point-hosted instance is given no
+  height and states its offset instead. Walls now state their base constraint and offset too,
+  since only one of the curve's height and the level argument can be the one Revit believes.
+- **208 of 2330 slab panels were refused**: *"the input curve loops cannot compose a valid
+  boundary"*. Not a broken outline -- shapely found all 2330 clean. Revit will not accept a
+  vertex within its own tolerance of the line through its neighbours, and a panel closed against
+  beam faces a fraction of a degree off square picks one up: the refused panels had a vertex a
+  median of **0.33 mm** off line, against 573 mm for the ones that built. Every ring is now
+  reduced to its actual corners before it leaves the planner, one vertex at a time until nothing
+  more can go, and a ring left enclosing no area is reported rather than sent. **Panels with a
+  sub-millimetre vertex: 208 → 0**, with all 2330 still built.
+
+### Changed (0.19.0)
+
+- The import's check reads back how high each point-hosted element ended up, not only which
+  level it is on. The footing that came out at −5000 was on the right level and counted
+  correctly; nothing but its height was wrong.
+- Build plan version `0.4.0`: a column action's `level_id` is now its base and `top_level_id`
+  its own floor's level, which is the reverse of before.
+
 ## [0.18.1] - 2026-09-18
 
 ### Changed (0.18.1)
