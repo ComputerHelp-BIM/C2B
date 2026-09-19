@@ -7,9 +7,10 @@ only the part that cannot be tested without WPF -- and is kept small for exactly
 **Binding, carefully.** The grid's text columns bind to a ``__slots__`` row object, which is
 the pattern the suite already ships (§12.7.G). Two things it does *not* do:
 
-* the Build tick is bound to the row's own ``IsSelected`` -- a real .NET bool -- because
-  §12.7.Q is explicit that a ``DataTrigger`` on a Python bool never fires and a write back to
-  a ``__slots__`` bool does not land;
+* the Build tick reads its row's ``Build`` **as a string** and is written back from the
+  ``Checked``/``Unchecked`` routed event, never through a two-way binding: §12.7.Q is explicit
+  that a write back to a Python bool does not land, and the strings are what every other
+  column in this grid already binds through;
 * every value is read back through the presenter, which parses it and either applies it or
   reports it. A write-back that silently did not happen therefore leaves the value unchanged
   rather than corrupting the stack.
@@ -23,6 +24,15 @@ from .storey_view import StoreyPresenter, format_mm
 
 #: Names the layout file gives the controls this module drives.
 _BUTTONS = ("BtnUp", "BtnDown", "BtnAdd", "BtnAddBottom", "BtnRemove", "BtnSave", "BtnCancel")
+
+#: What the Build slot holds. WPF's default converter turns these into the ``bool?`` that
+#: ``IsChecked`` wants; a Python bool in the same slot does not survive the trip.
+TICKED = "True"
+UNTICKED = "False"
+
+#: Set on the Build tick in the layout so the grid-wide handler can tell it from the
+#: ``ToggleButton`` inside a ComboBox's template, which raises the very same routed event.
+BUILD_TICK = "BuildTick"
 
 _BADGE_BRUSH = {"ERROR": ("BrushErrorBadgeBackground", "BrushErrorBadgeForeground"),
                 "WARNING": ("BrushWarningBadgeBackground", "BrushWarningBadgeForeground"),
@@ -62,7 +72,7 @@ class StoreyRow:
         self.PlanChoices = choices
         self.Repeat = str(row.repeat)
         self.Flag = row.flag
-        self.Build = row.build
+        self.Build = TICKED if row.build else UNTICKED
 
 
 class StoreyEditorWindow:
@@ -76,6 +86,7 @@ class StoreyEditorWindow:
     def __init__(self, presenter: StoreyPresenter, subtitle: str = "") -> None:
         self.presenter = presenter
         self.saved = False
+        self._toggled: Any = None
         self.window = wpf.load_window("storey_editor")
         self.grid = wpf.find(self.window, "StoreyGrid")
         self._rows: list[Any] = []
@@ -98,6 +109,46 @@ class StoreyEditorWindow:
         wpf.find(self.window, "BtnSave").Click += self._on_save
         wpf.find(self.window, "BtnCancel").Click += self._on_cancel
         self.grid.SelectionChanged += self._on_selection_changed
+        # Checked and Unchecked bubble, so one pair of handlers on the grid serves every row
+        # -- including rows the grid has not realised yet. The delegate is kept because a
+        # handler that is only referenced by .NET is a handler Python may collect.
+        from System.Windows import RoutedEventHandler
+        from System.Windows.Controls.Primitives import ToggleButton
+
+        self._toggled = RoutedEventHandler(self._on_build_toggled)
+        self.grid.AddHandler(ToggleButton.CheckedEvent, self._toggled)
+        self.grid.AddHandler(ToggleButton.UncheckedEvent, self._toggled)
+
+    def _on_build_toggled(self, sender, args) -> None:
+        """A storey ticked or unticked: the one edit that does not go through a binding."""
+        box = args.OriginalSource
+        if self._filling or getattr(box, "Tag", None) != BUILD_TICK:
+            return
+        row = box.DataContext
+        if getattr(row, "StoreyId", None) is None:
+            # The row came back as something other than the Python object it was bound from.
+            # The cell takes the selection on mouse-down, before this event, so the selected
+            # row is the row whose tick was clicked.
+            row = self.grid.SelectedItem
+        if getattr(row, "StoreyId", None) is None:
+            return
+        row.Build = TICKED if box.IsChecked else UNTICKED
+        # Through _read_back like every other command, and for the same reason: a refresh is
+        # about to redraw the table, and a height typed into the row above and not yet taken
+        # would be redrawn as whatever it was before. The tick itself is one of the values
+        # _read_back carries across, now that it lives on the row.
+        self._read_back()
+        # Unticking a storey changes what the footer says and which rows are flagged, and both
+        # of those live on objects the grid is bound to. Rebuilding from inside the tick's own
+        # event would destroy the control still raising it, so it goes after.
+        self._after(self.refresh)
+
+    def _after(self, work) -> None:
+        """Run something once the event that asked for it has finished."""
+        from System import Action
+        from System.Windows.Threading import DispatcherPriority
+
+        self.window.Dispatcher.BeginInvoke(DispatcherPriority.Background, Action(work))
 
     def _selected_id(self) -> str | None:
         item = self.grid.SelectedItem
@@ -161,12 +212,11 @@ class StoreyEditorWindow:
             return
         self.grid.CommitEdit()
         self.presenter.set_default_height(wpf.find(self.window, "DefaultHeight").Text)
-        built = {getattr(item, "StoreyId", None) for item in self.grid.SelectedItems}
         for row in self._rows:
             self.presenter.set_name(row.StoreyId, row.Name)
             self.presenter.set_plan_label(row.StoreyId, row.Plan)
             self.presenter.set_repeat(row.StoreyId, row.Repeat)
-            self.presenter.set_build(row.StoreyId, row.StoreyId in built)
+            self.presenter.set_build(row.StoreyId, row.Build == TICKED)
         for row in self._ordered_rows():
             if row.Height.strip() and row.Height != row_was(row, "height"):
                 self.presenter.set_height(row.StoreyId, row.Height)
@@ -204,15 +254,12 @@ class StoreyEditorWindow:
             self.grid.ItemsSource = None
             self.grid.ItemsSource = items
 
-            # The Build tick is the row's own IsSelected, so ticking it is selecting it.
-            self.grid.SelectedItems.Clear()
-            for row in self._rows:
-                if row.Build:
-                    self.grid.SelectedItems.Add(row)
+            # Selection means one thing here: the row the buttons act on. The grid is in
+            # Single mode, where touching SelectedItems at all throws.
             if keep is not None:
                 for row in self._rows:
                     if row.StoreyId == keep:
-                        self.grid.CurrentItem = row
+                        self.grid.SelectedItem = row
                         break
 
             self._show_problems()
@@ -282,4 +329,5 @@ def edit_storeys_wpf(presenter: StoreyPresenter, subtitle: str = "",
     return StoreyEditorWindow(presenter, subtitle).show(owner_handle)
 
 
-__all__ = ["StoreyEditorWindow", "StoreyRow", "edit_storeys_wpf", "format_mm"]
+__all__ = ["BUILD_TICK", "TICKED", "UNTICKED", "StoreyEditorWindow", "StoreyRow",
+           "edit_storeys_wpf", "format_mm"]

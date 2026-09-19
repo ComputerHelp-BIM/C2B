@@ -14,13 +14,18 @@
   builds. Columns are resizable. The buttons under it act on the selected row, which in a
   DataGrid is a row the user can see is selected.
 
-  The Build tick is bound to the row's own IsSelected, a real .NET bool - 12.7.Q: a DataTrigger
-  on a Python bool never fires and a write back to a __slots__ bool does not land.
+  Build and selection are two different things and were one for a release. Binding the tick to
+  DataGridRow.IsSelected made ticking a storey also make it the row the buttons act on, and it
+  threw outright: a DataGrid in Single selection mode refuses any change to SelectedItems, and
+  Extended mode would have made "Move up" move whichever ticked row came first rather than the
+  row that was clicked. So: selection is the row you clicked, and the tick is the row's own
+  Build value, written back through the Checked/Unchecked routed event (12.7.Q - a write back
+  to a Python bool does not land, so the value is read one way and the event carries the edit).
 -->
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="AnonGee &#183; Storey Editor"
-        Width="940" Height="640" MinWidth="820" MinHeight="520"
+        Width="1040" Height="720" MinWidth="900" MinHeight="580"
         Background="White"
         UseLayoutRounding="True"
         FontFamily="Segoe UI, Inter, Calibri, Arial"
@@ -68,9 +73,9 @@
                    Margin="10,0,8,0" VerticalAlignment="Center"
                    TextTrimming="CharacterEllipsis" Text=""/>
         <Button x:Name="BtnCancel" Grid.Column="2" Content="Cancel"
-                Style="{StaticResource ButtonGhost}" Width="76" IsCancel="True"/>
+                Style="{StaticResource ButtonGhost}" Width="90" IsCancel="True"/>
         <Button x:Name="BtnSave" Grid.Column="3" Content="Save the storeys"
-                Style="{StaticResource ButtonPrimary}" Width="140" Margin="8,0,0,0" IsDefault="True"/>
+                Style="{StaticResource ButtonPrimary}" Width="170" Margin="8,0,0,0" IsDefault="True"/>
       </Grid>
     </Border>
 
@@ -78,7 +83,7 @@
     <Border x:Name="ProblemsPanel" DockPanel.Dock="Bottom" Visibility="Collapsed"
             Background="{StaticResource BrushPureWhite}"
             BorderBrush="{StaticResource BrushLightBorder}" BorderThickness="0,1,0,0">
-      <ScrollViewer MaxHeight="88" VerticalScrollBarVisibility="Auto" Margin="16,8">
+      <ScrollViewer MaxHeight="104" VerticalScrollBarVisibility="Auto" Margin="16,8">
         <StackPanel x:Name="ProblemsHost"/>
       </ScrollViewer>
     </Border>
@@ -92,7 +97,7 @@
       <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
         <TextBlock Text="New storeys are" Style="{StaticResource TextLabel}" VerticalAlignment="Center"/>
         <TextBox x:Name="DefaultHeight" Style="{StaticResource InputNumberBox}"
-                 Width="70" Margin="8,0,6,0" Text="3000"/>
+                 Width="84" Margin="8,0,6,0" Text="3000"/>
         <TextBlock Text="mm tall" Style="{StaticResource TextLabel}" VerticalAlignment="Center"/>
       </StackPanel>
     </StackPanel>
@@ -104,15 +109,15 @@
                 BorderBrush="{StaticResource BrushLightBorder}" BorderThickness="0,1,0,0"
                 CornerRadius="0,0,7,7" Padding="10,6">
           <StackPanel Orientation="Horizontal">
-            <Button x:Name="BtnUp" Content="Move up" Style="{StaticResource ButtonNeutral}" Width="82"/>
+            <Button x:Name="BtnUp" Content="Move up" Style="{StaticResource ButtonNeutral}" Width="98"/>
             <Button x:Name="BtnDown" Content="Move down" Style="{StaticResource ButtonNeutral}"
-                    Width="92" Margin="8,0,0,0"/>
+                    Width="112" Margin="8,0,0,0"/>
             <Button x:Name="BtnAdd" Content="Add storey" Style="{StaticResource ButtonNeutral}"
-                    Width="92" Margin="8,0,0,0"/>
+                    Width="112" Margin="8,0,0,0"/>
             <Button x:Name="BtnAddBottom" Content="Add at the bottom"
-                    Style="{StaticResource ButtonNeutral}" Width="128" Margin="8,0,0,0"/>
+                    Style="{StaticResource ButtonNeutral}" Width="156" Margin="8,0,0,0"/>
             <Button x:Name="BtnRemove" Content="Remove" Style="{StaticResource ButtonNeutral}"
-                    Width="82" Margin="8,0,0,0"/>
+                    Width="98" Margin="8,0,0,0"/>
             <TextBlock x:Name="SelectionText" Style="{StaticResource HelpText}"
                        VerticalAlignment="Center" Margin="12,0,0,0"/>
           </StackPanel>
@@ -129,35 +134,36 @@
           </DataGrid.Resources>
           <DataGrid.Columns>
 
-            <DataGridTemplateColumn Header="Build" Width="48" CanUserResize="False" IsReadOnly="True">
+            <DataGridTemplateColumn Header="Build" Width="56" CanUserResize="False" IsReadOnly="True">
               <DataGridTemplateColumn.CellTemplate>
                 <DataTemplate>
-                  <CheckBox Style="{StaticResource GridCheckBox}"
-                            IsChecked="{Binding IsSelected, Mode=TwoWay,
-                                        RelativeSource={RelativeSource AncestorType=DataGridRow}}"/>
+                  <!-- Tag names this tick for the grid-wide Checked handler: a ComboBox raises
+                       the same routed event from the ToggleButton inside its own template. -->
+                  <CheckBox Style="{StaticResource GridCheckBox}" Tag="BuildTick"
+                            IsChecked="{Binding Build, Mode=OneWay}"/>
                 </DataTemplate>
               </DataGridTemplateColumn.CellTemplate>
             </DataGridTemplateColumn>
 
-            <DataGridTextColumn Header="No." Binding="{Binding Number}" Width="42" IsReadOnly="True"
+            <DataGridTextColumn Header="No." Binding="{Binding Number}" Width="48" IsReadOnly="True"
                                 ElementStyle="{StaticResource GridMuted}"/>
 
             <DataGridTextColumn Header="Storey" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
-                                Width="*" MinWidth="140"
+                                Width="*" MinWidth="160"
                                 ElementStyle="{StaticResource GridText}"
                                 EditingElementStyle="{StaticResource GridEditBox}"/>
 
             <DataGridTextColumn Header="Height mm" Binding="{Binding Height, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
-                                Width="88"
+                                Width="100"
                                 ElementStyle="{StaticResource GridNumber}"
                                 EditingElementStyle="{StaticResource GridEditNumberBox}"/>
 
             <DataGridTextColumn Header="Elevation mm" Binding="{Binding Elevation, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
-                                Width="98"
+                                Width="114"
                                 ElementStyle="{StaticResource GridNumber}"
                                 EditingElementStyle="{StaticResource GridEditNumberBox}"/>
 
-            <DataGridTemplateColumn Header="Built from" Width="176" IsReadOnly="True">
+            <DataGridTemplateColumn Header="Built from" Width="200" IsReadOnly="True">
               <DataGridTemplateColumn.CellTemplate>
                 <DataTemplate>
                   <ComboBox Style="{StaticResource GridComboBox}"
@@ -168,11 +174,11 @@
             </DataGridTemplateColumn>
 
             <DataGridTextColumn Header="Repeat" Binding="{Binding Repeat, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
-                                Width="58"
+                                Width="70"
                                 ElementStyle="{StaticResource GridNumber}"
                                 EditingElementStyle="{StaticResource GridEditNumberBox}"/>
 
-            <DataGridTextColumn Header="Note" Binding="{Binding Flag}" Width="92" IsReadOnly="True"
+            <DataGridTextColumn Header="Note" Binding="{Binding Flag}" Width="106" IsReadOnly="True"
                                 ElementStyle="{StaticResource GridMuted}"/>
           </DataGrid.Columns>
         </DataGrid>

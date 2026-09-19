@@ -102,7 +102,7 @@ def _typography() -> str:
     sizes = [("FontSizeH1", t.FONT_SIZE_H1), ("FontSizeH2", t.FONT_SIZE_H2), ("FontSizeH3", t.FONT_SIZE_H3),
              ("FontSizeH4", t.FONT_SIZE_H4), ("FontSizeBody", t.FONT_SIZE_BODY),
              ("FontSizeSmall", t.FONT_SIZE_SMALL), ("FontSizeCaption", t.FONT_SIZE_CAPTION),
-             ("FontSizeCode", t.FONT_SIZE_CODE)]
+             ("FontSizeCode", t.FONT_SIZE_CODE), ("FontSizeHelp", t.FONT_SIZE_HELP)]
     out = [f'  <FontFamily x:Key="FontSans">{t.FONT_SANS}</FontFamily>',
            f'  <FontFamily x:Key="FontMono">{t.FONT_MONO}</FontFamily>']
     out += [f'  <sys:Double x:Key="{key}">{value}</sys:Double>' for key, value in sizes]
@@ -135,10 +135,11 @@ def _typography() -> str:
     <Setter Property="VerticalAlignment" Value="Center"/>
   </Style>''')
 
-    # Help prose keeps a readable floor of 12 on top of TextBody: a paragraph explaining what
-    # a table means is the one thing on a dense window that a person actually reads.
-    out.append('''  <sys:Double x:Key="FontSizeHelp">12</sys:Double>
-  <Style x:Key="HelpText" TargetType="TextBlock" BasedOn="{StaticResource TextBody}">
+    # Help prose sits a tier above body, as it does in the suite: a paragraph explaining what
+    # a table means is the one thing on a dense window that a person actually reads. The size
+    # is a token like every other; it was a literal here once, which is exactly how a scale
+    # ends up with one member that does not follow it.
+    out.append('''  <Style x:Key="HelpText" TargetType="TextBlock" BasedOn="{StaticResource TextBody}">
     <Setter Property="FontSize" Value="{StaticResource FontSizeHelp}"/>
     <Setter Property="VerticalAlignment" Value="Top"/>
   </Style>
@@ -716,7 +717,7 @@ def _datagrid() -> str:
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="CheckBox">
-          <Border x:Name="Box" Width="16" Height="16" CornerRadius="{t.RADIUS_SM}"
+          <Border x:Name="Box" Width="{t.CHECKBOX_SIZE}" Height="{t.CHECKBOX_SIZE}" CornerRadius="{t.RADIUS_SM}"
                   BorderBrush="{{StaticResource BrushLightBorder}}" BorderThickness="1"
                   Background="{{StaticResource BrushPureWhite}}">
             <Viewbox x:Name="CheckMark" Margin="3" Visibility="Collapsed">
@@ -790,7 +791,7 @@ def _datagrid() -> str:
   </Style>
   <!-- The editor a cell puts up on F2 or a double click. -->
   <Style x:Key="GridEditBox" TargetType="TextBox" BasedOn="{{StaticResource InputTextBox}}">
-    <Setter Property="Height" Value="22"/>
+    <Setter Property="Height" Value="{t.HEIGHT_INPUT - 5}"/>
     <Setter Property="Margin" Value="4,0"/>
     <Setter Property="FontSize" Value="{{StaticResource FontSizeCaption}}"/>
   </Style>
@@ -799,7 +800,7 @@ def _datagrid() -> str:
     <Setter Property="TextAlignment" Value="Right"/>
   </Style>
   <Style x:Key="GridComboBox" TargetType="ComboBox" BasedOn="{{StaticResource InputComboBox}}">
-    <Setter Property="Height" Value="22"/>
+    <Setter Property="Height" Value="{t.HEIGHT_INPUT - 5}"/>
     <Setter Property="Margin" Value="4,0"/>
     <Setter Property="FontSize" Value="{{StaticResource FontSizeCaption}}"/>
   </Style>

@@ -68,14 +68,50 @@ def test_the_row_commands_act_on_the_row_the_user_picked(source):
         assert command in wired, f"no button runs {command}"
 
 
-def test_the_tick_column_is_bound_to_the_rows_own_dotnet_bool():
-    """12.7.Q - a DataTrigger on a Python bool never fires, and a write back to a __slots__
-    bool does not land. DataGridRow.IsSelected is a real bool and is the way round it."""
+def test_the_tick_reads_one_way_and_writes_back_through_its_event():
+    """12.7.Q -- a write back to a Python bool does not land, so the tick reads a string one
+    way and the edit arrives through Checked/Unchecked instead."""
     markup = xaml.layout_path("storey_editor").read_text(encoding="utf-8")
     tick = markup.split('Header="Build"')[1].split("</DataGridTemplateColumn>")[0]
-    assert "IsSelected, Mode=TwoWay" in tick
-    assert "AncestorType=DataGridRow" in tick
+    assert "{Binding Build, Mode=OneWay}" in tick
+    assert "TwoWay" not in tick, "a two-way binding here is the one that silently does nothing"
+    assert 'Tag="BuildTick"' in tick, "the handler cannot tell this from a ComboBox's toggle"
     assert "GridCheckBox" in tick
+
+    source = SOURCE.read_text(encoding="utf-8")
+    assert "ToggleButton.CheckedEvent" in source and "ToggleButton.UncheckedEvent" in source
+    assert "self._toggled" in source, "a delegate only .NET holds is one Python may collect"
+
+
+def test_ticking_a_storey_is_not_selecting_it():
+    """Two releases ago the tick WAS the row's IsSelected. That threw outright -- a DataGrid in
+    Single selection mode refuses every change to SelectedItems -- and the Extended mode that
+    would have allowed it makes 'Move up' move the first ticked row instead of the clicked
+    one. Selection is the row the buttons act on; the tick is the storey's own value."""
+    # Read as attributes, not as text: the comment explaining this failure says the words.
+    touched = {n.attr for n in ast.walk(ast.parse(SOURCE.read_text(encoding="utf-8")))
+               if isinstance(n, ast.Attribute)}
+    assert "SelectedItems" not in touched, "Single selection mode throws on any change to it"
+    assert "IsSelected" not in touched
+    assert "SelectedItem" in touched, "nothing reads the selection, so this proves nothing"
+
+    theme = xaml.theme_xaml()
+    grid = theme.split('x:Key="DataGridStyle"')[1].split("</Style>")[0]
+    assert '<Setter Property="SelectionMode" Value="Single"/>' in grid
+
+
+def test_a_tick_does_not_rebuild_the_table_from_inside_its_own_event():
+    """The rebuild destroys the row containers, and the control still raising the event is
+    one of them."""
+    tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
+    handler = next(n for n in ast.walk(tree)
+                   if isinstance(n, ast.FunctionDef) and n.name == "_on_build_toggled")
+    body = ast.unparse(handler)                     # unparsing drops the comments
+    assert "self._after(self.refresh)" in body
+    assert "self.refresh()" not in body
+    after = next(n for n in ast.walk(tree)
+                 if isinstance(n, ast.FunctionDef) and n.name == "_after")
+    assert "BeginInvoke" in ast.unparse(after)
 
 
 def test_the_grid_lets_a_user_drag_its_column_widths():

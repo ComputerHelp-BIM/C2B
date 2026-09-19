@@ -175,6 +175,14 @@ def test_the_apartment_is_tried_not_set_because_set_throws():
     assert "current.SetApartmentState" not in body, "a refusal would take available() down with it"
 
 
+def test_a_dialog_that_wanted_an_owner_and_got_none_is_not_left_in_the_corner():
+    """WindowStartupLocation=CenterOwner with no owner does not centre on anything: the
+    window opens at 0,0. That is the top-left corner the storey editor kept appearing in."""
+    body = source("ui", "wpf.py").split("def show_dialog")[1].split("\ndef ")[0]
+    assert "CenterOwner" in body and "CenterScreen" in body
+    assert body.index("owner_handle:") < body.index("CenterOwner"), "the owner still wins"
+
+
 def test_doctor_says_which_thread_the_window_will_open_on():
     text = source("cli.py")
     assert "apartment()" in text and "window thread" in text

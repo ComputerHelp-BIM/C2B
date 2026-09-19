@@ -120,12 +120,17 @@ def test_the_radius_tiers_grow_with_the_size_of_the_thing():
     assert t.RADIUS_SM < t.RADIUS_MD < t.RADIUS_LG < t.RADIUS_XL
 
 
-def test_control_heights_match_the_shipping_suite():
+def test_control_heights_are_the_suites_carrying_the_same_scale_as_the_text():
     """The suite ships a 28px button over a 26px input, which is tighter than the document's
-    28/36 table. The document's own rule settles it: where the two disagree the code wins."""
-    assert t.HEIGHT_INPUT == 26
-    assert t.HEIGHT_BUTTON == 28
+    28/36 table -- and the document's own rule settles that: where the two disagree the code
+    wins. Both carry FONT_SCALE, because a control that did not grow with its text is a
+    control the text no longer fits in."""
+    scaled = {name: t._half_up(suite * t.FONT_SCALE)
+              for name, suite in (("HEIGHT_INPUT", 26), ("HEIGHT_BUTTON", 28))}
+    for name, want in scaled.items():
+        assert getattr(t, name) == want, f"{name} did not follow the type scale"
     assert t.HEIGHT_LARGE > t.HEIGHT_BUTTON > t.HEIGHT_INPUT
+    assert t.HEIGHT_INPUT > t.FONT_SIZE_BODY * 2, "a text box its own text does not fit in"
 
 
 def test_a_hit_target_is_never_smaller_than_an_input():
@@ -133,11 +138,30 @@ def test_a_hit_target_is_never_smaller_than_an_input():
     assert min(t.HEIGHT_INPUT, t.HEIGHT_COMPACT, t.HEIGHT_BUTTON) >= 24
 
 
-def test_the_type_scale_is_the_one_the_suite_ships():
+def test_the_suite_sizes_are_the_ones_the_reference_ui_xaml_declares():
     """Taken from the shipping ui.xaml, not from the document's §4.2 table. The document is
     explicit that the code wins, and it already carries one such reconciliation note itself;
     following the table gave a window a third larger than every other tool in the suite."""
-    assert (t.FONT_SIZE_H2, t.FONT_SIZE_H3, t.FONT_SIZE_BODY, t.FONT_SIZE_CAPTION) == (16.5, 11.0, 9.5, 8.5)
+    suite = t.SUITE_FONT_SIZES
+    assert (suite["h2"], suite["h3"], suite["body"], suite["caption"]) == (16.5, 11.0, 9.5, 8.5)
+    assert suite["help"] == 12.0, "help prose is its own tier in the suite, above body"
+
+
+def test_c2b_carries_one_scale_over_the_suite_and_every_tier_follows_it():
+    """The suite's sizes were set against JetBrains Mono, whose glyphs are wide; C2B leads with
+    Segoe UI at the owner's instruction and came out small enough to squint at. One factor, so
+    what C2B did to the suite's scale stays readable instead of nine hand-tuned numbers."""
+    assert t.FONT_SCALE > 1.0
+    for tier, attribute in (("h1", "H1"), ("h2", "H2"), ("h3", "H3"), ("h4", "H4"),
+                            ("body", "BODY"), ("small", "SMALL"), ("caption", "CAPTION"),
+                            ("code", "CODE"), ("help", "HELP")):
+        want = round(t.SUITE_FONT_SIZES[tier] * t.FONT_SCALE * 2) / 2
+        assert getattr(t, f"FONT_SIZE_{attribute}") == want, f"{tier} is off the scale"
+    assert t.FONT_SIZE_BODY >= 11.0, "smaller than this is what the owner asked to be fixed"
+
+
+def test_help_prose_is_read_and_so_is_bigger_than_body():
+    assert t.FONT_SIZE_HELP > t.FONT_SIZE_BODY > t.FONT_SIZE_CAPTION
 
 
 def test_the_type_scale_descends_and_body_matches_h4():
@@ -148,9 +172,9 @@ def test_the_type_scale_descends_and_body_matches_h4():
 
 def test_a_type_size_crosses_to_tkinter_as_pixels_not_points():
     """A WPF unit is one CSS pixel, and Tk reads a negative size as pixels."""
-    assert t.pixels(t.FONT_SIZE_BODY) == -10        # 9.5 rounds to 10 px, not 7 pt
-    assert t.pixels(t.FONT_SIZE_H1) == -21
-    assert t.points(t.FONT_SIZE_BODY) == 7
+    assert t.pixels(t.FONT_SIZE_BODY) == -12        # 11.5 rounds to 12 px, not 9 pt
+    assert t.pixels(t.FONT_SIZE_H1) == -25
+    assert t.points(t.FONT_SIZE_BODY) == 9          # which is what Windows itself uses
 
 
 def test_motion_never_makes_an_engineer_wait():

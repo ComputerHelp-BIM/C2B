@@ -397,9 +397,17 @@ def show_dialog(window: Any, owner_handle: int | None = None) -> bool:
     ``owner_handle`` is Revit's main window when C2B is running inside it, so the dialog cannot
     end up behind its host (§12.4). Outside Revit there is nothing to own it and it is left
     alone rather than parented to something arbitrary.
+
+    A window asking for ``CenterOwner`` that then has no owner does not centre on anything --
+    it opens at 0,0, in the top-left corner of the screen. So a dialog that wanted its owner
+    and did not get one is centred on the screen instead of being left there.
     """
+    from System.Windows import WindowStartupLocation
+
     if owner_handle:
         from System.Windows.Interop import WindowInteropHelper
 
         WindowInteropHelper(window).Owner = owner_handle
+    elif window.WindowStartupLocation == WindowStartupLocation.CenterOwner:
+        window.WindowStartupLocation = WindowStartupLocation.CenterScreen
     return bool(window.ShowDialog())

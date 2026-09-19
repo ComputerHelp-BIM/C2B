@@ -292,7 +292,10 @@ class C2BWindow:
         host.Children.Clear()
         for n, (severity, count, meaning) in enumerate(self.presenter.issue_rows()):
             grid = Grid()
-            for width in (96.0, 86.0, None):
+            # The same three widths as the header row in main_window.xaml, less the 16 the
+            # header's own margins take: a heading that does not sit over its column is worse
+            # than no heading.
+            for width in (112.0, 98.0, None):
                 column = ColumnDefinition()
                 column.Width = (GridLength(1, GridUnitType.Star) if width is None
                                 else GridLength(width, GridUnitType.Pixel))
