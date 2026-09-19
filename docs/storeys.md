@@ -161,6 +161,11 @@ before that, or one where it did not install:
 .venv\Scripts\pip install pythonnet
 ```
 
+WPF itself lives in the **.NET Desktop Runtime**, which Revit 2025 already needs, so a machine
+with Revit on it has one. If `c2b doctor` says `.NET desktop  none`, install it from
+[dotnet.microsoft.com/download/dotnet](https://dotnet.microsoft.com/download/dotnet) — the
+**Desktop Runtime** download, not the plain one.
+
 **To check which window you are getting**, run `windows\C2B-debug.bat`. It prints the
 installation check — including a `window` line saying `branded (WPF)` or
 `plain (Tkinter)` and why — and then opens C2B with a console behind it, so anything the tool

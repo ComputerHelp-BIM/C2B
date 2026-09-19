@@ -53,7 +53,7 @@ def test_the_plain_window_says_on_itself_that_it_is_the_plain_window():
 def test_doctor_reports_which_window_would_open():
     text = source("src", "c2b", "cli.py")
     assert "branded (WPF)" in text and "plain (Tkinter)" in text
-    assert "pip install pythonnet" in text
+    assert "why_not_in_full()" in text, "the one-line reason is not enough to act on"
 
 
 def test_there_is_a_launcher_with_a_console_behind_it():
@@ -84,3 +84,92 @@ def test_a_coloured_button_in_the_plain_window_is_actually_coloured():
     body = text.split("def _filled_button")[1].split("\n    def ")[0]
     assert "tk.Button(" in body, "a ttk button cannot be given a colour on Windows"
     assert "C2BPrimary.TButton" not in text and "C2BDanger.TButton" not in text
+
+
+# --------------------------------------------- getting to WPF at all
+
+def test_the_runtime_is_chosen_before_pythonnet_loads_one():
+    """set_runtime is a one-shot: pythonnet keeps the first CLR it is given, so nothing in
+    this module may import clr at the top or the choice is already made."""
+    text = source("src", "c2b", "ui", "wpf.py")
+    tree = ast.parse(text)
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            names = [a.name for a in node.names] + ([node.module or ""] if isinstance(node, ast.ImportFrom) else [])
+            for name in names:
+                assert not str(name).startswith(("clr", "System", "pythonnet", "clr_loader")), name
+    choose = text.split("def _choose_runtime")[1].split("\ndef ")[0]
+    assert '"clr" in sys.modules' in choose, "it must not try after pythonnet has loaded one"
+    assert "_RUNTIME_CHOSEN" in choose, "set_runtime twice throws"
+
+
+def test_wpf_is_looked_for_in_the_framework_that_actually_has_it():
+    """Revit 2025 runs on .NET 8, so a machine with Revit has Microsoft.WindowsDesktop.App --
+    and WPF is part of that framework rather than of the plain .NET runtime."""
+    from c2b.ui import wpf
+
+    config = wpf.runtime_config((8, 0, 11))
+    assert '"Microsoft.WindowsDesktop.App"' in config
+    assert '"net8.0"' in config and '"8.0.11"' in config
+    assert '"latestMinor"' in config, "a machine that gets 8.1 tomorrow must keep working"
+
+
+def test_the_newest_desktop_runtime_wins(tmp_path):
+    from c2b.ui import wpf
+
+    for name in ("6.0.36", "8.0.2", "8.0.11", "not-a-version", "9.0.0"):
+        (tmp_path / name).mkdir()
+    assert wpf.desktop_runtimes(tmp_path)[0] == (9, 0, 0)
+    assert (8, 0, 11) in wpf.desktop_runtimes(tmp_path)
+    assert len(wpf.desktop_runtimes(tmp_path)) == 4, "a folder that is not a version is not one"
+
+
+def test_a_machine_with_no_desktop_runtime_says_so_rather_than_failing(tmp_path):
+    from c2b.ui import wpf
+
+    assert wpf.desktop_runtimes(tmp_path / "nothing here") == []
+
+
+def test_an_assembly_is_asked_for_every_way_a_dotnet_will_accept():
+    """.NET Framework's Assembly.Load does not search the GAC for a partial name, which is
+    what clr.AddReference("PresentationFramework") passes it. That one behaviour cost this
+    project four releases of looking in the wrong place."""
+    text = source("src", "c2b", "ui", "wpf.py")
+    body = text.split("def _add_reference")[1].split("\ndef ")[0]
+    assert "PublicKeyToken=" in body, "no strong name, so the GAC is never searched"
+    assert "gac_path(" in body, "no path, so a machine without a working strong name is stuck"
+    assert "Desktop Runtime" in body, "the failure does not say what to install"
+
+
+def test_every_assembly_a_wpf_window_needs_carries_its_token():
+    from c2b.ui.wpf import ASSEMBLIES
+
+    names = {name for name, _token in ASSEMBLIES}
+    assert names == {"PresentationFramework", "PresentationCore", "WindowsBase", "System.Xaml"}
+    for name, token in ASSEMBLIES:
+        assert len(token) == 16 and all(c in "0123456789abcdef" for c in token), name
+
+
+def test_the_gac_is_looked_in_where_dotnet_framework_actually_puts_things(tmp_path, monkeypatch):
+    from c2b.ui import wpf
+
+    monkeypatch.setenv("WINDIR", str(tmp_path))
+    folder = (tmp_path / "Microsoft.NET" / "assembly" / "GAC_MSIL" / "WindowsBase"
+              / "v4.0_4.0.0.0__31bf3856ad364e35")
+    folder.mkdir(parents=True)
+    (folder / "WindowsBase.dll").write_bytes(b"")
+    assert wpf.gac_path("WindowsBase", "31bf3856ad364e35") == folder / "WindowsBase.dll"
+    assert wpf.gac_path("WindowsBase", "b77a5c561934e089") is None, "the wrong token is not a match"
+    assert wpf.gac_path("NotThere", "31bf3856ad364e35") is None
+
+
+def test_the_xaml_is_parsed_from_a_stream_the_way_the_suite_does():
+    body = source("src", "c2b", "ui", "wpf.py").split("def load_window")[1].split("\ndef ")[0]
+    assert "MemoryStream" in body and "Encoding.UTF8" in body
+    assert "stream.Close()" in body
+
+
+def test_doctor_names_the_dotnet_behind_the_windows():
+    text = source("src", "c2b", "cli.py")
+    assert "_wpf.runtime()" in text
+    assert "desktop_runtimes()" in text, "the first thing to check is whether WPF is installed"

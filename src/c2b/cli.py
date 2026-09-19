@@ -62,10 +62,15 @@ def doctor(selftest: bool = typer.Option(True, "--selftest/--no-selftest", help=
     from .ui import wpf as _wpf
 
     if _wpf.available():
-        typer.secho(f"{'window':14s} branded (WPF)", fg=typer.colors.GREEN)
+        typer.secho(f"{'window':14s} branded (WPF) on {_wpf.runtime()}", fg=typer.colors.GREEN)
     else:
-        typer.secho(f"{'window':14s} plain (Tkinter) - {_wpf.why_not()}", fg=typer.colors.YELLOW)
-        typer.secho(f"{'':14s} fix with: pip install pythonnet", fg=typer.colors.YELLOW)
+        typer.secho(f"{'window':14s} plain (Tkinter)", fg=typer.colors.YELLOW)
+        for line in _wpf.why_not_in_full().splitlines():
+            typer.secho(f"{'':14s} {line}", fg=typer.colors.YELLOW)
+        found = _wpf.desktop_runtimes()
+        typer.secho(f"{'.NET desktop':14s} " + (", ".join(".".join(str(p) for p in v) for v in found)
+                                                if found else "none - WPF needs the .NET Desktop Runtime"),
+                    fg=typer.colors.YELLOW if not found else None)
 
     try:
         import matplotlib

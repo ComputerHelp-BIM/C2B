@@ -75,14 +75,19 @@ class C2BWindow(tk.Tk):
         if reason:
             banner = tk.Frame(self, background=t.WARNING_BADGE_BG)
             banner.pack(fill="x")
+            # pady on a widget is one number; the tuple form belongs to pack() and grid().
+            # Passing a tuple raises TclError("bad screen distance") and takes the window with
+            # it -- which, for a banner whose job is to report a failure, is the worst place
+            # in the program to get wrong.
             tk.Label(banner, background=t.WARNING_BADGE_BG, foreground=t.WARNING_BADGE_FG,
-                     justify="left", anchor="w", padx=14, pady=8, wraplength=940,
+                     justify="left", anchor="w", padx=14, wraplength=940,
                      font=("Segoe UI", 9, "bold"),
-                     text="PLAIN WINDOW  -  " + reason.splitlines()[0]).pack(fill="x")
+                     text="PLAIN WINDOW  -  " + reason.splitlines()[0]
+                     ).pack(fill="x", pady=(8, 0))
+            rest = "\n".join(line for line in reason.splitlines()[1:] if line.strip())
             tk.Label(banner, background=t.WARNING_BADGE_BG, foreground=t.WARNING_BADGE_FG,
-                     justify="left", anchor="w", padx=14, pady=(0, 8), wraplength=940,
-                     font=("Segoe UI", 9),
-                     text="\n".join(reason.splitlines()[1:])).pack(fill="x")
+                     justify="left", anchor="w", padx=14, wraplength=940,
+                     font=("Segoe UI", 9), text=rest).pack(fill="x", pady=(0, 8))
 
         top = ttk.Frame(self, padding=(14, 12, 14, 6))
         top.pack(fill="x")
