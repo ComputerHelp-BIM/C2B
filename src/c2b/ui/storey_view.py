@@ -62,6 +62,8 @@ class DisplayRow:
     severity: str = ""          # "ERROR" | "WARNING" | "" -- what to mark this row with
     flag: str = ""              # the one word the narrow column shows
     tooltip: str = ""           # the whole of it, for hovering over that word
+    repeat: int = 1             # how many levels this one row builds
+    build: bool = True          # ticked = built; unticked leaves the storey out
 
 
 @dataclass
@@ -70,6 +72,10 @@ class StoreyPresenter:
 
     schedule: StoreySchedule
     plan_floors: list[tuple[str, str]] = field(default_factory=list)   # (floor_id, name)
+    #: Storeys the drafter unticked. They stay in the table -- a storey you removed by mistake
+    #: should be one tick away from coming back, not a row you have to build again -- and they
+    #: are left out of everything downstream.
+    dropped: set[str] = field(default_factory=set)
 
     # ------------------------------------------------------------------ read
     def at(self, storey_id: str) -> int:
@@ -97,7 +103,8 @@ class StoreyPresenter:
                           is_base=r["is_base"], is_top=r["is_top"],
                           severity=worst.get(r["id"], ""),
                           flag=short_flag(r["source"], r["note"], worst.get(r["id"], "")),
-                          tooltip="; ".join(x for x in (r["source_words"], r["note"]) if x))
+                          tooltip="; ".join(x for x in (r["source_words"], r["note"]) if x),
+                          repeat=r["repeat"], build=r["id"] not in self.dropped)
                for r in self.schedule.rows()]
         out.reverse()
         return out
@@ -105,7 +112,7 @@ class StoreyPresenter:
     def worst_by_storey(self) -> dict[str, str]:
         """The most serious thing said about each storey, for marking its row."""
         worst: dict[str, str] = {}
-        for p in self.schedule.problems(self.plan_floor_ids()):
+        for p in self.built_schedule().problems(self.plan_floor_ids()):
             if p.storey_id and worst.get(p.storey_id) != "ERROR":
                 worst[p.storey_id] = p.severity
         return worst
@@ -115,7 +122,7 @@ class StoreyPresenter:
 
     def problem_lines(self) -> list[tuple[str, str]]:
         """Everything wrong with the stack, worst first, as (severity, message)."""
-        problems = self.schedule.problems(self.plan_floor_ids())
+        problems = self.built_schedule().problems(self.plan_floor_ids())
         order = {"ERROR": 0, "WARNING": 1}
         problems.sort(key=lambda p: order.get(p.severity, 2))
         return [(p.severity, p.message) for p in problems]
@@ -126,11 +133,14 @@ class StoreyPresenter:
         The count and the outcome sit together, and the badge never carries the meaning on its
         own -- the line beside it says the same thing in words.
         """
-        problems = self.schedule.problems(self.plan_floor_ids())
+        kept = self.built_schedule()
+        problems = kept.problems(self.plan_floor_ids())
         errors = sum(1 for p in problems if p.severity == "ERROR")
         warnings = len(problems) - errors
-        n = len(self.schedule)
-        stack = f"{n} {'storey' if n == 1 else 'storeys'}, {format_mm(self.schedule.total_height_mm())} mm overall"
+        n = kept.level_count()
+        stack = f"{n} {'level' if n == 1 else 'levels'}, {format_mm(kept.total_height_mm())} mm overall"
+        if self.dropped:
+            stack += f", {len(self.dropped)} left out"
         if errors:
             return "ERROR", "ERROR", f"{stack}. {errors} to fix before this can be built."
         if warnings:
@@ -139,7 +149,7 @@ class StoreyPresenter:
 
     def can_save(self) -> bool:
         """A stack with an error is not saved: it would fail in Revit instead, an hour later."""
-        return self.schedule.ok(self.plan_floor_ids())
+        return self.built_schedule().ok(self.plan_floor_ids())
 
     # ----------------------------------------------------------------- edits
     def set_name(self, storey_id: str, text: str) -> str:
@@ -166,6 +176,33 @@ class StoreyPresenter:
     def set_plan(self, storey_id: str, floor_id: str | None) -> str:
         self.schedule.set_plan(self.at(storey_id), floor_id)
         return ""
+
+    def set_plan_label(self, storey_id: str, label: str) -> str:
+        """Set the plan from the label a dropdown shows, which is what a bound combo gives."""
+        return self.set_plan(storey_id, dict(self.plan_choices()).get(label))
+
+    def set_repeat(self, storey_id: str, text) -> str:
+        """How many levels this one row builds. A typical floor drawn once, built eight times."""
+        times = parse_mm(text if isinstance(text, str) else str(text))
+        if times is None or times < 1:
+            return f"'{str(text).strip()}' is not a number of storeys."
+        self.schedule.set_repeat(self.at(storey_id), int(times))
+        return ""
+
+    def set_build(self, storey_id: str, build: bool) -> str:
+        """Tick or untick a storey. An unticked one stays in the table and out of the model."""
+        self.at(storey_id)                       # a storey that is not there is a bug, not a no-op
+        if build:
+            self.dropped.discard(storey_id)
+        else:
+            self.dropped.add(storey_id)
+        return ""
+
+    def built_schedule(self) -> StoreySchedule:
+        """The schedule with the unticked storeys left out -- what is actually saved."""
+        kept = self.schedule.model_copy(deep=True)
+        kept.storeys = [x for x in kept.storeys if x.id not in self.dropped]
+        return kept
 
     def set_default_height(self, text: str) -> str:
         value = parse_mm(text)

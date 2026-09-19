@@ -260,6 +260,12 @@ class C2BWindow:
         wpf.find(self.window, "BtnStoreys").Visibility = (
             Visibility.Visible if self.presenter.can_edit_storeys() else Visibility.Collapsed)
 
+        # What it cost, once the results are on screen behind it.
+        if result.timing:
+            from ..ui import show_elapsed
+
+            show_elapsed(result.timing, owner_handle=_handle(self.window))
+
         host = wpf.find(self.window, "ActionsHost")
         for text, path in self.presenter.actions():
             button = Button()
@@ -373,18 +379,15 @@ class C2BWindow:
         return self.window.FindResource(key)
 
     def show(self) -> None:
-        """Run the window's message loop.
+        """Run the window until it is closed.
 
-        A process holds at most one ``Application``; constructing a second throws. Reuse the
-        one that is there -- inside Revit there always is -- and only then start a loop.
+        ``ShowDialog`` and not ``Application().Run``. A ``Application`` is a process-wide
+        singleton -- a second one throws, and inside Revit there is already one -- while
+        ``ShowDialog`` pumps its own nested message loop and needs no application object at
+        all. It is also what every tool in the suite uses, which is the stronger argument:
+        the first build called ``Application().Run`` and the window never appeared.
         """
-        from System.Windows import Application
-
-        existing = Application.Current
-        if existing is not None:
-            self.window.Show()
-            return
-        Application().Run(self.window)
+        self.window.ShowDialog()
 
 
 def _handle(window) -> int | None:

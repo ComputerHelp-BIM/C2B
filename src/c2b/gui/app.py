@@ -254,6 +254,12 @@ class C2BWindow(tk.Tk):
         for label, path in self.presenter.actions():
             ttk.Button(self.actions, text=label, command=lambda p=path: _open(p)).pack(side="left", padx=(0, 8), pady=6)
 
+        # What it cost, once the results are on screen behind it.
+        if result.timing:
+            from ..ui import show_elapsed
+
+            show_elapsed(result.timing, parent=self)
+
     # ---------------------------------------------------------------- storeys
     def _edit_storeys(self) -> None:
         """Add, remove, move, repeat and size the building's storeys, then run again.

@@ -17,8 +17,11 @@ A drafter who prefers to type elevations still can -- :meth:`StoreySchedule.set_
 turns one into the height that produces it and leaves the storeys above where they are.
 
 **One CAD plan can serve several storeys.** That is a typical floor: the drawing has one
-layout, the building has eight of them. :meth:`StoreySchedule.repeat` is that operation, and
-the rest of C2B already understands it (``NFloor.levels`` is a list).
+layout, the building has eight of them. A storey therefore carries a ``repeat`` count, and one
+*row* of the schedule builds that many levels -- which is how a drawing says it in the first
+place ("TYPICAL FLOOR PLAN (2ND TO 8TH FLOOR)") and how the firm's other tools show it.
+:meth:`StoreySchedule.expanded` is where a row becomes the levels it stands for; everything
+downstream -- ``levels.xlsx``, the Revit plan -- reads the expansion, never the rows.
 """
 from __future__ import annotations
 
@@ -44,6 +47,35 @@ DEFAULT_HEIGHT_MM = 3000.0
 MIN_HEIGHT_MM = 1.0
 
 StoreySource = Literal["cad", "hint", "levels", "added", "repeat"]
+
+
+def s_repeat(storey) -> int:
+    """A storey's repeat count, tolerating a sidecar written before the field existed."""
+    return int(getattr(storey, "repeat", 1) or 1)
+
+
+def _count_on(name: str, k: int, taken: set[str]) -> str:
+    """The k-th name after ``name``, counting on the way a repeat always has."""
+    out = name
+    for _ in range(k):
+        out = _next_name(out)
+    while out.strip().upper() in taken:
+        out = _next_name(out)
+    return out
+
+
+def _next_name(like: str) -> str:
+    """The name one after this one: "3rd Floor" -> "4th Floor", "LEVEL 01" -> "LEVEL 02"."""
+    match = re.search(r"^(.*?)(\d+)(\D*)$", like.strip())
+    if not match:
+        return f"{like.strip()} 2" if not like.strip().endswith(" 2") else f"{like.strip()[:-2]}3"
+    head, number, tail = match.group(1), int(match.group(2)), match.group(3)
+    width = len(match.group(2))
+    ordinal = re.match(r"(st|nd|rd|th)\b", tail, re.I)
+    if ordinal:
+        suffix = _ordinal_suffix(number + 1)
+        tail = (suffix.upper() if ordinal.group(1).isupper() else suffix) + tail[2:]
+    return f"{head}{number + 1:0{width}d}{tail}"
 
 
 def _ordinal_suffix(n: int) -> str:
@@ -74,6 +106,10 @@ class Storey(BaseModel):
     id: str                                  # stable for the life of the schedule; never reused
     name: str                                # what the drafter calls it; the Revit level is named from this
     height_mm: float = DEFAULT_HEIGHT_MM     # rise from the storey below. Not used by the lowest storey.
+    #: How many levels this one row builds. A typical floor drawn once and repeated eight
+    #: times is one row with repeat 8, not eight rows -- which is what the drawing says and
+    #: what the firm's other tools show.
+    repeat: int = 1
     plan_floor_id: str | None = None         # the CAD floor plan built on this storey, if any
     source: StoreySource = "added"
     note: str = ""
@@ -105,14 +141,46 @@ class StoreySchedule(BaseModel):
         return len(self.storeys)
 
     def elevations(self) -> list[float]:
-        """Elevation of every storey, lowest first. Derived, never stored."""
+        """Elevation of the first level each row builds, lowest first. Derived, never stored.
+
+        A row with a repeat of 8 occupies eight storeys' worth of height, so the row above it
+        starts that much higher -- this is the elevation of the row, not of the top of it.
+        """
         out: list[float] = []
         z = self.base_elevation_mm
         for i, s in enumerate(self.storeys):
             if i:
-                z += s.height_mm
+                z += s.height_mm + self.storeys[i - 1].height_mm * (max(s_repeat(self.storeys[i - 1]), 1) - 1)
             out.append(z)
         return out
+
+    def expanded(self) -> list[tuple[str, float, str | None, str]]:
+        """Every level the schedule builds: ``(name, elevation, plan floor id, storey id)``.
+
+        A row's repeat becomes that many levels here, named by counting on from the row's own
+        name the way a repeat always has. This is what ``levels.xlsx`` and the Revit plan are
+        built from -- the rows are what a person edits, and this is what the building is.
+        """
+        out: list[tuple[str, float, str | None, str]] = []
+        z = self.base_elevation_mm
+        # Every row's own name is spoken for before a single repeat is counted out. A repeat of
+        # "1F" three times would otherwise generate "3F" while a row further up is already
+        # called that, and Revit will not hold two levels of one name.
+        taken: set[str] = {x.name.strip().upper() for x in self.storeys}
+        for i, storey in enumerate(self.storeys):
+            if i:
+                z += storey.height_mm
+            for k in range(max(s_repeat(storey), 1)):
+                if k:
+                    z += storey.height_mm
+                name = storey.name if k == 0 else _count_on(storey.name, k, taken)
+                taken.add(name.strip().upper())
+                out.append((name, z, storey.plan_floor_id, storey.id))
+        return out
+
+    def level_count(self) -> int:
+        """How many Revit levels the schedule builds, repeats included."""
+        return sum(max(s_repeat(x), 1) for x in self.storeys)
 
     def rows(self) -> list[dict]:
         """The schedule as plain rows, for a table in a window or a workbook.
@@ -125,6 +193,7 @@ class StoreySchedule(BaseModel):
         return [{"n": i, "id": s.id, "name": s.name,
                  "height_mm": None if i == 0 else s.height_mm,
                  "elevation_mm": elevs[i],
+                 "repeat": max(s_repeat(s), 1),
                  "plan_floor_id": s.plan_floor_id,
                  "source": s.source, "source_words": s.source_words,
                  "note": s.note, "is_base": i == 0, "is_top": i == top}
@@ -137,8 +206,9 @@ class StoreySchedule(BaseModel):
         raise KeyError(f"no storey {storey_id!r} in this schedule")
 
     def total_height_mm(self) -> float:
-        elevs = self.elevations()
-        return (elevs[-1] - elevs[0]) if elevs else 0.0
+        """Lowest level to highest, repeats included."""
+        levels = self.expanded()
+        return (levels[-1][1] - levels[0][1]) if levels else 0.0
 
     # ----------------------------------------------------------------- write
     def _mint_id(self) -> str:
@@ -232,6 +302,11 @@ class StoreySchedule(BaseModel):
             self.base_elevation_mm = float(elevation_mm)
         else:
             self.storeys[index].height_mm = float(elevation_mm) - self.elevations()[index - 1]
+
+    def set_repeat(self, index: int, times: int) -> None:
+        """How many levels this row builds. One is an ordinary storey."""
+        self._check_index(index)
+        self.storeys[index].repeat = max(1, int(times))
 
     def set_plan(self, index: int, plan_floor_id: str | None) -> None:
         """Say which drawn floor plan is built on this storey."""
@@ -358,11 +433,11 @@ class StoreySchedule(BaseModel):
         """
         from .normalize.pipeline import LevelRow
 
-        elevs = self.elevations()
+        levels = self.expanded()
         rows = []
-        for i, s in enumerate(self.storeys):
-            nxt = self.storeys[i + 1].height_mm if i + 1 < len(self.storeys) else None
-            rows.append(LevelRow(s.plan_floor_id, s.name, i, elevs[i], nxt, s.name))
+        for i, (name, elevation, plan_floor_id, _sid) in enumerate(levels):
+            nxt = (levels[i + 1][1] - elevation) if i + 1 < len(levels) else None
+            rows.append(LevelRow(plan_floor_id, name, i, elevation, nxt, name))
         return rows
 
 

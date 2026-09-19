@@ -15,7 +15,7 @@ import pytest
 from c2b.ui import theme as t
 from c2b.ui import xaml
 
-LAYOUTS = ["storey_editor", "main_window"]
+LAYOUTS = ["storey_editor", "main_window", "elapsed"]
 
 _COMMENT = re.compile(r"<!--.*?-->", re.S)
 _HEX = re.compile(r"#[0-9A-Fa-f]{6}\b")
@@ -172,17 +172,29 @@ def test_the_storey_editor_offers_what_is_not_about_one_storey():
     built in Python -- test_storey_wpf.py checks they are all there.
     """
     markup = xaml.layout_path("storey_editor").read_text(encoding="utf-8")
-    for control in ("BtnAdd", "BtnAddBottom", "DefaultHeight", "RowsHost", "BtnSave",
-                    "BtnCancel", "StatusBadge", "StatusLine", "ProblemsHost"):
+    for control in ("BtnAdd", "BtnAddBottom", "BtnUp", "BtnDown", "BtnRemove", "DefaultHeight",
+                    "StoreyGrid", "BtnSave", "BtnCancel", "StatusBadge", "StatusLine",
+                    "ProblemsHost", "SelectionText"):
         assert f'x:Name="{control}"' in markup, f"the window has no {control}"
 
 
-def test_the_window_opens_at_the_height_its_content_needs():
-    """5.5, and the reason nobody has to drag the frame open to reach Save."""
+def test_the_storey_table_has_every_column_the_brief_asked_for():
     markup = xaml.layout_path("storey_editor").read_text(encoding="utf-8")
-    assert 'SizeToContent="Height"' in markup
-    assert "MaxHeight=" in markup, "a tall building would otherwise open past the screen"
-    assert "MinHeight=" not in markup, "a minimum height fights SizeToContent"
+    for header in ("Build", "No.", "Storey", "Height mm", "Elevation mm", "Built from",
+                   "Repeat", "Note"):
+        assert f'Header="{header}"' in markup, f"the table has no {header} column"
+
+
+def test_every_window_opens_big_enough_to_use():
+    """5.5: a tool window has an explicit width and a height it can be resized from; a dialog
+    is a fixed width that grows to its content. A table that scrolls needs a height of its own
+    -- a thirteen-storey tower would otherwise open taller than the screen."""
+    for name in LAYOUTS:
+        markup = without_comments(xaml.layout_path(name).read_text(encoding="utf-8"))
+        assert 'Width="' in markup
+        fixed = 'ResizeMode="NoResize"' in markup
+        assert fixed or 'MinWidth="' in markup, f"{name} can be dragged to nothing"
+        assert 'MinHeight="' in markup or 'SizeToContent="Height"' in markup
 
 
 def test_the_table_uses_compact_density_not_the_dialog_size():
@@ -269,4 +281,7 @@ def test_no_layout_declares_a_font_or_a_colour_of_its_own():
     for name in LAYOUTS:
         body = without_comments(xaml.layout_path(name).read_text(encoding="utf-8")).split("</Window.Resources>")[1]
         assert "FontFamily=" not in body and "FontSize=" not in body
-        assert _HEX.findall(body) == []
+        # 12.7.H forces four literal system-colour overrides at a DataGrid's own scope; there
+        # is no resource-key form of them.
+        stray = [h for h in _HEX.findall(body) if h.upper() not in ("#FEF2F2", "#141414")]
+        assert stray == [], stray

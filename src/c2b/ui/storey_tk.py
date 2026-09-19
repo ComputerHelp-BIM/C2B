@@ -114,9 +114,10 @@ class StoreyEditorTk(tk.Toplevel):
 
         columns = tk.Frame(self, background=t.CHARCOAL_BLACK)
         columns.pack(fill="x", padx=t.SPACE_MD)
-        for text, width, anchor in (("#", 3, "w"), ("Storey", 22, "w"), ("Height", 9, "e"),
-                                    ("Elevation", 11, "e"), ("Built from", 20, "w"),
-                                    ("Note", 10, "w"), ("This storey", 26, "w")):
+        for text, width, anchor in (("Build", 5, "w"), ("#", 3, "w"), ("Storey", 20, "w"),
+                                    ("Height", 9, "e"), ("Elevation", 11, "e"),
+                                    ("Built from", 18, "w"), ("Rpt", 4, "e"),
+                                    ("Note", 9, "w"), ("This storey", 24, "w")):
             tk.Label(columns, text=text, width=width, anchor=anchor, background=t.CHARCOAL_BLACK,
                      foreground=t.PURE_WHITE, font=self._f_h3, padx=4, pady=4).pack(side="left")
 
@@ -158,11 +159,15 @@ class StoreyEditorTk(tk.Toplevel):
             for row in self.presenter.rows():
                 line = ttk.Frame(self.rows_host, style="C2B.TFrame")
                 line.pack(fill="x", pady=1)
+                build = tk.BooleanVar(value=row.build)
+                tk.Checkbutton(line, variable=build, width=3, background=t.PURE_WHITE,
+                               activebackground=t.PURE_WHITE,
+                               selectcolor=t.PURE_WHITE).pack(side="left")
                 tk.Label(line, text=str(row.number), width=3, anchor="w", background=t.PURE_WHITE,
                          foreground=t.MID_GREY, font=self._f_mono, padx=4).pack(side="left")
 
                 name = tk.StringVar(value=row.name)
-                ttk.Entry(line, textvariable=name, width=22, font=self._f_small).pack(side="left", padx=2)
+                ttk.Entry(line, textvariable=name, width=20, font=self._f_small).pack(side="left", padx=2)
                 height = tk.StringVar(value=row.height_text)
                 entry = ttk.Entry(line, textvariable=height, width=9, justify="right", font=self._f_mono)
                 entry.pack(side="left", padx=2)
@@ -172,9 +177,12 @@ class StoreyEditorTk(tk.Toplevel):
                 ttk.Entry(line, textvariable=elevation, width=11, justify="right",
                           font=self._f_mono).pack(side="left", padx=2)
                 plan = tk.StringVar(value=row.plan_label)
-                ttk.Combobox(line, textvariable=plan, values=labels, width=20, state="readonly",
+                ttk.Combobox(line, textvariable=plan, values=labels, width=18, state="readonly",
                              font=self._f_small).pack(side="left", padx=2)
-                tk.Label(line, anchor="w", width=10, background=t.PURE_WHITE, padx=4, font=self._f_caption,
+                repeat = tk.StringVar(value=str(row.repeat))
+                ttk.Entry(line, textvariable=repeat, width=4, justify="right",
+                          font=self._f_mono).pack(side="left", padx=2)
+                tk.Label(line, anchor="w", width=9, background=t.PURE_WHITE, padx=4, font=self._f_caption,
                          foreground=(t.ERROR_RED if row.severity == "ERROR" else
                                      t.CAUTION_AMBER if row.severity == "WARNING" else t.MID_GREY),
                          text=row.flag).pack(side="left")
@@ -205,7 +213,8 @@ class StoreyEditorTk(tk.Toplevel):
                            ).pack(side="left", padx=(t.SPACE_SM, 0))
 
                 self._fields[row.storey_id] = {"name": name, "height": height, "elevation": elevation,
-                                               "plan": plan, "height_was": row.height_text,
+                                               "plan": plan, "repeat": repeat, "build": build,
+                                               "height_was": row.height_text,
                                                "elevation_was": row.elevation_text}
             self._show_problems()
             self._show_status()
@@ -220,6 +229,8 @@ class StoreyEditorTk(tk.Toplevel):
         for storey_id, f in list(self._fields.items()):
             self.presenter.set_name(storey_id, f["name"].get())
             self.presenter.set_plan(storey_id, choices.get(f["plan"].get()))
+            self.presenter.set_repeat(storey_id, f["repeat"].get())
+            self.presenter.set_build(storey_id, bool(f["build"].get()))
         for storey_id, f in self._ordered_fields():
             text = f["height"].get()
             if text.strip() and text != f["height_was"]:

@@ -481,3 +481,94 @@ def test_a_number_that_is_not_an_ordinal_keeps_whatever_follows_it():
     s = stack(0, names=["LEVEL 01 (PODIUM)"])
     s.repeat(0, times=1)
     assert s.storeys[1].name == "LEVEL 02 (PODIUM)"
+
+
+# --------------------------------------- one row builds several levels (repeat)
+
+def test_a_row_with_no_repeat_builds_one_level():
+    s = stack(0, 3000, names=["GF", "1F"])
+    assert s.level_count() == 2
+    assert [name for name, _z, _p, _i in s.expanded()] == ["GF", "1F"]
+
+
+def test_a_repeat_column_builds_that_many_levels_from_one_row():
+    """The drawing says "TYPICAL FLOOR PLAN (2ND TO 8TH)"; that is one row, seven levels."""
+    s = stack(0, 2500, 3000, names=["FOUNDATION", "GF", "2nd Floor"])
+    s.set_repeat(2, 7)
+    s.add(name="TERRACE", height_mm=3000, plan_floor_id="F09")
+    assert s.level_count() == 10
+    names = [name for name, _z, _p, _i in s.expanded()]
+    assert names[2:9] == ["2nd Floor", "3rd Floor", "4th Floor", "5th Floor",
+                          "6th Floor", "7th Floor", "8th Floor"]
+    assert names[-1] == "TERRACE"
+
+
+def test_every_level_a_repeat_builds_is_one_height_above_the_last():
+    s = stack(0, 3000, names=["GF", "1F"])
+    s.set_repeat(1, 4)
+    assert [z for _n, z, _p, _i in s.expanded()] == [0, 3000, 6000, 9000, 12000]
+
+
+def test_the_row_above_a_repeat_starts_above_all_of_it():
+    s = stack(0, 3000, 3000, names=["GF", "TYPICAL 1", "ROOF"])
+    s.set_repeat(1, 5)
+    assert s.elevations() == [0, 3000, 18000]
+    assert s.expanded()[-1][0] == "ROOF"
+    assert s.expanded()[-1][1] == 18000
+
+
+def test_every_level_a_repeat_builds_uses_the_one_drawn_plan():
+    s = stack(0, 3000, names=["GF", "1F"])
+    s.set_repeat(1, 4)
+    assert [p for _n, _z, p, _i in s.expanded()] == ["F00", "F01", "F01", "F01", "F01"]
+
+
+def test_a_repeat_never_names_two_levels_the_same():
+    s = stack(0, 3000, 3000, names=["GF", "1F", "3F"])
+    s.set_repeat(1, 3)               # 1F, 2F, 3F -- but 3F is already a row of its own
+    names = [name for name, _z, _p, _i in s.expanded()]
+    assert len(names) == len(set(names)), names
+
+
+def test_the_total_height_counts_the_repeats():
+    s = stack(0, 3000, names=["GF", "1F"])
+    s.set_repeat(1, 4)
+    assert s.total_height_mm() == 12000
+
+
+def test_a_repeat_reaches_the_level_rows_the_pipeline_takes():
+    s = stack(0, 3000, names=["GF", "1F"])
+    s.set_repeat(1, 3)
+    rows = s.level_rows()
+    assert len(rows) == 4
+    assert [r.elevation for r in rows] == [0, 3000, 6000, 9000]
+    assert [r.floor_id for r in rows] == ["F00", "F01", "F01", "F01"]
+    assert [r.f2f for r in rows] == [3000, 3000, 3000, None]
+
+
+def test_a_repeat_of_less_than_one_is_still_one_level():
+    s = stack(0, 3000)
+    s.set_repeat(1, 0)
+    assert s.storeys[1].repeat == 1 and s.level_count() == 2
+
+
+def test_the_repeat_shows_in_the_row_a_window_draws():
+    s = stack(0, 3000)
+    s.set_repeat(1, 6)
+    assert [r["repeat"] for r in s.rows()] == [1, 6]
+
+
+def test_a_sidecar_written_before_repeat_existed_still_opens(tmp_path):
+    """An older .storeys.json has no repeat field; it is one level per row, as it was."""
+    import json
+
+    s = stack(0, 3000)
+    path = s.save(tmp_path / "old.json")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    for storey in data["storeys"]:
+        storey.pop("repeat", None)
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    back = StoreySchedule.load(path)
+    assert back.level_count() == 2
+    assert all(x.repeat == 1 for x in back.storeys)

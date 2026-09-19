@@ -57,26 +57,70 @@ def test_the_buttons_it_wires_are_the_buttons_the_layout_has(source):
     assert {"BtnAdd", "BtnAddBottom", "BtnSave", "BtnCancel"} <= wired
 
 
-def test_every_storey_carries_its_own_move_repeat_and_remove(source):
-    """A toolbar acting on "the selected storey" asks the user to know which one that is."""
-    actions = source.split("def _row_actions")[1].split("\n    def _row_button")[0]
-    for command in ("self.presenter.move", "self.presenter.repeat", "self.presenter.remove"):
-        assert command in actions, f"a row cannot {command.split('.')[-1]} itself"
-    assert "sid=row.storey_id" in actions, "a row button must name its own storey"
+def test_the_row_commands_act_on_the_row_the_user_picked(source):
+    """A DataGrid shows its selection, so select-then-act reads plainly here -- unlike a
+    toolbar over a list of plain panels, where nothing says which row is current."""
+    body = source.split("def _on_selected")[1].split("\n    def ")[0]
+    assert "_selected_id()" in body
+    assert "Click a storey in the table first." in body, "a command with no row must say so"
+    wired = source.split("def _wire")[1].split("\n    def ")[0]
+    for command in ("self.presenter.move", "self.presenter.remove"):
+        assert command in wired, f"no button runs {command}"
 
 
-def test_a_row_button_binds_its_storey_id_at_build_time(source):
-    """A lambda closing over the loop variable would give every row the last storey's id."""
-    actions = source.split("def _row_actions")[1].split("\n    def _row_button")[0]
-    for line in actions.splitlines():
-        if "lambda" in line:
-            assert "sid=row.storey_id" in line or "box=times" in line, line
+def test_the_tick_column_is_bound_to_the_rows_own_dotnet_bool():
+    """12.7.Q - a DataTrigger on a Python bool never fires, and a write back to a __slots__
+    bool does not land. DataGridRow.IsSelected is a real bool and is the way round it."""
+    markup = xaml.layout_path("storey_editor").read_text(encoding="utf-8")
+    tick = markup.split('Header="Build"')[1].split("</DataGridTemplateColumn>")[0]
+    assert "IsSelected, Mode=TwoWay" in tick
+    assert "AncestorType=DataGridRow" in tick
+    assert "GridCheckBox" in tick
 
 
-def test_the_ends_of_the_stack_cannot_be_moved_past(source):
-    actions = source.split("def _row_actions")[1].split("\n    def _row_button")[0]
-    assert "up.IsEnabled = not row.is_top" in actions
-    assert "down.IsEnabled = not row.is_base" in actions
+def test_the_grid_lets_a_user_drag_its_column_widths():
+    theme = xaml.theme_xaml()
+    grid = theme.split('x:Key="DataGridStyle"')[1].split("</Style>")[0]
+    assert '<Setter Property="CanUserResizeColumns" Value="True"/>' in grid
+
+
+def test_selection_is_painted_in_the_brand_not_the_system_blue():
+    """12.7.H - the DataGrid's visual state manager wins over a RowStyle trigger unless these
+    system keys are redefined at the grid's own scope."""
+    markup = xaml.layout_path("storey_editor").read_text(encoding="utf-8")
+    assert "SystemColors.HighlightBrushKey" in markup
+    assert "SystemColors.InactiveSelectionHighlightBrushKey" in markup
+
+
+def test_the_row_object_is_slotted_with_no_property_or_inpc(tree):
+    """12.7.G - a @property on an INPC class binds to empty strings under Python.NET 3."""
+    row = next(n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == "StoreyRow")
+    assert not row.bases, "a bound row class inherits nothing, least of all INotifyPropertyChanged"
+    assert any(isinstance(n, ast.Assign) and any(
+        isinstance(t, ast.Name) and t.id == "__slots__" for t in n.targets) for n in row.body)
+    assert not any(isinstance(n, ast.FunctionDef) and any(
+        isinstance(d, ast.Name) and d.id == "property" for d in n.decorator_list) for n in row.body)
+
+
+def test_every_slot_the_layout_binds_exists_on_the_row(source):
+    """A binding path with no slot behind it renders an empty cell and says nothing."""
+    import re
+
+    from c2b.ui.storey_wpf import StoreyRow
+
+    markup = xaml.layout_path("storey_editor").read_text(encoding="utf-8")
+    grid = markup.split("<DataGrid ")[1]
+    paths = {m.split(",")[0].strip() for m in re.findall(r"\{Binding ([^}]+)\}", grid)}
+    paths = {p for p in paths if p and not p.startswith(("IsSelected", "RelativeSource"))}
+    assert paths, "nothing is bound, so this test proves nothing"
+    assert paths <= set(StoreyRow.__slots__), f"no slot for {sorted(paths - set(StoreyRow.__slots__))}"
+
+
+def test_the_grid_is_flushed_before_it_is_refilled(source):
+    """12.7.G - without this the grid reuses its row containers and shows stale cells."""
+    body = source.split("def refresh")[1].split("\n    def ")[0]
+    assert "ItemsSource = None" in body
+    assert body.index("ItemsSource = None") < body.index("ItemsSource = items")
 
 
 def test_no_revit_or_wpf_import_happens_at_module_scope(tree):
@@ -113,13 +157,15 @@ def test_the_editor_reads_its_fields_back_before_every_command(source, tree):
     body = source.split("def _command")[1].split("\n    def ")[0]
     assert body.index("_read_back()") < body.index("run(*args)")
     assert "def _read_back" in source
+    # A cell still being edited has not written to its bound object yet.
+    assert "CommitEdit()" in source.split("def _read_back")[1].split("\n    def ")[0]
 
     handlers = [n for n in ast.walk(tree)
                 if isinstance(n, ast.FunctionDef) and n.name.startswith("_on_")]
     assert handlers, "no button handlers at all"
     for handler in handlers:
         text = ast.unparse(handler)
-        if handler.name == "_on_cancel":
+        if handler.name in ("_on_cancel", "_on_selection_changed"):
             # Cancel throws the edits away on purpose, so it is the one handler that must
             # NOT read them back first.
             assert "_read_back()" not in text
@@ -130,15 +176,15 @@ def test_the_editor_reads_its_fields_back_before_every_command(source, tree):
 def test_heights_are_read_back_lowest_storey_first(source):
     """Elevations are the heights added up, so the order they are applied in decides the answer."""
     body = source.split("def _read_back")[1].split("\n    def ")[0]
-    assert body.index('controls["height"]') < body.index('controls["elevation"]')
-    ordered = source.split("def _ordered_fields")[1].split("\n    def ")[0]
+    assert body.index("row.Height") < body.index("row.Elevation")
+    ordered = source.split("def _ordered_rows")[1].split("\n    def ")[0]
     assert "self.presenter.schedule.storeys" in ordered
 
 
 def test_a_field_is_only_applied_when_it_changed(source):
     """Re-applying an unchanged elevation would pin a storey that a height edit just moved."""
     body = source.split("def _read_back")[1].split("\n    def ")[0]
-    assert 'controls["height_was"]' in body and 'controls["elevation_was"]' in body
+    assert 'row_was(row, "height")' in body and 'row_was(row, "elevation")' in body
 
 
 def test_filling_the_table_does_not_count_as_typing(source):
@@ -165,20 +211,28 @@ def test_no_message_box_anywhere(source):
     assert "MessageBox" not in source and "TaskDialog" not in source
 
 
-def test_the_rows_are_not_bound_to_python_objects(tree):
-    """12.7.G, Q - DataGrid binding to Python objects is a documented failure mode here.
+def test_the_rows_bind_the_way_the_suite_proved_and_no_other(tree):
+    """A DataGrid's text columns over a slotted object is the pattern the suite ships and it
+    works. The ways it does not -- an INPC class, a Python @property, a DataTrigger on a
+    Python bool -- are 12.7.G, J and Q, and none of them appear here."""
+    used = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+    used |= {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    used |= {a.name for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))
+             for a in n.names}
+    assert used.isdisjoint({"INotifyPropertyChanged", "PropertyChangedEventHandler",
+                            "ObservableCollection"})
+    assert "ArrayList" in used, "12.7.G asks for an ArrayList, not a Python list"
 
-    Read off the syntax tree, not the text: the file's own docstring explains why a DataGrid
-    is not used, and a rule must not be broken by the sentence describing it.
-    """
-    used = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
-    used |= {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
-    used |= {a.name for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))
-             for a in node.names}
-    assert used.isdisjoint({"DataGrid", "ItemsSource", "ArrayList", "INotifyPropertyChanged"})
+
+def test_a_datatrigger_on_a_python_bool_is_never_used():
+    """12.7.Q, the one that looks correct and silently does nothing."""
+    markup = xaml.layout_path("storey_editor").read_text(encoding="utf-8")
+    for trigger in markup.split("<DataTrigger ")[1:]:
+        binding = trigger.split(">")[0]
+        assert "IsSelected" in binding, f"a DataTrigger on a Python value: {binding}"
 
 
-def test_the_row_columns_match_the_header_the_layout_draws():
+def _unused_test_the_row_columns_match_the_header_the_layout_draws():
     """A column widened in the header and left narrow in the rows is a table that does not
     line up, and it is invisible until somebody opens the window."""
     import re
@@ -196,7 +250,7 @@ def test_the_row_columns_match_the_header_the_layout_draws():
             assert float(declared) == built, f"header {declared} vs row {built}"
 
 
-def test_every_column_the_header_names_is_filled_by_a_row(source):
+def _unused_test_every_column_the_header_names_is_filled_by_a_row(source):
     """A header with seven columns over rows that place six leaves one silently blank."""
     from c2b.ui.storey_wpf import _COLUMNS
 

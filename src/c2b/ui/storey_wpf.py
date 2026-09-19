@@ -1,40 +1,68 @@
 """The storey editor as a WPF window, driven from Python.
 
-The layout is ``storey_editor.xaml``; this builds the rows into it and wires the buttons.
+The layout is ``storey_editor.xaml``; this fills its ``DataGrid`` and wires the buttons.
 Everything it decides it asks :class:`~c2b.ui.storey_view.StoreyPresenter`, so this file is
 only the part that cannot be tested without WPF -- and is kept small for exactly that reason.
 
-**No data binding.** A building has a dozen storeys, so the rows are made as real controls and
-read back through ``.Text``. That is not a shortcut: §12.7.G, H, J, K and Q of the brand guide
-are all ways a ``DataGrid`` bound to Python objects fails under pythonnet, from blank cells to
-a checkbox that will not tick. None of them can happen to a ``TextBox`` whose text Python put
-there and reads back itself.
+**Binding, carefully.** The grid's text columns bind to a ``__slots__`` row object, which is
+the pattern the suite already ships (§12.7.G). Two things it does *not* do:
 
-**Each row acts on itself.** Repeat, Move and Remove are buttons in the row they affect, so
-there is never a question of which storey a command is about.
+* the Build tick is bound to the row's own ``IsSelected`` -- a real .NET bool -- because
+  §12.7.Q is explicit that a ``DataTrigger`` on a Python bool never fires and a write back to
+  a ``__slots__`` bool does not land;
+* every value is read back through the presenter, which parses it and either applies it or
+  reports it. A write-back that silently did not happen therefore leaves the value unchanged
+  rather than corrupting the stack.
 """
 from __future__ import annotations
 
 from typing import Any
 
-from . import theme as t
 from . import wpf
-from .storey_view import StoreyPresenter
+from .storey_view import StoreyPresenter, format_mm
 
 #: Names the layout file gives the controls this module drives.
-_BUTTONS = ("BtnAdd", "BtnAddBottom", "BtnSave", "BtnCancel")
+_BUTTONS = ("BtnUp", "BtnDown", "BtnAdd", "BtnAddBottom", "BtnRemove", "BtnSave", "BtnCancel")
 
 _BADGE_BRUSH = {"ERROR": ("BrushErrorBadgeBackground", "BrushErrorBadgeForeground"),
                 "WARNING": ("BrushWarningBadgeBackground", "BrushWarningBadgeForeground"),
                 "SUCCESS": ("BrushSuccessBadgeBackground", "BrushSuccessBadgeForeground"),
                 "INFO": ("BrushInfoBadgeBackground", "BrushInfoBadgeForeground")}
 
-#: The columns of a row, matching ``HeaderRow`` in the layout file. Kept here as one list so a
-#: column cannot be widened in the header and left narrow in the rows. A test reads both.
-_COLUMNS = (30.0, None, 82.0, 92.0, 168.0, 86.0, 188.0)
-_ROW_MIN_WIDTH = 150.0
-#: Compact density (§5.4): a data row is 26px of content, as the suite's DataGrid ships.
-_ROW_HEIGHT = 26.0
+
+class StoreyRow:
+    """One row of the grid, as WPF binds to it.
+
+    ``__slots__`` and no ``INotifyPropertyChanged``: §12.7.G is explicit that a Python
+    ``@property`` on an INPC class binds to empty strings under Python.NET 3, and that a plain
+    slotted object in an ``ArrayList`` is what works. Slot names are the binding paths in the
+    XAML and are case-sensitive.
+    """
+
+    __slots__ = [
+        "Build",
+        "Elevation",
+        "Flag",
+        "Height",
+        "Name",
+        "Number",
+        "Plan",
+        "PlanChoices",
+        "Repeat",
+        "StoreyId",
+    ]
+
+    def __init__(self, row, choices) -> None:
+        self.StoreyId = row.storey_id
+        self.Number = str(row.number)
+        self.Name = row.name
+        self.Height = "" if row.is_base else row.height_text
+        self.Elevation = row.elevation_text
+        self.Plan = row.plan_label
+        self.PlanChoices = choices
+        self.Repeat = str(row.repeat)
+        self.Flag = row.flag
+        self.Build = row.build
 
 
 class StoreyEditorWindow:
@@ -42,17 +70,16 @@ class StoreyEditorWindow:
 
     A fresh instance per opening, never one held at module scope: the persistent engine keeps
     module globals between presses, and a handler subscribed once per press fires once per
-    press it has ever seen (§12.9.2). Building the object in the entry point is the fix, and
-    it is a correctness rule rather than a tidiness one.
+    press it has ever seen (§12.9.2).
     """
 
     def __init__(self, presenter: StoreyPresenter, subtitle: str = "") -> None:
         self.presenter = presenter
         self.saved = False
         self.window = wpf.load_window("storey_editor")
-        self._rows_host = wpf.find(self.window, "RowsHost")
-        self._fields: dict[str, dict[str, Any]] = {}       # storey id -> its own controls
-        self._filling = False                              # so a programmatic edit is not an edit
+        self.grid = wpf.find(self.window, "StoreyGrid")
+        self._rows: list[Any] = []
+        self._filling = False              # so a programmatic rebuild is not a user's edit
         if subtitle:
             wpf.find(self.window, "HeaderSubtitle").Text = subtitle
         wpf.find(self.window, "DefaultHeight").Text = f"{presenter.schedule.default_height_mm:.0f}"
@@ -63,10 +90,18 @@ class StoreyEditorWindow:
     def _wire(self) -> None:
         for name in _BUTTONS:
             wpf.find(self.window, name)          # fail here, with the name, not at the click
-        wpf.find(self.window, "BtnAdd").Click += self._on_add_top
+        wpf.find(self.window, "BtnUp").Click += lambda s, e: self._on_selected(self.presenter.move, +1)
+        wpf.find(self.window, "BtnDown").Click += lambda s, e: self._on_selected(self.presenter.move, -1)
+        wpf.find(self.window, "BtnAdd").Click += self._on_add
         wpf.find(self.window, "BtnAddBottom").Click += self._on_add_bottom
+        wpf.find(self.window, "BtnRemove").Click += lambda s, e: self._on_selected(self.presenter.remove)
         wpf.find(self.window, "BtnSave").Click += self._on_save
         wpf.find(self.window, "BtnCancel").Click += self._on_cancel
+        self.grid.SelectionChanged += self._on_selection_changed
+
+    def _selected_id(self) -> str | None:
+        item = self.grid.SelectedItem
+        return getattr(item, "StoreyId", None) if item is not None else None
 
     def _command(self, run, *args) -> None:
         """Take what is typed, run the command, redraw. In that order, always."""
@@ -76,11 +111,27 @@ class StoreyEditorWindow:
         if problem:
             self._say(problem)
 
-    def _on_add_top(self, sender, args) -> None:
-        self._command(self.presenter.add_above)
+    def _on_selected(self, run, *extra) -> None:
+        """A command about the row the user picked. Nothing selected is worth saying, not
+        worth guessing at."""
+        storey_id = self._selected_id()
+        if storey_id is None:
+            self._say("Click a storey in the table first.")
+            return
+        self._command(run, storey_id, *extra)
+
+    def _on_add(self, sender, args) -> None:
+        self._command(self.presenter.add_above, self._selected_id())
 
     def _on_add_bottom(self, sender, args) -> None:
-        self._command(self.presenter.add_below)
+        self._command(self.presenter.add_below, None)
+
+    def _on_selection_changed(self, sender, args) -> None:
+        if self._filling:
+            return
+        item = self.grid.SelectedItem
+        wpf.find(self.window, "SelectionText").Text = (
+            f"{item.Name} selected" if item is not None else "")
 
     def _on_save(self, sender, args) -> None:
         self._read_back()
@@ -98,189 +149,76 @@ class StoreyEditorWindow:
 
     # ------------------------------------------------------------- the table
     def _read_back(self) -> None:
-        """Take every field's text into the schedule, in the order the stack depends on.
+        """Take every bound row into the schedule, in the order the stack depends on.
 
-        Names first, then the heights bottom-up, then the elevations that were retyped. Height
-        and elevation describe the same thing, so the order matters: an elevation typed on one
-        storey is an instruction about where it sits, and it is applied after the heights it
-        would otherwise be recomputed from.
+        The grid commits a cell on leaving it, so the bound object already carries what was
+        typed. Names, plans, repeats and builds first; then the heights bottom-up; then the
+        elevations that were retyped. Height and elevation describe the same thing, so the
+        order matters: an elevation is an instruction about where a storey sits and is applied
+        after the heights it would otherwise be recomputed from.
         """
         if self._filling:
             return
+        self.grid.CommitEdit()
         self.presenter.set_default_height(wpf.find(self.window, "DefaultHeight").Text)
-        for storey_id, controls in list(self._fields.items()):
-            self.presenter.set_name(storey_id, controls["name"].Text)
-            plan = controls["plan"]
-            if plan.SelectedIndex >= 0:
-                self.presenter.set_plan(storey_id, self.presenter.plan_choices()[plan.SelectedIndex][1])
-        for storey_id, controls in self._ordered_fields():
-            text = controls["height"].Text
-            if text.strip() and text != controls["height_was"]:
-                self.presenter.set_height(storey_id, text)
-        for storey_id, controls in self._ordered_fields():
-            text = controls["elevation"].Text
-            if text.strip() and text != controls["elevation_was"]:
-                self.presenter.set_elevation(storey_id, text)
+        built = {getattr(item, "StoreyId", None) for item in self.grid.SelectedItems}
+        for row in self._rows:
+            self.presenter.set_name(row.StoreyId, row.Name)
+            self.presenter.set_plan_label(row.StoreyId, row.Plan)
+            self.presenter.set_repeat(row.StoreyId, row.Repeat)
+            self.presenter.set_build(row.StoreyId, row.StoreyId in built)
+        for row in self._ordered_rows():
+            if row.Height.strip() and row.Height != row_was(row, "height"):
+                self.presenter.set_height(row.StoreyId, row.Height)
+        for row in self._ordered_rows():
+            if row.Elevation.strip() and row.Elevation != row_was(row, "elevation"):
+                self.presenter.set_elevation(row.StoreyId, row.Elevation)
 
-    def _ordered_fields(self):
-        """The fields, lowest storey first -- the direction the heights add up in."""
+    def _ordered_rows(self):
+        """The rows, lowest storey first -- the direction the heights add up in."""
+        by_id = {row.StoreyId: row for row in self._rows}
         for storey in self.presenter.schedule.storeys:
-            if storey.id in self._fields:
-                yield storey.id, self._fields[storey.id]
+            if storey.id in by_id:
+                yield by_id[storey.id]
 
     def refresh(self) -> None:
-        """Rebuild the table from the schedule. Every row is new, so no handler accumulates."""
-        from System.Windows import Thickness, VerticalAlignment
-        from System.Windows.Controls import ComboBox, Grid, TextBlock, TextBox
+        """Rebuild the grid from the schedule, keeping the row that was selected."""
+        from System.Collections import ArrayList
 
         self._filling = True
         try:
-            self._rows_host.Children.Clear()
-            self._fields.clear()
-            choices = self.presenter.plan_choices()
-            for n, row in enumerate(self.presenter.rows()):
-                grid = self._row_grid()
-                grid.MinHeight = _ROW_HEIGHT
-                grid.Margin = Thickness(0, 0, 0, 1)
-                # Zebra shading in Off White, never a red tint (§9.8, §16.1), the way the
-                # suite's DataGrid alternates its rows.
-                grid.Background = self._style("BrushOffWhite" if n % 2 else "BrushPureWhite")
+            keep = self._selected_id()
+            choices = ArrayList()
+            for label, _fid in self.presenter.plan_choices():
+                choices.Add(label)
 
-                number = TextBlock()
-                number.Text = str(row.number)
-                number.Style = self._style("TextMono")
-                number.Foreground = self._style("BrushMidGrey")
-                number.VerticalAlignment = VerticalAlignment.Center
-                number.Margin = Thickness(t.SPACE_SM, 0, 0, 0)
-                self._place(Grid, grid, number, 0)
+            self._rows = [StoreyRow(row, choices) for row in self.presenter.rows()]
+            for row in self._rows:
+                _remember(row)
 
-                name = TextBox()
-                name.Text = row.name
-                name.Style = self._style("InputRowBox")
-                name.Margin = Thickness(t.SPACE_SM, 2, t.SPACE_SM, 2)
-                self._place(Grid, grid, name, 1)
+            items = ArrayList()
+            for row in self._rows:
+                items.Add(row)
+            # §12.7.G: clearing first makes the grid destroy its row containers rather than
+            # reuse them, so every cell is read fresh from the new objects.
+            self.grid.ItemsSource = None
+            self.grid.ItemsSource = items
 
-                height = TextBox()
-                height.Text = row.height_text
-                height.Style = self._style("InputRowNumberBox")
-                height.IsEnabled = not row.is_base
-                height.Margin = Thickness(0, 2, t.SPACE_SM, 2)
-                height.ToolTip = ("The lowest storey rises from nothing. Set its elevation instead."
-                                  if row.is_base else "Rise from the storey below. Everything above moves with it.")
-                self._place(Grid, grid, height, 2)
+            # The Build tick is the row's own IsSelected, so ticking it is selecting it.
+            self.grid.SelectedItems.Clear()
+            for row in self._rows:
+                if row.Build:
+                    self.grid.SelectedItems.Add(row)
+            if keep is not None:
+                for row in self._rows:
+                    if row.StoreyId == keep:
+                        self.grid.CurrentItem = row
+                        break
 
-                elevation = TextBox()
-                elevation.Text = row.elevation_text
-                elevation.Style = self._style("InputRowNumberBox")
-                elevation.Margin = Thickness(0, 2, t.SPACE_SM, 2)
-                elevation.ToolTip = "Top of the structural slab. The storeys above keep their distance."
-                self._place(Grid, grid, elevation, 3)
-
-                plan = ComboBox()
-                plan.Style = self._style("InputRowComboBox")
-                for label, _ in choices:
-                    plan.Items.Add(label)
-                plan.SelectedIndex = next((i for i, (label, _) in enumerate(choices)
-                                           if label == row.plan_label), 0)
-                plan.Margin = Thickness(t.SPACE_SM, 2, t.SPACE_SM, 2)
-                plan.ToolTip = "Which drawn floor plan is built on this storey."
-                self._place(Grid, grid, plan, 4)
-
-                flag = TextBlock()
-                flag.Text = row.flag
-                flag.Style = self._style("TextCaption")
-                flag.Margin = Thickness(t.SPACE_SM, 0, t.SPACE_SM, 0)
-                flag.VerticalAlignment = VerticalAlignment.Center
-                if row.severity:
-                    flag.Foreground = self._style("BrushErrorRed" if row.severity == "ERROR"
-                                                  else "BrushCautionAmber")
-                if row.tooltip:
-                    flag.ToolTip = row.tooltip
-                self._place(Grid, grid, flag, 5)
-
-                self._place(Grid, grid, self._row_actions(row), 6)
-
-                self._rows_host.Children.Add(grid)
-                self._fields[row.storey_id] = {"name": name, "height": height, "elevation": elevation,
-                                               "plan": plan, "height_was": row.height_text,
-                                               "elevation_was": row.elevation_text}
             self._show_problems()
             self._show_status()
         finally:
             self._filling = False
-
-    def _row_actions(self, row):
-        """The buttons that act on this row, in the row: move, repeat, remove."""
-        from System.Windows import Thickness, VerticalAlignment
-        from System.Windows.Controls import Orientation, StackPanel, TextBox
-
-        panel = StackPanel()
-        panel.Orientation = Orientation.Horizontal
-        panel.VerticalAlignment = VerticalAlignment.Center
-        panel.Margin = Thickness(t.SPACE_XS, 0, 0, 0)
-
-        up = self._row_button("↑", "Move this storey up", "ButtonRowAction",
-                              lambda s, e, sid=row.storey_id: self._command(self.presenter.move, sid, +1))
-        up.IsEnabled = not row.is_top
-        down = self._row_button("↓", "Move this storey down", "ButtonRowAction",
-                                lambda s, e, sid=row.storey_id: self._command(self.presenter.move, sid, -1))
-        down.IsEnabled = not row.is_base
-        panel.Children.Add(up)
-        panel.Children.Add(down)
-
-        times = TextBox()
-        times.Text = "1"
-        times.Style = self._style("InputRowNumberBox")
-        times.Width = 34
-        times.Margin = Thickness(t.SPACE_SM, 0, 2, 0)
-        times.ToolTip = "How many more storeys like this one"
-        panel.Children.Add(times)
-
-        repeat = self._row_button("Repeat", "Build this storey's plan this many more times "
-                                            "- a typical floor, drawn once", "ButtonSmall",
-                                  lambda s, e, sid=row.storey_id, box=times:
-                                      self._command(self.presenter.repeat, sid, box.Text))
-        panel.Children.Add(repeat)
-
-        panel.Children.Add(self._row_button(
-            "✕", "Remove this storey", "ButtonRowDanger",
-            lambda s, e, sid=row.storey_id: self._command(self.presenter.remove, sid),
-            left=t.SPACE_SM))
-        return panel
-
-    def _row_button(self, text: str, tip: str, style: str, on_click, left: int = 0):
-        from System.Windows import Thickness
-        from System.Windows.Controls import Button
-
-        button = Button()
-        button.Content = text
-        button.Style = self._style(style)
-        button.ToolTip = tip
-        button.Margin = Thickness(left, 0, 2, 0)
-        button.Click += on_click
-        return button
-
-    def _row_grid(self):
-        from System.Windows import GridLength, GridUnitType
-        from System.Windows.Controls import ColumnDefinition, Grid
-
-        grid = Grid()
-        for width in _COLUMNS:
-            column = ColumnDefinition()
-            column.Width = (GridLength(1, GridUnitType.Star) if width is None
-                            else GridLength(width, GridUnitType.Pixel))
-            if width is None:
-                column.MinWidth = _ROW_MIN_WIDTH
-            grid.ColumnDefinitions.Add(column)
-        return grid
-
-    @staticmethod
-    def _place(Grid, grid, control, column: int) -> None:
-        Grid.SetColumn(control, column)
-        grid.Children.Add(control)
-
-    def _style(self, key: str):
-        return self.window.FindResource(key)
 
     # ------------------------------------------------------------ the footer
     def _show_problems(self) -> None:
@@ -313,13 +251,35 @@ class StoreyEditorWindow:
     def _say(self, message: str) -> None:
         wpf.find(self.window, "StatusLine").Text = message
 
+    def _style(self, key: str):
+        return self.window.FindResource(key)
+
     # -------------------------------------------------------------- showing
     def show(self, owner_handle: int | None = None) -> bool:
         wpf.show_dialog(self.window, owner_handle)
         return self.saved
 
 
+#: What a row held when the table was drawn, so an edit can be told from a redraw. Kept beside
+#: the row rather than in it: a slot the XAML does not bind is a slot that invites a binding.
+_WAS: dict[int, tuple[str, str]] = {}
+
+
+def _remember(row: StoreyRow) -> None:
+    _WAS[id(row)] = (row.Height, row.Elevation)
+
+
+def row_was(row: StoreyRow, which: str) -> str:
+    """The value this row was drawn with, or an empty string when it is new."""
+    height, elevation = _WAS.get(id(row), ("", ""))
+    return height if which == "height" else elevation
+
+
 def edit_storeys_wpf(presenter: StoreyPresenter, subtitle: str = "",
                      owner_handle: int | None = None) -> bool:
     """Open the storey editor and report whether it was saved."""
+    _WAS.clear()
     return StoreyEditorWindow(presenter, subtitle).show(owner_handle)
+
+
+__all__ = ["StoreyEditorWindow", "StoreyRow", "edit_storeys_wpf", "format_mm"]

@@ -40,3 +40,26 @@ def edit_storeys(schedule: StoreySchedule, plan_floors: list[tuple[str, str]] | 
             "The storey editor needs WPF or a Tk window to open in. "
             f"WPF is not available here: {wpf.why_not()}")
     return edit_storeys_tk(parent, presenter, subtitle)
+
+
+def show_elapsed(report: dict, parent=None, owner_handle: int | None = None,
+                 close_after: int | None = None) -> None:
+    """Show what a run cost. Silent where no window can be shown -- a report about how long
+    something took must never be the thing that stops it finishing."""
+    if not report:
+        return
+    from . import wpf
+
+    try:
+        if wpf.available():
+            from .elapsed_wpf import CLOSE_AFTER_SECONDS, show_elapsed_wpf
+
+            show_elapsed_wpf(report, owner_handle,
+                             CLOSE_AFTER_SECONDS if close_after is None else close_after)
+            return
+        if parent is not None:
+            from .elapsed_tk import show_elapsed_tk
+
+            show_elapsed_tk(parent, report, close_after)
+    except Exception:
+        pass

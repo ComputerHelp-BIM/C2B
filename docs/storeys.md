@@ -31,21 +31,26 @@ editor to correct it — which, on a real job, you will.
 The highest storey is at the top, the way a section is drawn.
 
 ```
- #   Storey                  Height   Elevation   Built from       Note       This storey
- 6   Terrace Floor Level       3000       18000   L07 TERRACE      assumed      ↓  [1] Repeat  ✕
- 5   Refuge Floor Level        3000       15000   L06 REFUGE       assumed    ↑ ↓  [1] Repeat  ✕
- 4   3rd Floor Level           3000       12000   L05 TYPICAL      assumed    ↑ ↓  [1] Repeat  ✕
- 1   Ground Floor Level        3000        3000   L02 GROUND       assumed    ↑ ↓  [1] Repeat  ✕
- 0   Foundation Level                         0   L01 FOUNDATION   assumed    ↑    [1] Repeat  ✕
+ Build  No.  Storey                Height mm  Elevation mm  Built from      Repeat  Note
+  [x]    6   Terrace Floor Level        3000         30000  L07 TERRACE          1  drawn
+  [x]    4   3rd Floor Level            3000         12000  L05 TYPICAL          7  drawn
+  [x]    1   Ground Floor Level         2500          2500  L02 GROUND           1  drawn
+  [x]    0   Foundation Level                            0  L01 FOUNDATION       1  drawn
+        Move up   Move down   Add storey   Add at the bottom   Remove
 ```
 
-**Every row carries its own buttons.** Move it up or down, repeat it, remove it — the buttons
-are in the row they act on, so there is never a question of which storey a command is about.
-The two buttons above the table, *Add on top* and *Add at the bottom*, are the only ones that
-are not about one particular storey.
+**One row is one entry in the schedule, not always one level.** The *Repeat* column is how
+many levels that one row builds — the drawing above has thirteen levels from four rows, because
+the typical floor is drawn once and built seven times. That is how a drawing says it
+(`TYPICAL FLOOR PLAN (2ND TO 8TH FLOOR)`) and how the rest of the suite shows it.
 
-The **Note** column is one word. Hover it for the whole sentence — where the storey came from,
-and anything about it worth checking.
+**Untick Build to leave a storey out.** The row stays in the table, so a storey dropped by
+mistake is one tick away from coming back, and nothing about an unticked storey is reported —
+it is not in the model, so it cannot be wrong.
+
+Click a row and the buttons under the table act on it. Columns can be dragged wider.
+
+The **Note** column is one word: `drawn`, `level text`, `repeat`, `assumed`, `check`, `fix this`.
 
 **Height** is the rise from the storey *below* — the same thing an ETABS story table or a level
 schedule means by it. **Elevation** is those heights added up from the lowest storey.
@@ -70,23 +75,22 @@ foundation level gets under a ground floor without moving the ground floor.
 
 New storeys take the height in the **New storeys are ___ mm tall** box, which is remembered.
 
-### Remove  (✕ in the row)
+### Remove
 
-Deletes that storey and brings everything above it down by its height — the building gets
+Deletes the selected storey and brings everything above it down by its height — the building gets
 shorter, which is what deleting a floor means.
 
 Deleting the *lowest* storey is the exception: everything else stays exactly where it is.
 Removing a foundation level does not drag the ground floor down to where the foundation was.
 
-### Move up / Move down  (↑ ↓ in the row)
+### Move up / Move down
 
-Reorders a storey, carrying its height with it. The arrow is greyed out at the end of the
-stack rather than hidden, so the row never changes shape as you work down it.
+Reorders the selected storey, carrying its height with it.
 
 ### Repeat — the typical floor
 
-The important one. In the storey's own row, type how many **more** you want and press
-**Repeat**.
+The important one, and it is a **column**, not a button. Type how many levels that one row
+builds.
 
 Each copy keeps the original's height *and its floor plan*, so one drawn layout builds all of
 them. `3rd Floor Level` repeated four times becomes `4th`, `5th`, `6th`, `7th` — the numbering

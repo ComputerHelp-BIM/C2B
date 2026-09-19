@@ -119,8 +119,10 @@ def _typography() -> str:
         ("TextSmall", "FontSizeSmall", "Normal", "BrushMidGrey", False),
         ("TextCaption", "FontSizeCaption", "Normal", "BrushMidGrey", False),
         ("StatusText", "FontSizeCaption", "Normal", "BrushMidGrey", True),
+        ("TextStatus", "FontSizeCaption", "Normal", "BrushMidGrey", True),
         # A form's own label: Body weight SemiBold, centred against its input.
         ("FieldLabel", "FontSizeBody", "SemiBold", "BrushCharcoalBlack", False),
+        ("TextLabel", "FontSizeBody", "SemiBold", "BrushCharcoalBlack", False),
     ]
     for key, size, weight, brush, wraps in text_styles:
         wrapping = "Wrap" if wraps else "NoWrap"
@@ -131,6 +133,17 @@ def _typography() -> str:
     <Setter Property="Foreground" Value="{{StaticResource {brush}}}"/>
     <Setter Property="TextWrapping" Value="{wrapping}"/>
     <Setter Property="VerticalAlignment" Value="Center"/>
+  </Style>''')
+
+    # Help prose keeps a readable floor of 12 on top of TextBody: a paragraph explaining what
+    # a table means is the one thing on a dense window that a person actually reads.
+    out.append('''  <sys:Double x:Key="FontSizeHelp">12</sys:Double>
+  <Style x:Key="HelpText" TargetType="TextBlock" BasedOn="{StaticResource TextBody}">
+    <Setter Property="FontSize" Value="{StaticResource FontSizeHelp}"/>
+    <Setter Property="VerticalAlignment" Value="Top"/>
+  </Style>
+  <Style x:Key="PageTitle" TargetType="TextBlock" BasedOn="{StaticResource TextH2}">
+    <Setter Property="Margin" Value="0,0,0,4"/>
   </Style>''')
 
     # A section heading above a group of fields.
@@ -156,6 +169,20 @@ def _typography() -> str:
     <Setter Property="Foreground" Value="{{StaticResource BrushErrorRed}}"/>
     <Setter Property="Margin" Value="0,{t.SPACE_XS},0,0"/>
     <Setter Property="TextWrapping" Value="Wrap"/>
+  </Style>
+  <sys:Double x:Key="FontSizeFigure">40</sys:Double>
+  <!-- One figure, once per window: the number a "finished" dialog exists to show. Bigger than
+       the Display level of §4.2 on purpose - there is nothing else on the surface to balance
+       it against, and it is read from across a desk. -->
+  <Style x:Key="TextFigure" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{{StaticResource FontSans}}"/>
+    <Setter Property="FontSize" Value="{{StaticResource FontSizeFigure}}"/>
+    <Setter Property="FontWeight" Value="Bold"/>
+    <Setter Property="Foreground" Value="{{StaticResource BrushVividRed}}"/>
+  </Style>
+  <Style x:Key="TextFigureSmall" TargetType="TextBlock" BasedOn="{{StaticResource TextCaption}}">
+    <Setter Property="FontWeight" Value="Bold"/>
+    <Setter Property="Foreground" Value="{{StaticResource BrushVividRed}}"/>
   </Style>
   <Style x:Key="TextBadge" TargetType="TextBlock">
     <Setter Property="FontFamily" Value="{{StaticResource FontMono}}"/>
@@ -674,6 +701,135 @@ def _surfaces() -> str:
     return "\n".join([cards, scrollbar])
 
 
+def _datagrid() -> str:
+    """§9.8, ported from the suite's own preview grid.
+
+    The checkbox column is the one part that cannot be done the obvious way. §12.7.Q: a
+    ``DataTrigger`` on a Python ``bool`` never fires and a two-way write back to a ``__slots__``
+    bool does not land, so the tick is bound to the **row's own** ``IsSelected`` -- a real .NET
+    bool -- and ``SelectedItems`` is the source of truth that Python reads.
+    """
+    return f'''  <Style x:Key="GridCheckBox" TargetType="CheckBox">
+    <Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="HorizontalAlignment" Value="Center"/>
+    <Setter Property="VerticalAlignment" Value="Center"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="CheckBox">
+          <Border x:Name="Box" Width="16" Height="16" CornerRadius="{t.RADIUS_SM}"
+                  BorderBrush="{{StaticResource BrushLightBorder}}" BorderThickness="1"
+                  Background="{{StaticResource BrushPureWhite}}">
+            <Viewbox x:Name="CheckMark" Margin="3" Visibility="Collapsed">
+              <Path Data="M0,3.5 L3.5,7 L9,0" Stroke="{{StaticResource BrushPureWhite}}"
+                    StrokeThickness="1.8" StrokeLineJoin="Round"
+                    StrokeStartLineCap="Round" StrokeEndLineCap="Round" Fill="Transparent"/>
+            </Viewbox>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsChecked" Value="True">
+              <Setter TargetName="CheckMark" Property="Visibility" Value="Visible"/>
+              <Setter TargetName="Box" Property="Background" Value="{{StaticResource BrushVividRed}}"/>
+              <Setter TargetName="Box" Property="BorderBrush" Value="{{StaticResource BrushVividRed}}"/>
+            </Trigger>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Box" Property="BorderBrush" Value="{{StaticResource BrushVividRed}}"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+  <Style x:Key="GridColumnHeader" TargetType="DataGridColumnHeader">
+    <Setter Property="Background" Value="{{StaticResource BrushCharcoalBlack}}"/>
+    <Setter Property="Foreground" Value="{{StaticResource BrushPureWhite}}"/>
+    <Setter Property="FontFamily" Value="{{StaticResource FontSans}}"/>
+    <Setter Property="FontSize" Value="{{StaticResource FontSizeCaption}}"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="Padding" Value="8,6"/>
+    <Setter Property="BorderBrush" Value="{{StaticResource BrushMidGrey}}"/>
+    <Setter Property="BorderThickness" Value="0,0,1,0"/>
+    <Setter Property="HorizontalContentAlignment" Value="Left"/>
+  </Style>
+  <Style x:Key="GridCell" TargetType="DataGridCell">
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="Foreground" Value="{{StaticResource BrushCharcoalBlack}}"/>
+    <Setter Property="FontFamily" Value="{{StaticResource FontSans}}"/>
+    <Setter Property="FontSize" Value="{{StaticResource FontSizeCaption}}"/>
+    <Style.Triggers>
+      <Trigger Property="IsSelected" Value="True">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderBrush" Value="Transparent"/>
+        <Setter Property="Foreground" Value="{{StaticResource BrushCharcoalBlack}}"/>
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+  <Style x:Key="GridRow" TargetType="DataGridRow">
+    <Style.Triggers>
+      <Trigger Property="IsMouseOver" Value="True">
+        <Setter Property="Background" Value="{{StaticResource BrushTableRowHover}}"/>
+      </Trigger>
+      <Trigger Property="IsSelected" Value="True">
+        <Setter Property="Background" Value="{{StaticResource BrushTableRowSelected}}"/>
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+  <!-- A cell's own text, in the grid's compact size. -->
+  <Style x:Key="GridText" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{{StaticResource FontSans}}"/>
+    <Setter Property="FontSize" Value="{{StaticResource FontSizeCaption}}"/>
+    <Setter Property="Foreground" Value="{{StaticResource BrushCharcoalBlack}}"/>
+    <Setter Property="Padding" Value="8,0"/>
+    <Setter Property="VerticalAlignment" Value="Center"/>
+  </Style>
+  <Style x:Key="GridNumber" TargetType="TextBlock" BasedOn="{{StaticResource GridText}}">
+    <Setter Property="FontFamily" Value="{{StaticResource FontMono}}"/>
+    <Setter Property="TextAlignment" Value="Right"/>
+  </Style>
+  <Style x:Key="GridMuted" TargetType="TextBlock" BasedOn="{{StaticResource GridText}}">
+    <Setter Property="Foreground" Value="{{StaticResource BrushMidGrey}}"/>
+  </Style>
+  <!-- The editor a cell puts up on F2 or a double click. -->
+  <Style x:Key="GridEditBox" TargetType="TextBox" BasedOn="{{StaticResource InputTextBox}}">
+    <Setter Property="Height" Value="22"/>
+    <Setter Property="Margin" Value="4,0"/>
+    <Setter Property="FontSize" Value="{{StaticResource FontSizeCaption}}"/>
+  </Style>
+  <Style x:Key="GridEditNumberBox" TargetType="TextBox" BasedOn="{{StaticResource GridEditBox}}">
+    <Setter Property="FontFamily" Value="{{StaticResource FontMono}}"/>
+    <Setter Property="TextAlignment" Value="Right"/>
+  </Style>
+  <Style x:Key="GridComboBox" TargetType="ComboBox" BasedOn="{{StaticResource InputComboBox}}">
+    <Setter Property="Height" Value="22"/>
+    <Setter Property="Margin" Value="4,0"/>
+    <Setter Property="FontSize" Value="{{StaticResource FontSizeCaption}}"/>
+  </Style>
+  <Style x:Key="DataGridStyle" TargetType="DataGrid">
+    <Setter Property="AutoGenerateColumns" Value="False"/>
+    <Setter Property="CanUserAddRows" Value="False"/>
+    <Setter Property="CanUserDeleteRows" Value="False"/>
+    <Setter Property="CanUserReorderColumns" Value="False"/>
+    <Setter Property="CanUserSortColumns" Value="False"/>
+    <!-- The owner asked for column width adjusters, and this is them. -->
+    <Setter Property="CanUserResizeColumns" Value="True"/>
+    <Setter Property="CanUserResizeRows" Value="False"/>
+    <Setter Property="HeadersVisibility" Value="Column"/>
+    <Setter Property="GridLinesVisibility" Value="Horizontal"/>
+    <Setter Property="HorizontalGridLinesBrush" Value="{{StaticResource BrushLightBorder}}"/>
+    <Setter Property="Background" Value="{{StaticResource BrushPureWhite}}"/>
+    <Setter Property="RowBackground" Value="{{StaticResource BrushPureWhite}}"/>
+    <Setter Property="AlternatingRowBackground" Value="{{StaticResource BrushOffWhite}}"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="RowHeight" Value="{t.HEIGHT_INPUT}"/>
+    <Setter Property="SelectionMode" Value="Single"/>
+    <Setter Property="SelectionUnit" Value="FullRow"/>
+    <Setter Property="FontFamily" Value="{{StaticResource FontSans}}"/>
+    <Setter Property="FontSize" Value="{{StaticResource FontSizeCaption}}"/>
+    <Setter Property="ColumnHeaderStyle" Value="{{StaticResource GridColumnHeader}}"/>
+    <Setter Property="CellStyle" Value="{{StaticResource GridCell}}"/>
+    <Setter Property="RowStyle" Value="{{StaticResource GridRow}}"/>
+  </Style>'''
+
+
 def theme_xaml() -> str:
     """The whole theme as one ResourceDictionary, in the order the dictionaries merge in.
 
@@ -681,7 +837,7 @@ def theme_xaml() -> str:
     and ``StaticResource`` resolves only backwards through a dictionary.
     """
     return (f'<ResourceDictionary {_NS} xmlns:sys="clr-namespace:System;assembly=mscorlib">\n'
-            f"{_colours()}\n{_typography()}\n{_buttons()}\n{_inputs()}\n{_surfaces()}\n"
+            f"{_colours()}\n{_typography()}\n{_buttons()}\n{_inputs()}\n{_surfaces()}\n{_datagrid()}\n"
             f"</ResourceDictionary>")
 
 

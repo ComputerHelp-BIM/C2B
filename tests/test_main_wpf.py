@@ -148,12 +148,17 @@ def test_the_dispatcher_is_handed_a_real_dotnet_delegate(source):
     assert "Action(work)" in body
 
 
-def test_only_one_application_is_ever_constructed(source):
-    """A process holds at most one; constructing a second throws, and inside Revit there is
-    already one. That threw on the first build and the fallback quietly opened Tkinter."""
+def test_the_window_runs_its_own_loop_rather_than_making_an_application(source, tree):
+    """System.Windows.Application is a process-wide singleton: a second one throws, and inside
+    Revit there is already one. ShowDialog pumps its own nested loop and needs none. The first
+    build called Application().Run, the window never appeared, and the fallback quietly opened
+    Tkinter instead."""
     body = source.split("def show")[1].split("\ndef ")[0]
-    assert "Application.Current" in body
-    assert body.index("Application.Current") < body.index("Application().Run")
+    assert "ShowDialog()" in body
+    used = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    used |= {a.name for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))
+             for a in n.names}
+    assert "Application" not in used
 
 
 def test_the_folder_picker_works_on_a_runtime_without_the_new_dialog(source):

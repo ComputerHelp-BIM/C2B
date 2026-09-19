@@ -87,13 +87,20 @@ class JobResult:
     revit_json: Path | None = None
     revit_xlsx: Path | None = None
     next_step: str = ""                      # the one thing to do next, in plain words
+    #: What the run cost, already worded -- see :mod:`c2b.ui.timing`. Empty when nothing timed it.
+    timing: dict = field(default_factory=dict)
     counts: dict[str, int] = field(default_factory=dict)
     issues: list[tuple[str, str, int, str]] = field(default_factory=list)   # severity, code, count, meaning
     error: str | None = None
 
 
-def run_job(settings: JobSettings, progress: Progress) -> JobResult:
-    """Run extract, normalise and verify, reporting each step. Never raises."""
+def run_job(settings: JobSettings, progress: Progress, stopwatch=None) -> JobResult:
+    """Run extract, normalise and verify, reporting each step. Never raises.
+
+    ``stopwatch`` is a :class:`c2b.ui.timing.Stopwatch` the caller already started -- it holds
+    the time a person spent in the storey window, which is theirs and not the tool's, so the
+    run adds its own phases to it rather than starting a fresh one.
+    """
     from ..diagnostics import CODES
     from ..dwg import ensure_dxf
     from ..export.excel import write_workbook
@@ -110,7 +117,9 @@ def run_job(settings: JobSettings, progress: Progress) -> JobResult:
     from ..roundtrip.diff import CODES as RT_CODES
     from ..roundtrip.diff import compare
     from ..roundtrip.reader import read_template
+    from ..ui.timing import Stopwatch
 
+    watch = stopwatch or Stopwatch()
     res = JobResult()
     try:
         drawing = Path(settings.drawing)
@@ -123,6 +132,7 @@ def run_job(settings: JobSettings, progress: Progress) -> JobResult:
         if converted:
             progress("info", f"Converted {drawing.name} to DXF")
 
+        watch.start("reading the drawing")
         progress("step", f"1 of 4   Reading {dxf.name}")
         profile = Profile.load(settings.profile) if settings.profile else Profile()
         profile.size_sources.column = settings.column_size_from
@@ -143,6 +153,7 @@ def run_job(settings: JobSettings, progress: Progress) -> JobResult:
         res.plan_floors = [(f.id, f.name) for f in p.floors]
         rows, ref, res.levels_xlsx, res.storeys_json = _levels_from_storeys(p, settings, out, stem, progress)
 
+        watch.start("drawing the template")
         progress("step", "2 of 4   Drawing it in the template")
         seed = Path(settings.seed) if settings.seed else _find_beside(out, drawing, SEED_TEMPLATE_NAMES)
         if settings.seed is None and seed is not None:
@@ -156,6 +167,7 @@ def run_job(settings: JobSettings, progress: Progress) -> JobResult:
         s2 = np_.summary
         progress("good", f"         {s2.columns} columns in {s2.stacks} stacks, {s2.beams} beam spans, {s2.panels} slab panels, {s2.levels} levels")
 
+        watch.start("checking it")
         progress("step", "3 of 4   Checking the drawing against the data")
         drawing_model = read_template(res.template_dxf, spec)
         (out / f"{stem}.reread.json").write_text(drawing_model.model_dump_json(indent=2), encoding="utf-8")
@@ -167,6 +179,7 @@ def run_job(settings: JobSettings, progress: Progress) -> JobResult:
                  f"         {'the drawing matches the data exactly' if diff.ok() else f'{diff.errors} errors, {diff.warnings} differences'}")
 
         # ---- 4: the Revit build plan ------------------------------------
+        watch.start("preparing Revit")
         progress("step", "4 of 4   Preparing the Revit model")
         if not np_.levels:
             progress("warn", "         no floor elevations yet, so there is nothing to place in Revit")
@@ -189,8 +202,14 @@ def run_job(settings: JobSettings, progress: Progress) -> JobResult:
         res.issues = [(sev, code, n, CODES.get(code) or RT_CODES.get(code, ""))
                       for (sev, code), n in sorted(seen.items(), key=lambda kv: (order[kv[0][0]], -kv[1]))]
         res.ok = s1.errors == 0 and s2.errors == 0 and diff.errors == 0
+        watch.stop()
+        res.timing = watch.report(headline="Drawing prepared",
+                                  caption="preparing the drawing and the Revit plan")
         progress("good" if res.ok else "warn", "Finished." if res.ok else "Finished with things to check.")
+        progress("info", f"         {res.timing['elapsed']} of work   -   {res.timing['breakdown']}")
     except Exception as ex:                      # a drafter must never see a stack trace in the window
+        watch.stop()
+        res.timing = watch.report(headline="Stopped", caption="before it stopped")
         res.error = f"{type(ex).__name__}: {ex}"
         progress("bad", f"Stopped: {res.error}")
         progress("info", traceback.format_exc(limit=3))

@@ -9,26 +9,21 @@
   The root element carries literal values only - never a resource reference - because
   XamlReader resolves a window's own attributes before its Resources block is parsed (12.7.A).
 
-  The shape is the suite's: an outer grid inset from the frame, a Charcoal header with rounded
-  top corners, the 3px accent rule, the body, a status bar card, an action bar. Same rows, same
-  paddings and same order as One Filter Parameter, so the two windows read as one tool.
+  The table is a real DataGrid, laid out like the Multi-storey page of cad2bim: a Build tick,
+  the storey number, the plan it is drawn from, its height, and how many levels the one row
+  builds. Columns are resizable. The buttons under it act on the selected row, which in a
+  DataGrid is a row the user can see is selected.
 
-  The rows are built in Python and added to RowsHost, styled to look like the suite's DataGrid.
-  A DataGrid's text columns bind fine, but these cells are edited, and 12.7.G/J/Q are all ways
-  a two-way binding to a Python object fails under pythonnet. Reading a TextBox's .Text has
-  none of them, and a building has a dozen storeys, not ten thousand.
-
-  Each row carries its own buttons. A toolbar that acts on "the selected storey" needs the user
-  to know which one that is, and nothing on screen says so.
+  The Build tick is bound to the row's own IsSelected, a real .NET bool - 12.7.Q: a DataTrigger
+  on a Python bool never fires and a write back to a __slots__ bool does not land.
 -->
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="AnonGee &#183; Storey Editor"
-        Width="980" MinWidth="880"
-        SizeToContent="Height" MaxHeight="860"
+        Width="940" Height="640" MinWidth="820" MinHeight="520"
         Background="White"
         UseLayoutRounding="True"
-        FontFamily="JetBrains Mono, Source Serif 4, Inter, Segoe UI, Calibri"
+        FontFamily="Segoe UI, Inter, Calibri, Arial"
         WindowStartupLocation="CenterOwner"
         ResizeMode="CanResize"
         ShowInTaskbar="True">
@@ -37,147 +32,153 @@
     <!-- ANONGEE-THEME -->
   </Window.Resources>
 
-  <Grid Margin="12,8">
-    <Grid.RowDefinitions>
-      <RowDefinition Height="Auto"/>   <!-- 0 header -->
-      <RowDefinition Height="3"/>      <!-- 1 accent rule -->
-      <RowDefinition Height="Auto"/>   <!-- 2 toolbar -->
-      <RowDefinition Height="*"/>      <!-- 3 the stack -->
-      <RowDefinition Height="Auto"/>   <!-- 4 problems -->
-      <RowDefinition Height="Auto"/>   <!-- 5 status bar -->
-      <RowDefinition Height="Auto"/>   <!-- 6 action bar -->
-    </Grid.RowDefinitions>
+  <DockPanel LastChildFill="True" Background="{StaticResource BrushPureWhite}">
 
-    <Border Grid.Row="0" Background="{StaticResource BrushCharcoalBlack}"
-            Padding="16,12" CornerRadius="5,5,0,0">
+    <Border DockPanel.Dock="Top" Background="{StaticResource BrushCharcoalBlack}" Padding="16,12">
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="*"/>
           <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
-        <StackPanel Grid.Column="0">
-          <TextBlock Style="{StaticResource TextH2OnDark}" Text="Storey Editor"/>
-          <TextBlock x:Name="HeaderSubtitle" Style="{StaticResource TextH3OnDark}"
-                     Margin="0,2,0,0" TextWrapping="Wrap"
-                     Text="The storeys of the building, and how far apart they are."/>
-        </StackPanel>
-        <TextBlock Grid.Column="1" Style="{StaticResource TextBadge}" VerticalAlignment="Top"
+        <TextBlock Grid.Column="0" Style="{StaticResource TextH2OnDark}"
+                   Text="Storey Editor" VerticalAlignment="Center"/>
+        <TextBlock Grid.Column="1" Style="{StaticResource TextCaption}" VerticalAlignment="Center"
                    Foreground="{StaticResource BrushSilverSteel}" Text="AnonGee &#183; C2B"/>
       </Grid>
     </Border>
+    <Rectangle DockPanel.Dock="Top" Height="3" Fill="{StaticResource BrushVividRed}"/>
 
-    <Rectangle Grid.Row="1" Fill="{StaticResource BrushVividRed}"/>
-
-    <!-- Toolbar: only what is not about one particular storey. -->
-    <Grid Grid.Row="2" Margin="0,10,0,8">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="Auto"/>
-      </Grid.ColumnDefinitions>
-      <StackPanel Grid.Column="0" Orientation="Horizontal">
-        <Button x:Name="BtnAdd" Style="{StaticResource ButtonSecondary}" Content="_Add on top"
-                Width="120" Margin="0,0,8,0"/>
-        <Button x:Name="BtnAddBottom" Style="{StaticResource ButtonNeutral}"
-                Content="Add at the _bottom" Width="150"/>
-      </StackPanel>
-      <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-        <TextBlock Style="{StaticResource TextCaption}" Margin="0,0,6,0" Text="New storeys are"/>
-        <TextBox x:Name="DefaultHeight" Style="{StaticResource InputNumberBox}" Width="64" Text="3000"/>
-        <TextBlock Style="{StaticResource TextCaption}" Margin="6,0,0,0" Text="mm tall"/>
-      </StackPanel>
-    </Grid>
-
-    <!-- The stack, as a card with a Charcoal column header and its own footer. -->
-    <Border Grid.Row="3" Style="{StaticResource CardBorder}" Padding="0">
-      <Grid>
-        <Grid.RowDefinitions>
-          <RowDefinition Height="Auto"/>
-          <RowDefinition Height="*"/>
-          <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-
-        <Border Grid.Row="0" Background="{StaticResource BrushTableHeaderBackground}"
-                CornerRadius="7,7,0,0">
-          <Grid x:Name="HeaderRow" Margin="0,6">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="30"/>
-              <ColumnDefinition Width="*"  MinWidth="150"/>
-              <ColumnDefinition Width="82"/>
-              <ColumnDefinition Width="92"/>
-              <ColumnDefinition Width="168"/>
-              <ColumnDefinition Width="86"/>
-              <ColumnDefinition Width="188"/>
-            </Grid.ColumnDefinitions>
-            <TextBlock Grid.Column="0" Style="{StaticResource TextBadge}" Margin="8,0,0,0"
-                       Foreground="{StaticResource BrushPureWhite}" Text="#"/>
-            <TextBlock Grid.Column="1" Style="{StaticResource TextBadge}" Margin="8,0,0,0"
-                       Foreground="{StaticResource BrushPureWhite}" Text="STOREY"/>
-            <TextBlock Grid.Column="2" Style="{StaticResource TextBadge}" Margin="0,0,8,0"
-                       HorizontalAlignment="Right"
-                       Foreground="{StaticResource BrushPureWhite}" Text="HEIGHT"/>
-            <TextBlock Grid.Column="3" Style="{StaticResource TextBadge}" Margin="0,0,8,0"
-                       HorizontalAlignment="Right"
-                       Foreground="{StaticResource BrushPureWhite}" Text="ELEVATION"/>
-            <TextBlock Grid.Column="4" Style="{StaticResource TextBadge}" Margin="8,0,0,0"
-                       Foreground="{StaticResource BrushPureWhite}" Text="BUILT FROM"/>
-            <TextBlock Grid.Column="5" Style="{StaticResource TextBadge}" Margin="8,0,0,0"
-                       Foreground="{StaticResource BrushPureWhite}" Text="NOTE"/>
-            <TextBlock Grid.Column="6" Style="{StaticResource TextBadge}" Margin="8,0,0,0"
-                       Foreground="{StaticResource BrushPureWhite}" Text="THIS STOREY"/>
-          </Grid>
-        </Border>
-
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
-                      HorizontalScrollBarVisibility="Disabled">
-          <StackPanel x:Name="RowsHost"/>
-        </ScrollViewer>
-
-        <Border Grid.Row="2" Background="{StaticResource BrushOffWhite}"
-                BorderBrush="{StaticResource BrushLightBorder}" BorderThickness="0,1,0,0"
-                CornerRadius="0,0,7,7" Padding="10,5">
-          <TextBlock Style="{StaticResource TextCaption}"
-                     Text="Every storey rises from the one below it. Type a height or an elevation and the other follows. Repeat a storey to build one drawn plan more than once."/>
-        </Border>
-      </Grid>
-    </Border>
-
-    <!-- Problems: inline, above the status bar, never a modal box (11.5, 13.4). -->
-    <Border x:Name="ProblemsPanel" Grid.Row="4" Visibility="Collapsed"
-            Style="{StaticResource CardBorder}" Padding="12,8" Margin="0,8,0,0">
-      <ScrollViewer MaxHeight="92" VerticalScrollBarVisibility="Auto">
-        <StackPanel x:Name="ProblemsHost"/>
-      </ScrollViewer>
-    </Border>
-
-    <Border Grid.Row="5" Background="{StaticResource BrushOffWhite}"
-            BorderBrush="{StaticResource BrushLightBorder}" BorderThickness="1"
-            Padding="12,7" Margin="0,8,0,0" CornerRadius="5">
+    <!-- Footer: status left, actions right (12.6). -->
+    <Border DockPanel.Dock="Bottom" Background="{StaticResource BrushOffWhite}"
+            BorderBrush="{StaticResource BrushLightBorder}" BorderThickness="0,1,0,0"
+            Padding="16,8">
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="Auto"/>
           <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
         <Border x:Name="StatusBadgeBorder" Grid.Column="0" Style="{StaticResource BadgeBorder}"
                 Background="{StaticResource BrushInfoBadgeBackground}">
           <TextBlock x:Name="StatusBadge" Style="{StaticResource TextBadge}"
                      Foreground="{StaticResource BrushInfoBadgeForeground}" Text="READY"/>
         </Border>
-        <TextBlock x:Name="StatusLine" Grid.Column="1" Style="{StaticResource TextCaption}"
-                   Margin="10,0,0,0" Text=""/>
+        <TextBlock x:Name="StatusLine" Grid.Column="1" Style="{StaticResource TextStatus}"
+                   Margin="10,0,8,0" VerticalAlignment="Center"
+                   TextTrimming="CharacterEllipsis" Text=""/>
+        <Button x:Name="BtnCancel" Grid.Column="2" Content="Cancel"
+                Style="{StaticResource ButtonGhost}" Width="76" IsCancel="True"/>
+        <Button x:Name="BtnSave" Grid.Column="3" Content="Save the storeys"
+                Style="{StaticResource ButtonPrimary}" Width="140" Margin="8,0,0,0" IsDefault="True"/>
       </Grid>
     </Border>
 
-    <Border Grid.Row="6" Background="{StaticResource BrushOffWhite}"
-            BorderBrush="{StaticResource BrushLightBorder}" BorderThickness="0,1,0,0"
-            Padding="12,8" Margin="0,8,0,0">
-      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-        <Button x:Name="BtnCancel" Style="{StaticResource ButtonGhost}" Content="Cancel"
-                Width="100" IsCancel="True"/>
-        <Button x:Name="BtnSave" Style="{StaticResource ButtonPrimary}" Content="_Save the storeys"
-                Width="160" Margin="10,0,0,0" IsDefault="True"/>
-      </StackPanel>
+    <!-- Problems: inline, above the footer, never a modal box (11.5, 13.4). -->
+    <Border x:Name="ProblemsPanel" DockPanel.Dock="Bottom" Visibility="Collapsed"
+            Background="{StaticResource BrushPureWhite}"
+            BorderBrush="{StaticResource BrushLightBorder}" BorderThickness="0,1,0,0">
+      <ScrollViewer MaxHeight="88" VerticalScrollBarVisibility="Auto" Margin="16,8">
+        <StackPanel x:Name="ProblemsHost"/>
+      </ScrollViewer>
     </Border>
 
-  </Grid>
+    <StackPanel Margin="16,12">
+      <TextBlock x:Name="HeaderSubtitle" Style="{StaticResource HelpText}"
+                 Text="The storeys of the building, and how far apart they are."/>
+      <TextBlock Style="{StaticResource HelpText}" Margin="0,4,0,8"
+                 Text="One row per storey, BOTTOM-UP: the first row is built first, on the base elevation. Built from is which detected floor plan that storey uses -- pick the same plan on several rows, or set Repeat to build one plan more than once. Height is that storey's floor-to-floor rise; type a height or an elevation and the other follows. Untick Build to leave a storey out. Click a row, then use the buttons under the table to move, add or remove it."/>
+
+      <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+        <TextBlock Text="New storeys are" Style="{StaticResource TextLabel}" VerticalAlignment="Center"/>
+        <TextBox x:Name="DefaultHeight" Style="{StaticResource InputNumberBox}"
+                 Width="70" Margin="8,0,6,0" Text="3000"/>
+        <TextBlock Text="mm tall" Style="{StaticResource TextLabel}" VerticalAlignment="Center"/>
+      </StackPanel>
+    </StackPanel>
+
+    <Border Style="{StaticResource CardBorder}" Padding="0" Margin="16,0,16,12">
+      <DockPanel LastChildFill="True">
+
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource BrushOffWhite}"
+                BorderBrush="{StaticResource BrushLightBorder}" BorderThickness="0,1,0,0"
+                CornerRadius="0,0,7,7" Padding="10,6">
+          <StackPanel Orientation="Horizontal">
+            <Button x:Name="BtnUp" Content="Move up" Style="{StaticResource ButtonNeutral}" Width="82"/>
+            <Button x:Name="BtnDown" Content="Move down" Style="{StaticResource ButtonNeutral}"
+                    Width="92" Margin="8,0,0,0"/>
+            <Button x:Name="BtnAdd" Content="Add storey" Style="{StaticResource ButtonNeutral}"
+                    Width="92" Margin="8,0,0,0"/>
+            <Button x:Name="BtnAddBottom" Content="Add at the bottom"
+                    Style="{StaticResource ButtonNeutral}" Width="128" Margin="8,0,0,0"/>
+            <Button x:Name="BtnRemove" Content="Remove" Style="{StaticResource ButtonNeutral}"
+                    Width="82" Margin="8,0,0,0"/>
+            <TextBlock x:Name="SelectionText" Style="{StaticResource HelpText}"
+                       VerticalAlignment="Center" Margin="12,0,0,0"/>
+          </StackPanel>
+        </Border>
+
+        <DataGrid x:Name="StoreyGrid" Style="{StaticResource DataGridStyle}">
+          <DataGrid.Resources>
+            <!-- 12.7.H: the DataGrid's visual state manager paints a selected row with the
+                 system highlight unless these keys are redefined at its own scope. -->
+            <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="#FEF2F2"/>
+            <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" Color="#141414"/>
+            <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightBrushKey}" Color="#FEF2F2"/>
+            <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightTextBrushKey}" Color="#141414"/>
+          </DataGrid.Resources>
+          <DataGrid.Columns>
+
+            <DataGridTemplateColumn Header="Build" Width="48" CanUserResize="False" IsReadOnly="True">
+              <DataGridTemplateColumn.CellTemplate>
+                <DataTemplate>
+                  <CheckBox Style="{StaticResource GridCheckBox}"
+                            IsChecked="{Binding IsSelected, Mode=TwoWay,
+                                        RelativeSource={RelativeSource AncestorType=DataGridRow}}"/>
+                </DataTemplate>
+              </DataGridTemplateColumn.CellTemplate>
+            </DataGridTemplateColumn>
+
+            <DataGridTextColumn Header="No." Binding="{Binding Number}" Width="42" IsReadOnly="True"
+                                ElementStyle="{StaticResource GridMuted}"/>
+
+            <DataGridTextColumn Header="Storey" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                Width="*" MinWidth="140"
+                                ElementStyle="{StaticResource GridText}"
+                                EditingElementStyle="{StaticResource GridEditBox}"/>
+
+            <DataGridTextColumn Header="Height mm" Binding="{Binding Height, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                Width="88"
+                                ElementStyle="{StaticResource GridNumber}"
+                                EditingElementStyle="{StaticResource GridEditNumberBox}"/>
+
+            <DataGridTextColumn Header="Elevation mm" Binding="{Binding Elevation, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                Width="98"
+                                ElementStyle="{StaticResource GridNumber}"
+                                EditingElementStyle="{StaticResource GridEditNumberBox}"/>
+
+            <DataGridTemplateColumn Header="Built from" Width="176" IsReadOnly="True">
+              <DataGridTemplateColumn.CellTemplate>
+                <DataTemplate>
+                  <ComboBox Style="{StaticResource GridComboBox}"
+                            ItemsSource="{Binding PlanChoices}"
+                            SelectedItem="{Binding Plan, Mode=TwoWay}"/>
+                </DataTemplate>
+              </DataGridTemplateColumn.CellTemplate>
+            </DataGridTemplateColumn>
+
+            <DataGridTextColumn Header="Repeat" Binding="{Binding Repeat, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                Width="58"
+                                ElementStyle="{StaticResource GridNumber}"
+                                EditingElementStyle="{StaticResource GridEditNumberBox}"/>
+
+            <DataGridTextColumn Header="Note" Binding="{Binding Flag}" Width="92" IsReadOnly="True"
+                                ElementStyle="{StaticResource GridMuted}"/>
+          </DataGrid.Columns>
+        </DataGrid>
+
+      </DockPanel>
+    </Border>
+
+  </DockPanel>
 </Window>

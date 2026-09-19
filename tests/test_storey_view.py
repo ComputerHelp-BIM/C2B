@@ -202,14 +202,21 @@ def test_a_command_names_a_storey_that_is_not_there_and_is_refused_loudly():
 
 # ------------------------------------------------------------------- status
 
-def test_a_clean_stack_reads_ready_and_counts_itself():
+def test_a_clean_stack_reads_ready_and_counts_the_levels_it_builds():
+    """Levels, not rows: one row with a repeat of eight is eight levels in Revit."""
     severity, badge, line = presenter(0, 3000, 3000).status()
     assert (severity, badge) == ("SUCCESS", "READY")
-    assert "3 storeys" in line and "6000 mm overall" in line
+    assert "3 levels" in line and "6000 mm overall" in line
 
 
-def test_one_storey_is_not_called_storeys():
-    assert "1 storey," in presenter(0).status()[2]
+def test_a_repeat_is_counted_in_the_levels_not_in_the_rows():
+    p = presenter(0, 3000)
+    p.set_repeat(p.schedule.storeys[1].id, "5")
+    assert "6 levels" in p.status()[2]
+
+
+def test_one_level_is_not_called_levels():
+    assert "1 level," in presenter(0).status()[2]
 
 
 def test_an_error_is_counted_and_named_as_something_to_fix():
@@ -300,3 +307,75 @@ def test_a_repeated_storey_says_so_in_one_word():
     p = presenter(0, 3000, names=["GF", "1F"])
     p.repeat(p.schedule.storeys[1].id, "1")
     assert "repeat" in {r.flag for r in p.rows()}
+
+
+# --------------------------------------------- repeat, and leaving one out
+
+def test_a_repeat_typed_in_the_column_builds_that_many_levels():
+    p = presenter(0, 3000, names=["GF", "TYPICAL 1"])
+    assert p.set_repeat(p.schedule.storeys[1].id, "8") == ""
+    assert p.schedule.level_count() == 9
+
+
+def test_a_repeat_that_is_not_a_count_is_refused():
+    p = presenter(0, 3000)
+    sid = p.schedule.storeys[1].id
+    assert "not a number of storeys" in p.set_repeat(sid, "lots")
+    assert "not a number of storeys" in p.set_repeat(sid, "0")
+    assert p.schedule.storeys[1].repeat == 1
+
+
+def test_a_repeat_shows_in_the_row_the_window_draws():
+    p = presenter(0, 3000)
+    p.set_repeat(p.schedule.storeys[1].id, "4")
+    assert [r.repeat for r in p.rows()] == [4, 1]       # highest first
+
+
+def test_unticking_a_storey_leaves_it_in_the_table_and_out_of_the_model():
+    """Removing by mistake should be one tick away from coming back."""
+    p = presenter(0, 3000, 3000, names=["GF", "1F", "2F"])
+    p.set_build(p.schedule.storeys[1].id, False)
+    assert len(p.rows()) == 3, "an unticked storey still has a row"
+    assert [r.build for r in p.rows()] == [True, False, True]
+    assert [x.name for x in p.built_schedule().storeys] == ["GF", "2F"]
+
+
+def test_the_footer_says_how_many_were_left_out():
+    p = presenter(0, 3000, 3000)
+    p.set_build(p.schedule.storeys[1].id, False)
+    assert "1 left out" in p.status()[2]
+
+
+def test_an_unticked_storey_is_not_reported_against():
+    """A storey nobody is building is not a problem worth blocking a save for."""
+    p = presenter(0, 0, names=["GF", "GF"])              # two of one name: an ERROR
+    assert not p.can_save()
+    p.set_build(p.schedule.storeys[1].id, False)
+    assert p.can_save()
+    assert not any(s == "ERROR" for s, _ in p.problem_lines())
+
+
+def test_ticking_it_back_brings_the_problem_back_too():
+    p = presenter(0, 0, names=["GF", "GF"])
+    sid = p.schedule.storeys[1].id
+    p.set_build(sid, False)
+    p.set_build(sid, True)
+    assert not p.can_save()
+
+
+def test_a_plan_is_set_from_the_label_a_dropdown_shows():
+    p = presenter(0, 3000, plans=False)
+    assert p.set_plan_label(p.schedule.storeys[0].id, "F00  PLAN 0") == ""
+    assert p.schedule.storeys[0].plan_floor_id == "F00"
+
+
+def test_a_label_that_is_not_offered_clears_the_plan():
+    p = presenter(0, 3000)
+    p.set_plan_label(p.schedule.storeys[0].id, "something else entirely")
+    assert p.schedule.storeys[0].plan_floor_id is None
+
+
+def test_a_command_naming_a_storey_that_is_not_there_is_refused_loudly():
+    p = presenter(0, 3000)
+    with pytest.raises(KeyError):
+        p.set_build("S99", False)

@@ -74,13 +74,18 @@ VIVID_RED_ON_DARK: Final = "#FF5F4C"    # accents and borders on dark; fills kee
 # 4  Typography. WPF device-independent units are authoritative.
 # ---------------------------------------------------------------------------
 #: The primary UI face. The token is named for the tier, not the family: it has been Inter,
-#: then Source Serif 4, and is now JetBrains Mono-led. The fallback chain is mandatory --
-#: nothing may assume a font is installed on a drafting machine.
-FONT_SANS: Final = "JetBrains Mono, Source Serif 4, Inter, Segoe UI, Calibri"
-FONT_MONO: Final = "JetBrains Mono, Consolas, Courier New"
+#: then Source Serif 4, then JetBrains Mono-led, and is **Segoe UI** here at the owner's
+#: instruction -- a monospace face reads as a terminal across a whole desktop window, which is
+#: not what C2B is. The fallback chain is still mandatory: nothing may assume a font is
+#: installed on a drafting machine.
+FONT_SANS: Final = "Segoe UI, Inter, Calibri, Arial"
+#: Numbers only -- an elevation column and a progress log are columns of figures, and figures
+#: that do not line up are harder to read than figures in the wrong face. Consolas ships with
+#: Windows, so this never falls through to something arbitrary.
+FONT_MONO: Final = "Consolas, Courier New"
 #: Tkinter takes one family, not a chain, so it gets the first of these that exists.
-FONT_SANS_FALLBACKS: Final = ("JetBrains Mono", "Source Serif 4", "Inter", "Segoe UI", "Calibri", "TkDefaultFont")
-FONT_MONO_FALLBACKS: Final = ("JetBrains Mono", "Consolas", "Courier New", "TkFixedFont")
+FONT_SANS_FALLBACKS: Final = ("Segoe UI", "Inter", "Calibri", "Arial", "TkDefaultFont")
+FONT_MONO_FALLBACKS: Final = ("Consolas", "Courier New", "TkFixedFont")
 
 #: These are the sizes the **shipping** ``Typography.xaml`` uses, taken from the reference
 #: ``ui.xaml`` of AnonGee . One Filter Parameter, not the ones the brand document's table
