@@ -8,6 +8,10 @@ windows cannot come to behave differently.
 that stops repainting looks broken. WPF owns its controls from one thread only, so every
 progress line comes back through ``Dispatcher.BeginInvoke`` -- touching a control from the
 worker is not a race that shows up sometimes, it is an immediate exception.
+
+**And this class is itself built on a thread WPF will have**, which is what
+:func:`c2b.ui.wpf.run_sta` is for. Construct it anywhere else and the ``Window`` constructor
+throws before a single control exists.
 """
 from __future__ import annotations
 
@@ -444,4 +448,4 @@ def _open(path: Path) -> None:
 
 
 def main() -> None:
-    C2BWindow().show()
+    wpf.run_sta(lambda: C2BWindow().show())

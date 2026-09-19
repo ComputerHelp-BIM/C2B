@@ -61,10 +61,18 @@ def run_gui(drawing: str | Path | None = None) -> int:
         try:
             from .main_wpf import C2BWindow
 
-            window = C2BWindow()
-            if drawing:
-                window.inputs["drawing"].Text = str(drawing)
-            window.show()
+            def open_window() -> None:
+                """The whole window, on whichever thread WPF will have it.
+
+                All of it, not just the constructor: a WPF control belongs to the thread that
+                made it, so filling the drawing box has to happen there too.
+                """
+                window = C2BWindow()
+                if drawing:
+                    window.inputs["drawing"].Text = str(drawing)
+                window.show()
+
+            wpf.run_sta(open_window)
             return 0
         except Exception as ex:
             import traceback

@@ -88,6 +88,11 @@ Five real client drawings with five different conventions were used to build it:
 window, or drag
 a client DXF onto `windows\C2B-run.bat`. See [QUICKSTART.md](QUICKSTART.md).
 
+If the plain window opens instead of the branded one, it says why on itself and in
+`%USERPROFILE%\.c2b\window.log`. `windows\C2B-debug.bat` starts the same window with a
+console behind it, and `c2b doctor` reports which .NET is found and which thread the window
+will open on.
+
 ```bash
 python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install -e ".[dev,render]"

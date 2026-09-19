@@ -24,6 +24,15 @@ So, in order:
 2. **.NET Framework 4.x**, where an assembly is asked for by its *full strong name*, and
    failing that by its path in the GAC. Both of those do find it.
 
+**And then the thread.** WPF builds a control only on a thread in a single-threaded
+apartment. Python's main thread is not one, so ``Window..ctor()`` throws
+``InvalidOperationException: The calling thread must be STA`` -- and it arrives wrapped in a
+``XamlParseException`` naming line 20 of the layout, which sends you reading markup that was
+never wrong. :func:`run_sta` is the answer: it makes the calling thread STA where that is
+still allowed, and otherwise runs the window on a thread that is. A WPF control belongs to
+the thread that made it, so what goes on that thread has to be the whole window -- built,
+wired, shown and closed -- and not just the constructor.
+
 Everything else in C2B asks :func:`available` and falls back to Tkinter. Nothing here is
 imported at module scope: importing ``clr`` on a machine without .NET is an error, and a tool
 that cannot start on Linux is no use to the people who develop it.
@@ -31,8 +40,9 @@ that cannot start on Linux is no use to the people who develop it.
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from . import xaml
 
@@ -51,6 +61,12 @@ _WHY_NOT: str = ""
 _RUNTIME: str = ""
 #: ``set_runtime`` is a one-shot: pythonnet keeps the first CLR it is given.
 _RUNTIME_CHOSEN = False
+
+T = TypeVar("T")
+
+#: How long :func:`run_sta` sleeps between looks at the window thread. Short enough that a
+#: thread which died before it reached Python is noticed, long enough to cost nothing.
+_WATCH_SECONDS = 0.25
 
 
 def available() -> bool:
@@ -97,6 +113,22 @@ def runtime() -> str:
     if not _RUNTIME:
         available()
     return _RUNTIME
+
+
+def apartment() -> str:
+    """The apartment state of the thread that asks, as .NET sees it.
+
+    ``"STA"`` is the only one WPF will build a window on. Anything else means :func:`run_sta`
+    will open the window on a thread of its own, which works and is worth knowing about before
+    someone goes looking for the reason a control cannot be touched from here.
+    """
+    try:
+        _load_assemblies()
+        from System.Threading import Thread
+
+        return str(Thread.CurrentThread.GetApartmentState())
+    except Exception:
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +220,7 @@ def _load_assemblies() -> None:
         _add_reference(clr, name, token)
     if not _RUNTIME:
         _RUNTIME = ".NET Framework"
+    _ensure_sta()
 
 
 def _add_reference(clr: Any, name: str, token: str) -> None:
@@ -235,6 +268,88 @@ def gac_path(name: str, token: str) -> Path | None:
 
 
 # ---------------------------------------------------------------------------
+# The thread WPF will build on
+# ---------------------------------------------------------------------------
+
+def _ensure_sta() -> bool:
+    """Put the calling thread in a single-threaded apartment, if it is not too late.
+
+    The cheapest fix by far, when it works: the window is then built, shown and closed on the
+    thread that asked for it, and everything a caller does to it afterwards -- reading a text
+    box, wiring a handler, opening a second dialog -- is on the right thread by construction.
+
+    A thread's apartment can be set once. Python's main thread has not chosen one at the
+    point C2B first asks for a window, so this usually succeeds; it is ``Try`` and not
+    ``Set`` because on a thread that already committed to MTA the answer is "no", not an
+    exception, and "no" has a perfectly good answer in :func:`run_sta`.
+    """
+    from System.Threading import ApartmentState, Thread
+
+    current = Thread.CurrentThread
+    if current.GetApartmentState() == ApartmentState.STA:
+        return True
+    try:
+        return bool(current.TrySetApartmentState(ApartmentState.STA))
+    except Exception:
+        return False                      # older or stricter runtimes refuse outright
+
+
+def run_sta(work: Callable[[], T]) -> T:
+    """Run ``work`` on a thread WPF will accept, and give back what it returned.
+
+    ``work`` is the **whole** window: construct it, fill it, wire it, show it, and let it
+    close. Not just the constructor. A WPF control belongs to the thread that made it and
+    throws on any other, so a window built here and driven from the calling thread would fail
+    on the first line that touched a control -- later, and somewhere less obvious.
+
+    Already on an STA thread -- which is the normal case once :func:`_ensure_sta` has had its
+    turn, and always the case for a dialog opened from another dialog's handler -- and it is
+    simply called. No thread, no marshalling, and a second window shares the first one's
+    dispatcher.
+
+    Otherwise it gets a thread of its own. The wait is a Python :class:`threading.Event`
+    rather than ``Thread.Join``: waiting in Python releases the GIL, so the window thread can
+    call back into Python to build the window at all. The loop is there because a thread that
+    dies before it reaches Python never sets the event, and a tool that hangs forever is
+    worse than one that reports a failure.
+    """
+    _load_assemblies()
+    from System.Threading import ApartmentState, Thread, ThreadStart
+
+    if Thread.CurrentThread.GetApartmentState() == ApartmentState.STA:
+        return work()
+
+    import threading
+
+    done = threading.Event()
+    outcome: dict[str, Any] = {}
+
+    def run() -> None:
+        try:
+            outcome["value"] = work()
+        except BaseException as ex:       # re-raised on the calling thread, below
+            outcome["error"] = ex         # an exception out of a .NET thread ends the process
+        finally:
+            done.set()
+
+    thread = Thread(ThreadStart(run))
+    thread.SetApartmentState(ApartmentState.STA)
+    thread.IsBackground = True            # never the reason C2B will not shut down
+    thread.Name = "C2B window"
+    thread.Start()
+    while not done.wait(_WATCH_SECONDS):
+        if not thread.IsAlive:
+            break
+    if "error" in outcome:
+        raise outcome["error"]
+    if "value" not in outcome:
+        raise RuntimeError(
+            "the window thread stopped before the window could open. "
+            "Run  c2b doctor  and send what it says to whoever maintains C2B.")
+    return outcome["value"]
+
+
+# ---------------------------------------------------------------------------
 # Windows
 # ---------------------------------------------------------------------------
 
@@ -246,6 +361,10 @@ def load_window(name: str) -> Any:
     sandbox (§12.7.B) -- without a second copy of the palette existing anywhere.
 
     Parsed from a ``MemoryStream``, which is what every tool in the suite does.
+
+    **Call this on an STA thread** -- :func:`run_sta` is how. Off one, the ``Window``
+    constructor throws and ``XamlReader`` reports it as a parse error against the line the
+    root element is on, which is markup that has nothing wrong with it.
     """
     _load_assemblies()
     from System.IO import MemoryStream

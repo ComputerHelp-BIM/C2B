@@ -63,6 +63,11 @@ def doctor(selftest: bool = typer.Option(True, "--selftest/--no-selftest", help=
 
     if _wpf.available():
         typer.secho(f"{'window':14s} branded (WPF) on {_wpf.runtime()}", fg=typer.colors.GREEN)
+        # WPF builds a control only on a single-threaded apartment. STA here means the window
+        # opens on this thread; anything else means it gets one of its own, which also works.
+        state = _wpf.apartment()
+        typer.echo(f"{'window thread':14s} {state}" + ("" if state == "STA" else
+                                                       " - the window will open on a thread of its own"))
     else:
         typer.secho(f"{'window':14s} plain (Tkinter)", fg=typer.colors.YELLOW)
         for line in _wpf.why_not_in_full().splitlines():

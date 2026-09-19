@@ -31,7 +31,10 @@ def edit_storeys(schedule: StoreySchedule, plan_floors: list[tuple[str, str]] | 
     if wpf.available():
         from .storey_wpf import edit_storeys_wpf
 
-        return edit_storeys_wpf(presenter, subtitle, owner_handle)
+        # run_sta because this is also reachable from the Tkinter window and from the command
+        # line, where nothing has put the calling thread in the apartment WPF needs. Opened
+        # from the branded window's own button it is already on that thread and runs inline.
+        return wpf.run_sta(lambda: edit_storeys_wpf(presenter, subtitle, owner_handle))
 
     from .storey_tk import edit_storeys_tk
 
@@ -54,8 +57,8 @@ def show_elapsed(report: dict, parent=None, owner_handle: int | None = None,
         if wpf.available():
             from .elapsed_wpf import CLOSE_AFTER_SECONDS, show_elapsed_wpf
 
-            show_elapsed_wpf(report, owner_handle,
-                             CLOSE_AFTER_SECONDS if close_after is None else close_after)
+            seconds = CLOSE_AFTER_SECONDS if close_after is None else close_after
+            wpf.run_sta(lambda: show_elapsed_wpf(report, owner_handle, seconds))
             return
         if parent is not None:
             from .elapsed_tk import show_elapsed_tk
