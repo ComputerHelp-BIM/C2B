@@ -202,8 +202,8 @@ def test_the_window_shows_the_next_step_and_offers_the_storey_editor():
     body = ast.unparse(finish)
     assert "next_step" in body, "the window never shows the next step"
     assert "storeys_btn.pack" in body, "the storey editor is never offered"
-    # offered on every run that read a drawing, not only when something went wrong
-    assert "result.storeys_json" in body and "not result.revit_json" not in body
+    # Whether to offer it is the presenter's rule, so both windows ask the same question.
+    assert "can_edit_storeys()" in body and "not result.revit_json" not in body
 
 
 def test_saving_storeys_drops_a_level_workbook_chosen_on_an_earlier_run():

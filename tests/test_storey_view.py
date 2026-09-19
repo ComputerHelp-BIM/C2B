@@ -123,7 +123,7 @@ def test_choosing_a_plan_for_a_storey_takes():
 def test_the_default_height_is_remembered_for_the_next_storey_added():
     p = presenter(0)
     assert p.set_default_height("3,300") == ""
-    p.add()
+    p.add_above()
     assert p.schedule.elevations() == [0, 3300]
 
 
@@ -134,92 +134,70 @@ def test_a_default_height_that_is_not_a_height_is_refused():
 
 
 # ----------------------------------------------------------------- commands
+# Every command names the storey it acts on, so a test reads the way the window does: this
+# button, on this row.
 
-def test_add_puts_the_new_storey_above_the_selected_one_and_selects_it():
+def test_add_above_puts_the_new_storey_over_the_one_named():
     p = presenter(0, 3000, names=["GF", "1F"])
-    p.select(p.schedule.storeys[0].id)                    # GF
-    p.add()
-    assert [s.name for s in p.schedule.storeys][:2] == ["GF", "LEVEL"]
-    assert p.selected_id == p.schedule.storeys[1].id
+    p.add_above(p.schedule.storeys[0].id)                 # above GF
+    assert [s.name for s in p.schedule.storeys] == ["GF", "LEVEL", "1F"]
+    assert p.schedule.elevations() == [0, 3000, 6000]
 
 
 def test_add_below_puts_a_foundation_under_the_ground_floor():
     p = presenter(0, 3000, names=["GF", "1F"])
-    p.select(p.schedule.storeys[0].id)
-    p.add_below()
-    p.set_name(p.selected_id, "FOUNDATION")
+    p.add_below(p.schedule.storeys[0].id)
+    p.set_name(p.schedule.storeys[0].id, "FOUNDATION")
     assert [s.name for s in p.schedule.storeys] == ["FOUNDATION", "GF", "1F"]
     assert p.schedule.elevations() == [0, 3000, 6000]
 
 
-def test_add_with_nothing_selected_goes_on_top():
+def test_add_with_no_storey_named_goes_on_top():
     p = presenter(0, 3000)
-    p.select(None)
-    p.add()
-    assert p.schedule.storeys[-1].id == p.selected_id
+    p.add_above()
+    assert len(p.schedule) == 3
+    assert p.schedule.elevations()[-1] == 6000
 
 
-def test_remove_takes_the_selected_storey_and_keeps_a_selection():
-    p = presenter(0, 3000, 3000)
-    p.select(p.schedule.storeys[1].id)
-    assert p.remove() == ""
-    assert len(p.schedule) == 2
-    assert p.selected_id in {s.id for s in p.schedule.storeys}
+def test_add_below_with_no_storey_named_goes_under_everything():
+    p = presenter(0, 3000, names=["GF", "1F"])
+    p.add_below()
+    assert p.schedule.storeys[0].name == "LEVEL"
 
 
-def test_removing_the_last_storey_leaves_nothing_selected():
-    p = presenter(0)
-    p.select(p.schedule.storeys[0].id)
-    p.remove()
-    assert p.selected_id is None
+def test_remove_takes_the_storey_it_was_asked_for():
+    p = presenter(0, 3000, 3000, names=["GF", "1F", "2F"])
+    assert p.remove(p.schedule.storeys[1].id) == ""
+    assert [s.name for s in p.schedule.storeys] == ["GF", "2F"]
 
 
-def test_remove_with_nothing_selected_asks_for_a_selection():
-    p = presenter(0, 3000)
-    p.select(None)
-    assert "Pick a storey" in p.remove()
-    assert len(p.schedule) == 2
-
-
-def test_move_up_walks_the_storey_up_the_stack():
+def test_move_up_walks_that_storey_up_the_stack():
     p = presenter(0, 3000, 4000, names=["GF", "1F", "2F"])
-    p.select(p.schedule.storeys[1].id)
-    p.move(+1)
+    p.move(p.schedule.storeys[1].id, +1)
     assert [s.name for s in p.schedule.storeys] == ["GF", "2F", "1F"]
 
 
-def test_move_with_nothing_selected_asks_for_a_selection():
-    p = presenter(0, 3000)
-    p.select(None)
-    assert "Pick a storey" in p.move(+1)
-
-
-def test_repeat_stacks_typical_floors_and_selects_the_topmost_made():
+def test_repeat_stacks_typical_floors_on_the_row_it_was_pressed_on():
     p = presenter(0, 3000, names=["GF", "1F"])
-    p.select(p.schedule.storeys[1].id)
-    assert p.repeat("7") == ""
+    assert p.repeat(p.schedule.storeys[1].id, "7") == ""
     assert len(p.schedule) == 9
-    assert p.selected_id == p.schedule.storeys[-1].id
     assert all(s.plan_floor_id == "F01" for s in p.schedule.storeys[1:])
+    assert p.schedule.elevations()[-1] == 24000
 
 
 def test_repeat_refuses_a_count_that_is_not_a_count():
     p = presenter(0, 3000)
-    p.select(p.schedule.storeys[1].id)
-    assert "not a number of storeys" in p.repeat("lots")
-    assert "not a number of storeys" in p.repeat("0")
+    sid = p.schedule.storeys[1].id
+    assert "not a number of storeys" in p.repeat(sid, "lots")
+    assert "not a number of storeys" in p.repeat(sid, "0")
     assert len(p.schedule) == 2
 
 
-def test_repeat_with_nothing_selected_asks_which_storey():
+def test_a_command_names_a_storey_that_is_not_there_and_is_refused_loudly():
+    """A row button carrying a stale id is a bug, not something to paper over."""
     p = presenter(0, 3000)
-    p.select(None)
-    assert "Pick the storey" in p.repeat("2")
-
-
-def test_the_top_storey_starts_selected_so_a_command_always_has_a_subject():
-    p = presenter(0, 3000, 3000)
-    assert p.selected_id == p.schedule.storeys[-1].id
+    with pytest.raises(KeyError):
+        p.remove("S99")
 
 
 # ------------------------------------------------------------------- status
@@ -291,3 +269,34 @@ def test_a_bare_small_decimal_is_taken_at_its_word_not_guessed_as_metres():
 ])
 def test_a_length_is_shown_in_whole_millimetres_unless_it_is_not_one(value, expected):
     assert format_mm(value) == expected
+
+
+# ------------------------------------------------- the note column, shortened
+
+def test_a_row_carries_one_word_for_the_narrow_column_and_the_whole_of_it_in_a_tooltip():
+    """Seven rows all reading the same sentence hide the one row that says something else."""
+    p = presenter(0, 3000)
+    p.schedule.storeys[1].note = "height assumed - please check"
+    row = next(r for r in p.rows() if r.number == 1)
+    assert row.flag == "assumed"
+    assert "a floor plan in the drawing" in row.tooltip and "please check" in row.tooltip
+
+
+def test_a_problem_outranks_where_the_storey_came_from():
+    p = presenter(0, 0, names=["GF", "1F"])
+    assert next(r for r in p.rows() if r.name == "1F").flag == "fix this"
+
+
+def test_a_warning_reads_as_something_to_check():
+    p = presenter(0, 3000, plans=False)
+    assert {r.flag for r in p.rows()} == {"check"}
+
+
+def test_an_ordinary_storey_says_only_where_it_came_from():
+    assert {r.flag for r in presenter(0, 3000).rows()} == {"drawn"}
+
+
+def test_a_repeated_storey_says_so_in_one_word():
+    p = presenter(0, 3000, names=["GF", "1F"])
+    p.repeat(p.schedule.storeys[1].id, "1")
+    assert "repeat" in {r.flag for r in p.rows()}

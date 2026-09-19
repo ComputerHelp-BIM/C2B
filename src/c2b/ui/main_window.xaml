@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  AnonGee . CAD to BIM  -  the C2B window.
+
+  Markup lives in this file rather than in a Python string (brand guide 12.2). The theme is
+  spliced over the ANONGEE-THEME line at load time, generated from c2b/ui/theme.py.
+
+  The root element carries literal values only - never a resource reference - because
+  XamlReader resolves a window's own attributes before its Resources block is parsed (12.7.A).
+
+  The file rows are built in Python from c2b.gui.session.FIELDS, so the same five rows serve
+  this window and the Tkinter fallback and cannot drift apart. Everything that is the same on
+  every run - the run bar, the log, the things-to-check table, the footer - is here.
+-->
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="AnonGee &#183; CAD to BIM"
+        Width="1180" Height="860" MinWidth="960" MinHeight="680"
+        Background="#FFFFFFFF"
+        FontFamily="JetBrains Mono, Source Serif 4, Inter, Segoe UI, Calibri"
+        WindowStartupLocation="CenterScreen"
+        ShowInTaskbar="True">
+
+  <Window.Resources>
+    <!-- ANONGEE-THEME -->
+  </Window.Resources>
+
+  <DockPanel LastChildFill="True">
+
+    <!-- Header: the tool title on the Charcoal band, and the version badge (2.3). -->
+    <Border DockPanel.Dock="Top" Background="{StaticResource BrushCharcoalBlack}">
+      <Grid Margin="16,9,16,10">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <StackPanel Grid.Column="0">
+          <TextBlock Style="{StaticResource TextH2OnDark}" Text="AnonGee &#183; CAD to BIM"/>
+          <TextBlock Style="{StaticResource TextCaption}" Margin="0,1,0,0"
+                     Foreground="{StaticResource BrushSilverSteel}"
+                     Text="A client drawing, redrawn in the firm's template and prepared for Revit."/>
+        </StackPanel>
+        <Border Grid.Column="1" Style="{StaticResource BadgeBorder}"
+                Background="{StaticResource BrushCharcoalBlack}" VerticalAlignment="Top">
+          <TextBlock x:Name="VersionBadge" Style="{StaticResource TextBadge}"
+                     Foreground="{StaticResource BrushSilverSteel}" Text="v0"/>
+        </Border>
+      </Grid>
+    </Border>
+    <Border DockPanel.Dock="Top" Height="3" Background="{StaticResource BrushVividRed}"/>
+
+    <!-- Footer: the outcome of the run, in one line, with the badge beside it (12.6). -->
+    <Border DockPanel.Dock="Bottom" Background="{StaticResource BrushOffWhite}"
+            BorderBrush="{StaticResource BrushLightBorder}" BorderThickness="0,1,0,0">
+      <StackPanel Orientation="Horizontal" Margin="16,8">
+        <Border x:Name="StatusBadgeBorder" Style="{StaticResource BadgeBorder}"
+                Background="{StaticResource BrushInfoBadgeBackground}">
+          <TextBlock x:Name="StatusBadge" Style="{StaticResource TextBadge}"
+                     Foreground="{StaticResource BrushInfoBadgeForeground}" Text="READY"/>
+        </Border>
+        <TextBlock x:Name="StatusLine" Style="{StaticResource TextCaption}" VerticalAlignment="Center"
+                   Margin="8,0,0,0" Text="Pick a client drawing and press Run."/>
+      </StackPanel>
+    </Border>
+
+    <!-- What to do next, and what a finished run left behind. -->
+    <Border DockPanel.Dock="Bottom" Background="{StaticResource BrushPureWhite}">
+      <StackPanel Margin="16,6,16,10">
+        <Grid x:Name="NextRow">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <!-- A drafter reading a log of forty lines cannot tell which one is addressed to
+               them, so the single thing to do next gets a line of its own. -->
+          <TextBlock x:Name="NextLabel" Grid.Column="0" Style="{StaticResource TextH4}"
+                     TextWrapping="Wrap" VerticalAlignment="Center" Text=""/>
+          <Button x:Name="BtnStoreys" Grid.Column="1" Style="{StaticResource ButtonSecondary}"
+                  Content="_Storeys…" MinWidth="120" Visibility="Collapsed"/>
+        </Grid>
+        <WrapPanel x:Name="ActionsHost" Margin="0,6,0,0"/>
+      </StackPanel>
+    </Border>
+
+    <!-- The job: what to read, and how to read it. -->
+    <Border DockPanel.Dock="Top" Background="{StaticResource BrushPureWhite}">
+      <StackPanel Margin="16,12,16,0">
+        <!-- The five file rows are added here from c2b.gui.session.FIELDS. -->
+        <Grid x:Name="FieldsHost">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" MinWidth="120"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+        </Grid>
+
+        <!-- The option boxes are added here the same way. -->
+        <WrapPanel x:Name="OptionsHost" Margin="0,8,0,0"/>
+
+        <!-- A beam or a slab the drawing never sizes cannot go into Revit without one, and
+             dropping it loses the member. Typed once, remembered, and the run says how many
+             used it. -->
+        <WrapPanel Margin="0,8,0,0">
+          <TextBlock Style="{StaticResource TextCaption}" VerticalAlignment="Center"
+                     Text="When the drawing gives no size  -  beam depth"/>
+          <TextBox x:Name="BeamDepth" Style="{StaticResource InputRowNumberBox}" Width="72" Margin="8,0,4,0"/>
+          <TextBlock Style="{StaticResource TextCaption}" VerticalAlignment="Center" Text="mm"/>
+          <TextBlock Style="{StaticResource TextCaption}" VerticalAlignment="Center"
+                     Margin="20,0,0,0" Text="slab thickness"/>
+          <TextBox x:Name="SlabThickness" Style="{StaticResource InputRowNumberBox}" Width="72" Margin="8,0,4,0"/>
+          <TextBlock Style="{StaticResource TextCaption}" VerticalAlignment="Center" Text="mm"/>
+          <TextBlock Style="{StaticResource TextCaption}" VerticalAlignment="Center" Margin="20,0,0,0"
+                     Text="leave empty to leave those members out of the Revit model"/>
+        </WrapPanel>
+
+        <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+          <Button x:Name="BtnRun" Style="{StaticResource ButtonPrimary}" Content="_Run"
+                  MinWidth="140" Height="44"/>
+          <Button x:Name="BtnVerify" Style="{StaticResource ButtonNeutral}"
+                  Content="Re-check an edited template DXF" MinWidth="240" Margin="8,0,0,0" Height="44"/>
+        </StackPanel>
+
+        <!-- Determinate where the size is known: four steps, counted (11.2). -->
+        <ProgressBar x:Name="Progress" Style="{StaticResource ProgressBarStyle}"
+                     Minimum="0" Maximum="4" Value="0" Margin="0,12,0,0"/>
+      </StackPanel>
+    </Border>
+
+    <!-- Progress and the things to check, sharing what is left. -->
+    <Grid Margin="16,10,16,0">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="3*" MinHeight="140"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="2*" MinHeight="110"/>
+      </Grid.RowDefinitions>
+
+      <Border Grid.Row="0" Style="{StaticResource CardBorder}" Padding="0">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Style="{StaticResource TextH3}" Margin="12,8,12,4" Text="Progress"/>
+          <ScrollViewer x:Name="LogScroller" VerticalScrollBarVisibility="Auto"
+                        HorizontalScrollBarVisibility="Disabled" Margin="12,0,6,10">
+            <StackPanel x:Name="LogHost"/>
+          </ScrollViewer>
+        </DockPanel>
+      </Border>
+
+      <Border Grid.Row="1" Style="{StaticResource SectionDivider}"/>
+
+      <Border Grid.Row="2" Style="{StaticResource CardBorder}" Padding="0">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Style="{StaticResource TextH3}" Margin="12,8,12,4" Text="Things to check"/>
+          <Grid DockPanel.Dock="Top" Background="{StaticResource BrushTableHeaderBackground}" Margin="12,0,12,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="96"/>
+              <ColumnDefinition Width="86"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Style="{StaticResource TextH3}" Margin="8,4"
+                       Foreground="{StaticResource BrushPureWhite}" Text=""/>
+            <TextBlock Grid.Column="1" Style="{StaticResource TextH3}" Margin="0,4"
+                       Foreground="{StaticResource BrushPureWhite}" HorizontalAlignment="Center" Text="How many"/>
+            <TextBlock Grid.Column="2" Style="{StaticResource TextH3}" Margin="8,4"
+                       Foreground="{StaticResource BrushPureWhite}" Text="What it means"/>
+          </Grid>
+          <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                        Margin="12,0,6,10">
+            <StackPanel x:Name="IssuesHost"/>
+          </ScrollViewer>
+        </DockPanel>
+      </Border>
+    </Grid>
+
+  </DockPanel>
+</Window>

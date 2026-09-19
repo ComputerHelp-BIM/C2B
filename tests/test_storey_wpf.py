@@ -54,7 +54,29 @@ def test_the_buttons_it_wires_are_the_buttons_the_layout_has(source):
     declared = set(_names(xaml.layout_path("storey_editor").read_text(encoding="utf-8")))
     wired = set(re.findall(r'wpf\.find\(self\.window, "(Btn\w+)"\)\.Click', source))
     assert wired <= declared
-    assert {"BtnAdd", "BtnRemove", "BtnUp", "BtnDown", "BtnRepeat", "BtnSave", "BtnCancel"} <= wired
+    assert {"BtnAdd", "BtnAddBottom", "BtnSave", "BtnCancel"} <= wired
+
+
+def test_every_storey_carries_its_own_move_repeat_and_remove(source):
+    """A toolbar acting on "the selected storey" asks the user to know which one that is."""
+    actions = source.split("def _row_actions")[1].split("\n    def _row_button")[0]
+    for command in ("self.presenter.move", "self.presenter.repeat", "self.presenter.remove"):
+        assert command in actions, f"a row cannot {command.split('.')[-1]} itself"
+    assert "sid=row.storey_id" in actions, "a row button must name its own storey"
+
+
+def test_a_row_button_binds_its_storey_id_at_build_time(source):
+    """A lambda closing over the loop variable would give every row the last storey's id."""
+    actions = source.split("def _row_actions")[1].split("\n    def _row_button")[0]
+    for line in actions.splitlines():
+        if "lambda" in line:
+            assert "sid=row.storey_id" in line or "box=times" in line, line
+
+
+def test_the_ends_of_the_stack_cannot_be_moved_past(source):
+    actions = source.split("def _row_actions")[1].split("\n    def _row_button")[0]
+    assert "up.IsEnabled = not row.is_top" in actions
+    assert "down.IsEnabled = not row.is_base" in actions
 
 
 def test_no_revit_or_wpf_import_happens_at_module_scope(tree):
@@ -81,11 +103,28 @@ def test_the_window_is_built_per_opening_not_held_on_the_module(tree):
     assert not {n for n in module_names if not n.isupper() and not n.startswith("_")}
 
 
-def test_the_editor_reads_its_fields_back_before_every_command(source):
-    """A command that runs before the typed text is taken silently loses the edit."""
-    for handler in ("_on_add", "_on_remove", "_on_repeat", "_on_save"):
-        body = source.split(f"def {handler}")[1].split("\n    def ")[0]
-        assert "_read_back()" in body, f"{handler} acts before reading what was typed"
+def test_the_editor_reads_its_fields_back_before_every_command(source, tree):
+    """A command that runs before the typed text is taken silently loses the edit.
+
+    One place does it -- ``_command`` -- and every button goes through it, so a new command
+    cannot be added that forgets. ``_on_save`` reads back on its own because it does not
+    route through ``_command``.
+    """
+    body = source.split("def _command")[1].split("\n    def ")[0]
+    assert body.index("_read_back()") < body.index("run(*args)")
+    assert "def _read_back" in source
+
+    handlers = [n for n in ast.walk(tree)
+                if isinstance(n, ast.FunctionDef) and n.name.startswith("_on_")]
+    assert handlers, "no button handlers at all"
+    for handler in handlers:
+        text = ast.unparse(handler)
+        if handler.name == "_on_cancel":
+            # Cancel throws the edits away on purpose, so it is the one handler that must
+            # NOT read them back first.
+            assert "_read_back()" not in text
+            continue
+        assert "_read_back()" in text or "self._command(" in text, f"{handler.name} acts blind"
 
 
 def test_heights_are_read_back_lowest_storey_first(source):

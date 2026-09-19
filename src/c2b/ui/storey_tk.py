@@ -53,6 +53,7 @@ class StoreyEditorTk(tk.Toplevel):
         self._f_body = (sans, abs(t.pixels(t.FONT_SIZE_BODY)))
         self._f_h2 = (sans, abs(t.pixels(t.FONT_SIZE_H2)), "bold")
         self._f_h3 = (sans, abs(t.pixels(t.FONT_SIZE_H3)), "bold")
+        self._f_small = (sans, abs(t.pixels(t.FONT_SIZE_SMALL)))
         self._f_caption = (sans, abs(t.pixels(t.FONT_SIZE_CAPTION)))
         self._f_mono = (mono, abs(t.pixels(t.FONT_SIZE_CODE)))
         self._styles()
@@ -96,41 +97,28 @@ class StoreyEditorTk(tk.Toplevel):
         bar.pack(fill="x")
         buttons = ttk.Frame(bar, style="C2B.TFrame")
         buttons.pack(fill="x")
-        ttk.Button(buttons, text="Add storey", style="C2B.TButton",
-                   command=lambda: self._command(self.presenter.add)).pack(side="left")
-        ttk.Button(buttons, text="Add below", style="C2B.TButton",
+        ttk.Button(buttons, text="Add on top", style="C2B.TButton",
+                   command=lambda: self._command(self.presenter.add_above)).pack(side="left")
+        ttk.Button(buttons, text="Add at the bottom", style="C2B.TButton",
                    command=lambda: self._command(self.presenter.add_below)).pack(side="left", padx=(t.SPACE_SM, 0))
-        ttk.Button(buttons, text="Repeat", style="C2B.TButton",
-                   command=self._repeat).pack(side="left", padx=(t.SPACE_MD, 0))
-        self.repeat_times = tk.StringVar(value="1")
-        ttk.Entry(buttons, textvariable=self.repeat_times, width=4, justify="right",
-                  font=self._f_mono).pack(side="left", padx=(4, 4))
-        ttk.Label(buttons, text="more", style="C2B.TLabel").pack(side="left")
-        ttk.Button(buttons, text="Move up", style="C2B.TButton",
-                   command=lambda: self._command(self.presenter.move, +1)).pack(side="left", padx=(t.SPACE_MD, 0))
-        ttk.Button(buttons, text="Move down", style="C2B.TButton",
-                   command=lambda: self._command(self.presenter.move, -1)).pack(side="left", padx=(t.SPACE_SM, 0))
-        ttk.Button(buttons, text="Remove", style="C2BDanger.TButton",
-                   command=lambda: self._command(self.presenter.remove)).pack(side="left", padx=(t.SPACE_MD, 0))
-
-        hint = ttk.Frame(bar, style="C2B.TFrame")
-        hint.pack(fill="x", pady=(10, 0))
-        ttk.Label(hint, style="C2B.TLabel",
-                  text="Every storey rises from the one below it. Type a height or an elevation - the other follows."
-                  ).pack(side="left")
-        ttk.Label(hint, text="New storeys are", style="C2B.TLabel").pack(side="left", padx=(t.SPACE_MD, 6))
+        ttk.Label(buttons, text="mm tall", style="C2B.TLabel").pack(side="right")
         self.default_height = tk.StringVar(value=f"{self.presenter.schedule.default_height_mm:.0f}")
-        ttk.Entry(hint, textvariable=self.default_height, width=7, justify="right",
-                  font=self._f_mono).pack(side="left")
-        ttk.Label(hint, text="mm tall", style="C2B.TLabel").pack(side="left", padx=(6, 0))
+        ttk.Entry(buttons, textvariable=self.default_height, width=7, justify="right",
+                  font=self._f_mono).pack(side="right", padx=(0, 6))
+        ttk.Label(buttons, text="New storeys are", style="C2B.TLabel").pack(side="right", padx=(0, 6))
+
+        ttk.Label(bar, style="C2B.TLabel", wraplength=900,
+                  text="Every storey rises from the one below it. Type a height or an elevation and the "
+                       "other follows. Repeat a storey to build one drawn plan more than once."
+                  ).pack(fill="x", pady=(8, 0))
 
         columns = tk.Frame(self, background=t.CHARCOAL_BLACK)
         columns.pack(fill="x", padx=t.SPACE_MD)
-        for text, width, anchor in (("#", 4, "w"), ("Storey", 24, "w"), ("Height mm", 11, "e"),
-                                    ("Elevation mm", 13, "e"), ("Built from", 22, "w"),
-                                    ("Where it came from", 30, "w")):
+        for text, width, anchor in (("#", 3, "w"), ("Storey", 22, "w"), ("Height", 9, "e"),
+                                    ("Elevation", 11, "e"), ("Built from", 20, "w"),
+                                    ("Note", 10, "w"), ("This storey", 26, "w")):
             tk.Label(columns, text=text, width=width, anchor=anchor, background=t.CHARCOAL_BLACK,
-                     foreground=t.PURE_WHITE, font=self._f_h3, padx=4, pady=5).pack(side="left")
+                     foreground=t.PURE_WHITE, font=self._f_h3, padx=4, pady=4).pack(side="left")
 
         body = ttk.Frame(self, style="C2B.TFrame")
         body.pack(fill="both", expand=True, padx=t.SPACE_MD, pady=(4, 0))
@@ -170,27 +158,51 @@ class StoreyEditorTk(tk.Toplevel):
             for row in self.presenter.rows():
                 line = ttk.Frame(self.rows_host, style="C2B.TFrame")
                 line.pack(fill="x", pady=1)
-                tk.Label(line, text=str(row.number), width=4, anchor="w", background=t.PURE_WHITE,
+                tk.Label(line, text=str(row.number), width=3, anchor="w", background=t.PURE_WHITE,
                          foreground=t.MID_GREY, font=self._f_mono, padx=4).pack(side="left")
 
                 name = tk.StringVar(value=row.name)
-                ttk.Entry(line, textvariable=name, width=24, font=self._f_body).pack(side="left", padx=2)
+                ttk.Entry(line, textvariable=name, width=22, font=self._f_small).pack(side="left", padx=2)
                 height = tk.StringVar(value=row.height_text)
-                entry = ttk.Entry(line, textvariable=height, width=11, justify="right", font=self._f_mono)
+                entry = ttk.Entry(line, textvariable=height, width=9, justify="right", font=self._f_mono)
                 entry.pack(side="left", padx=2)
                 if row.is_base:
                     entry.state(["disabled"])
                 elevation = tk.StringVar(value=row.elevation_text)
-                ttk.Entry(line, textvariable=elevation, width=13, justify="right",
+                ttk.Entry(line, textvariable=elevation, width=11, justify="right",
                           font=self._f_mono).pack(side="left", padx=2)
                 plan = tk.StringVar(value=row.plan_label)
-                ttk.Combobox(line, textvariable=plan, values=labels, width=22, state="readonly",
-                             font=self._f_body).pack(side="left", padx=2)
-                tk.Label(line, anchor="w", background=t.PURE_WHITE, padx=6, font=self._f_caption,
+                ttk.Combobox(line, textvariable=plan, values=labels, width=20, state="readonly",
+                             font=self._f_small).pack(side="left", padx=2)
+                tk.Label(line, anchor="w", width=10, background=t.PURE_WHITE, padx=4, font=self._f_caption,
                          foreground=(t.ERROR_RED if row.severity == "ERROR" else
                                      t.CAUTION_AMBER if row.severity == "WARNING" else t.MID_GREY),
-                         text="; ".join(x for x in (row.severity, row.source_words, row.note) if x)
-                         ).pack(side="left")
+                         text=row.flag).pack(side="left")
+
+                # This row's own buttons: no selection to keep track of, and no doubt about
+                # which storey a command is about.
+                sid = row.storey_id
+                actions = ttk.Frame(line, style="C2B.TFrame")
+                actions.pack(side="left", padx=(4, 0))
+                up = ttk.Button(actions, text="\u2191", width=2, style="C2B.TButton",
+                                command=lambda s=sid: self._command(self.presenter.move, s, +1))
+                up.pack(side="left")
+                down = ttk.Button(actions, text="\u2193", width=2, style="C2B.TButton",
+                                  command=lambda s=sid: self._command(self.presenter.move, s, -1))
+                down.pack(side="left", padx=(2, 0))
+                if row.is_top:
+                    up.state(["disabled"])
+                if row.is_base:
+                    down.state(["disabled"])
+                times = tk.StringVar(value="1")
+                ttk.Entry(actions, textvariable=times, width=3, justify="right",
+                          font=self._f_mono).pack(side="left", padx=(t.SPACE_SM, 2))
+                ttk.Button(actions, text="Repeat", style="C2B.TButton",
+                           command=lambda s=sid, box=times: self._command(self.presenter.repeat, s, box.get())
+                           ).pack(side="left")
+                ttk.Button(actions, text="\u2715", width=2, style="C2BDanger.TButton",
+                           command=lambda s=sid: self._command(self.presenter.remove, s)
+                           ).pack(side="left", padx=(t.SPACE_SM, 0))
 
                 self._fields[row.storey_id] = {"name": name, "height": height, "elevation": elevation,
                                                "plan": plan, "height_was": row.height_text,
@@ -230,9 +242,6 @@ class StoreyEditorTk(tk.Toplevel):
         self.refresh()
         if problem:
             self.status.configure(text=problem)
-
-    def _repeat(self) -> None:
-        self._command(self.presenter.repeat, self.repeat_times.get())
 
     def _save(self) -> None:
         self._read_back()

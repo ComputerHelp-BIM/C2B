@@ -15,6 +15,11 @@ Two decisions are the presenter's and not the model's:
 * **A typed value is kept even when it is wrong.** A number that will not parse leaves the
   field alone and says so; a number that parses but makes an impossible stack is applied and
   reported. The window never silently corrects what somebody typed.
+
+Every command names the storey it acts on. An earlier version kept a "selected" storey and a
+toolbar that acted on it, which reads well in a specification and badly in a window: what is
+selected is invisible until you look for the focus ring, so "Repeat" is a button whose effect
+you have to work out. A row that carries its own buttons has no such question in it.
 """
 from __future__ import annotations
 
@@ -30,6 +35,14 @@ _GROUPED = re.compile(r"[+-]?\d{1,3}(?:,\d{3})*(?:\.\d+)?")
 
 #: What a plan floor is called in the "Built from" column when a storey has none.
 NO_PLAN = "(nothing drawn)"
+
+#: A storey's provenance in one word, for a narrow column. The whole sentence goes in the
+#: tooltip: seven rows each reading "a floor plan in the drawing; height assumed - please
+#: check" is a wall of identical text that hides the one row that says something different.
+SHORT_SOURCE: dict[str, str] = {
+    "cad": "drawn", "hint": "level text", "levels": "workbook",
+    "added": "added", "repeat": "repeat",
+}
 
 
 @dataclass
@@ -47,6 +60,8 @@ class DisplayRow:
     is_base: bool
     is_top: bool
     severity: str = ""          # "ERROR" | "WARNING" | "" -- what to mark this row with
+    flag: str = ""              # the one word the narrow column shows
+    tooltip: str = ""           # the whole of it, for hovering over that word
 
 
 @dataclass
@@ -55,13 +70,8 @@ class StoreyPresenter:
 
     schedule: StoreySchedule
     plan_floors: list[tuple[str, str]] = field(default_factory=list)   # (floor_id, name)
-    selected_id: str | None = None
 
     # ------------------------------------------------------------------ read
-    def __post_init__(self) -> None:
-        if self.selected_id is None and self.schedule.storeys:
-            self.selected_id = self.schedule.storeys[-1].id
-
     def at(self, storey_id: str) -> int:
         """The model index of a storey. The one place a row and an index meet."""
         return self.schedule.index_of(storey_id)
@@ -85,7 +95,9 @@ class StoreyPresenter:
                           plan_label=self.plan_label(r["plan_floor_id"]),
                           source_words=r["source_words"], note=r["note"],
                           is_base=r["is_base"], is_top=r["is_top"],
-                          severity=worst.get(r["id"], ""))
+                          severity=worst.get(r["id"], ""),
+                          flag=short_flag(r["source"], r["note"], worst.get(r["id"], "")),
+                          tooltip="; ".join(x for x in (r["source_words"], r["note"]) if x))
                for r in self.schedule.rows()]
         out.reverse()
         return out
@@ -163,55 +175,54 @@ class StoreyPresenter:
         return ""
 
     # -------------------------------------------------------------- commands
-    def select(self, storey_id: str | None) -> None:
-        self.selected_id = storey_id
-
-    def add(self) -> str:
-        """A storey above the selected one, or on top when nothing is selected."""
-        index = (self.at(self.selected_id) + 1) if self.selected_id else len(self.schedule)
-        storey = self.schedule.add(index=index)
-        self.selected_id = storey.id
+    def add_above(self, storey_id: str | None = None) -> str:
+        """A storey above the one named, or on top of the stack when none is."""
+        index = (self.at(storey_id) + 1) if storey_id else len(self.schedule)
+        self.schedule.add(index=index)
         return ""
 
-    def add_below(self) -> str:
-        """A storey under the selected one -- how a foundation gets under a ground floor."""
-        index = self.at(self.selected_id) if self.selected_id else 0
-        storey = self.schedule.add(index=index)
-        self.selected_id = storey.id
+    def add_below(self, storey_id: str | None = None) -> str:
+        """A storey under the one named -- how a foundation gets under a ground floor."""
+        index = self.at(storey_id) if storey_id else 0
+        self.schedule.add(index=index)
         return ""
 
-    def remove(self) -> str:
-        if not self.selected_id:
-            return "Pick a storey to remove."
-        index = self.at(self.selected_id)
-        self.schedule.remove(index)
-        self.selected_id = (self.schedule.storeys[min(index, len(self.schedule) - 1)].id
-                            if self.schedule.storeys else None)
+    def remove(self, storey_id: str) -> str:
+        self.schedule.remove(self.at(storey_id))
         return ""
 
-    def move(self, delta: int) -> str:
-        """Move the selected storey up (+1) or down (-1) the stack."""
-        if not self.selected_id:
-            return "Pick a storey to move."
-        self.schedule.move(self.at(self.selected_id), delta)
+    def move(self, storey_id: str, delta: int) -> str:
+        """Move a storey up (+1) or down (-1) the stack."""
+        self.schedule.move(self.at(storey_id), delta)
         return ""
 
-    def repeat(self, times_text: str = "1") -> str:
-        """Stack more storeys like the selected one -- the typical floor, drawn once."""
-        if not self.selected_id:
-            return "Pick the storey to repeat."
+    def repeat(self, storey_id: str, times_text: str = "1") -> str:
+        """Stack more storeys like this one -- the typical floor, drawn once."""
         times = parse_mm(times_text)
         if times is None or times < 1:
             return f"'{times_text.strip()}' is not a number of storeys."
-        made = self.schedule.repeat(self.at(self.selected_id), times=int(times))
-        if made:
-            self.selected_id = made[-1].id
+        self.schedule.repeat(self.at(storey_id), times=int(times))
         return ""
-
 
 # ---------------------------------------------------------------------------
 # Numbers, as a drafter types them
 # ---------------------------------------------------------------------------
+
+def short_flag(source: str, note: str, severity: str = "") -> str:
+    """One word for the narrow column: what most needs looking at about this storey.
+
+    A problem outranks provenance -- a row that Revit will refuse should not be labelled
+    "drawn" -- and an assumed height outranks the plan it came from, because the plan is the
+    ordinary case and the assumption is the thing to check.
+    """
+    if severity == "ERROR":
+        return "fix this"
+    if "assumed" in note.lower():
+        return "assumed"
+    if severity == "WARNING":
+        return "check"
+    return SHORT_SOURCE.get(source, source)
+
 
 def parse_mm(text: str | None) -> float | None:
     """A typed length in millimetres, or ``None`` when it is not one.

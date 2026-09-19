@@ -124,26 +124,45 @@ def _typography() -> str:
 
 
 def _button(key: str, background: str, foreground: str, border: str | None,
-            hover_bg: str, pressed_bg: str, thickness: float = 1.0) -> str:
+            hover_bg: str, pressed_bg: str, thickness: float = 1.0,
+            height: int | None = None, size: str = "FontSizeBody",
+            padding: int | None = None) -> str:
     """One button variant of §9.1, as a template over the shared base.
 
     Every state in the matrix is here -- hover, pressed, disabled -- because a control that
     improvises a shade is how a palette stops being fixed. Disabled stays visible (§10.3).
+
+    **The fill, the stroke and the label colour are written into the template, not bound to
+    the control's own properties.** The usual way is ``{TemplateBinding Background}`` over a
+    Setter, and it is correct WPF -- but in the first build on a real machine the two
+    red-filled variants came up as a bare outline with an invisible white label while the
+    outlined variants came up in default chrome, which is what a template binding that does
+    not resolve looks like. A variant's colours are known here, at generation time: binding
+    them through the control buys nothing and leaves a way for the label to end up white on
+    white. Only the *state* colours need the trigger, and those target the named Border.
     """
-    return f'''  <Style x:Key="{key}" TargetType="Button" BasedOn="{{StaticResource ButtonBaseStyle}}">
-    <Setter Property="Background" Value="{{StaticResource {background}}}"/>
-    <Setter Property="Foreground" Value="{{StaticResource {foreground}}}"/>
-    <Setter Property="BorderBrush" Value="{{StaticResource {border or background}}}"/>
-    <Setter Property="BorderThickness" Value="{thickness if border else 0}"/>
-    <Setter Property="Template">
+    stroke = border or background
+    lines = [f'  <Style x:Key="{key}" TargetType="Button" BasedOn="{{StaticResource ButtonBaseStyle}}">',
+             f'    <Setter Property="Background" Value="{{StaticResource {background}}}"/>',
+             f'    <Setter Property="Foreground" Value="{{StaticResource {foreground}}}"/>',
+             f'    <Setter Property="BorderBrush" Value="{{StaticResource {stroke}}}"/>',
+             f'    <Setter Property="BorderThickness" Value="{thickness if border else 0}"/>',
+             f'    <Setter Property="FontSize" Value="{{StaticResource {size}}}"/>']
+    if height:
+        lines.append(f'    <Setter Property="Height" Value="{height}"/>')
+        lines.append(f'    <Setter Property="MinWidth" Value="{height}"/>')
+    if padding is not None:
+        lines.append(f'    <Setter Property="Padding" Value="{padding},0"/>')
+    lines.append(f'''    <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="Button">
-          <Border x:Name="Face" Background="{{TemplateBinding Background}}"
-                  BorderBrush="{{TemplateBinding BorderBrush}}"
-                  BorderThickness="{{TemplateBinding BorderThickness}}"
+          <Border x:Name="Face" Background="{{StaticResource {background}}}"
+                  BorderBrush="{{StaticResource {stroke}}}"
+                  BorderThickness="{thickness if border else 0}"
                   CornerRadius="{t.RADIUS_MD}" SnapsToDevicePixels="True">
             <ContentPresenter x:Name="Label" HorizontalAlignment="Center" VerticalAlignment="Center"
-                              Margin="{{TemplateBinding Padding}}" RecognizesAccessKey="True"/>
+                              Margin="{{TemplateBinding Padding}}" RecognizesAccessKey="True"
+                              TextElement.Foreground="{{StaticResource {foreground}}}"/>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
@@ -155,13 +174,14 @@ def _button(key: str, background: str, foreground: str, border: str | None,
             <Trigger Property="IsEnabled" Value="False">
               <Setter TargetName="Face" Property="Background" Value="{{StaticResource BrushDisabledBackground}}"/>
               <Setter TargetName="Face" Property="BorderBrush" Value="{{StaticResource BrushDisabledBackground}}"/>
-              <Setter Property="Foreground" Value="{{StaticResource BrushDisabledForeground}}"/>
+              <Setter TargetName="Label" Property="TextElement.Foreground" Value="{{StaticResource BrushDisabledForeground}}"/>
             </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>
     </Setter>
-  </Style>'''
+  </Style>''')
+    return "\n".join(lines)
 
 
 def _controls() -> str:
@@ -182,13 +202,23 @@ def _controls() -> str:
         _button("ButtonDanger", "BrushErrorRed", "BrushPureWhite", None, "BrushErrorRedHover", "BrushVividRedPressed"),
         _button("ButtonGhost", "BrushPureWhite", "BrushMidGrey", None, "BrushOffWhiteHover", "BrushLightBorder"),
     ]
-    # A small button for a row's own controls (§9.1 sizing). Compact height, Body Small.
-    small = f'''  <Style x:Key="ButtonSmall" TargetType="Button" BasedOn="{{StaticResource ButtonNeutral}}">
-    <Setter Property="Height" Value="{t.HEIGHT_COMPACT}"/>
-    <Setter Property="MinWidth" Value="{t.HEIGHT_COMPACT}"/>
-    <Setter Property="FontSize" Value="{{StaticResource FontSizeSmall}}"/>
-    <Setter Property="Padding" Value="{t.SPACE_SM},0"/>
-  </Style>'''
+    # A table row acts on itself, so its own controls live in it (§5.4: a data row is compact
+    # density -- 28px and Body Small -- never the 36px a dialog's action bar uses).
+    row_buttons = [
+        _button("ButtonSmall", "BrushOffWhite", "BrushCharcoalBlack", "BrushLightBorder",
+                "BrushOffWhiteHover", "BrushLightBorder",
+                height=t.HEIGHT_COMPACT, size="FontSizeSmall", padding=t.SPACE_SM),
+        # The row's own destructive action. Outlined rather than filled: a wall of red down the
+        # table would make every row look like a warning, and §9.1 keeps one filled emphasis per
+        # view. It is still Error Red, so it never reads as an ordinary control.
+        _button("ButtonRowDanger", "BrushPureWhite", "BrushErrorRed", "BrushErrorRed",
+                "BrushErrorBadgeBackground", "BrushErrorBadgeBackground", 1.0,
+                height=t.HEIGHT_COMPACT, size="FontSizeSmall", padding=t.SPACE_XS),
+        _button("ButtonRowAction", "BrushPureWhite", "BrushCharcoalBlack", "BrushLightBorder",
+                "BrushTableRowHover", "BrushLightBorder", 1.0,
+                height=t.HEIGHT_COMPACT, size="FontSizeSmall", padding=t.SPACE_XS),
+    ]
+    small = "\n".join(row_buttons)
     # §12.7.E and .O: no vertical Margin from Padding (it clips the text), and the stroke is
     # drawn last over the content so all four edges of the rounded border stay even.
     textbox = f'''  <Style x:Key="InputTextBox" TargetType="TextBox">
@@ -228,6 +258,17 @@ def _controls() -> str:
     </Setter>
   </Style>
   <Style x:Key="InputNumberBox" TargetType="TextBox" BasedOn="{{StaticResource InputTextBox}}">
+    <Setter Property="FontFamily" Value="{{StaticResource FontMono}}"/>
+    <Setter Property="TextAlignment" Value="Right"/>
+  </Style>
+  <!-- Compact density (§5.4): a parameter table is 28px rows at Body Small, not the 36px a
+       dialog's own inputs use. Same template, so a row field is the same control, smaller. -->
+  <Style x:Key="InputRowBox" TargetType="TextBox" BasedOn="{{StaticResource InputTextBox}}">
+    <Setter Property="FontSize" Value="{{StaticResource FontSizeSmall}}"/>
+    <Setter Property="Height" Value="{t.HEIGHT_COMPACT}"/>
+    <Setter Property="MinHeight" Value="{t.HEIGHT_COMPACT}"/>
+  </Style>
+  <Style x:Key="InputRowNumberBox" TargetType="TextBox" BasedOn="{{StaticResource InputRowBox}}">
     <Setter Property="FontFamily" Value="{{StaticResource FontMono}}"/>
     <Setter Property="TextAlignment" Value="Right"/>
   </Style>'''
@@ -325,6 +366,26 @@ def _controls() -> str:
     <Setter Property="FontFamily" Value="{{StaticResource FontMono}}"/>
     <Setter Property="FontSize" Value="{{StaticResource FontSizeCaption}}"/>
     <Setter Property="FontWeight" Value="SemiBold"/>
+  </Style>
+  <!-- §11.3: Vivid Red on a Light Border track, 4px tall. Determinate wherever the size is
+       known, which for a run of four named steps it always is. -->
+  <Style x:Key="ProgressBarStyle" TargetType="ProgressBar">
+    <Setter Property="Height" Value="4"/>
+    <Setter Property="Background" Value="{{StaticResource BrushLightBorder}}"/>
+    <Setter Property="Foreground" Value="{{StaticResource BrushVividRed}}"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ProgressBar">
+          <Grid SnapsToDevicePixels="True">
+            <Border Background="{{StaticResource BrushLightBorder}}" CornerRadius="{t.RADIUS_SM}"/>
+            <Border x:Name="PART_Track" Background="Transparent"/>
+            <Border x:Name="PART_Indicator" HorizontalAlignment="Left"
+                    Background="{{StaticResource BrushVividRed}}" CornerRadius="{t.RADIUS_SM}"/>
+          </Grid>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
   </Style>'''
     # §12.7.P -- both orientations, or a horizontal bar renders as a broken strip.
     scrollbar = '''  <Style x:Key="ThumbStyle" TargetType="Thumb">

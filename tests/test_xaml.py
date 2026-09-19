@@ -15,7 +15,7 @@ import pytest
 from c2b.ui import theme as t
 from c2b.ui import xaml
 
-LAYOUTS = ["storey_editor"]
+LAYOUTS = ["storey_editor", "main_window"]
 
 _COMMENT = re.compile(r"<!--.*?-->", re.S)
 _HEX = re.compile(r"#[0-9A-Fa-f]{6}\b")
@@ -164,11 +164,47 @@ def test_a_layout_with_no_marker_is_refused(tmp_path, monkeypatch):
 
 # ---------------------------------------- what the storey editor must offer
 
-def test_the_storey_editor_offers_every_operation_the_brief_asked_for():
+def test_the_storey_editor_offers_what_is_not_about_one_storey():
+    """The toolbar holds only what has no particular storey: add, the default height, save.
+
+    Move, repeat and remove are about one storey, so they live in that storey's row and are
+    built in Python -- test_storey_wpf.py checks they are all there.
+    """
     markup = xaml.layout_path("storey_editor").read_text(encoding="utf-8")
-    for control in ("BtnAdd", "BtnRemove", "BtnUp", "BtnDown", "BtnRepeat",
-                    "RepeatTimes", "DefaultHeight", "RowsHost", "BtnSave", "BtnCancel"):
+    for control in ("BtnAdd", "BtnAddBottom", "DefaultHeight", "RowsHost", "BtnSave",
+                    "BtnCancel", "StatusBadge", "StatusLine", "ProblemsHost"):
         assert f'x:Name="{control}"' in markup, f"the window has no {control}"
+
+
+def test_the_window_opens_at_the_height_its_content_needs():
+    """5.5, and the reason nobody has to drag the frame open to reach Save."""
+    markup = xaml.layout_path("storey_editor").read_text(encoding="utf-8")
+    assert 'SizeToContent="Height"' in markup
+    assert "MaxHeight=" in markup, "a tall building would otherwise open past the screen"
+    assert "MinHeight=" not in markup, "a minimum height fights SizeToContent"
+
+
+def test_the_table_uses_compact_density_not_the_dialog_size():
+    """5.4 - a parameter table is 28px rows; 36px is for a dialog's action bar."""
+    theme = xaml.theme_xaml()
+    for key in ("InputRowBox", "InputRowNumberBox", "ButtonSmall", "ButtonRowAction", "ButtonRowDanger"):
+        assert key in xaml.declared_keys(theme), f"no compact {key}"
+    row = theme.split('x:Key="InputRowBox"')[1].split("</Style>")[0]
+    assert 'Value="28"' in row and "FontSizeSmall" in row
+
+
+def test_a_button_paints_its_own_fill_rather_than_binding_to_one():
+    """The first build on a real machine came up with bare outlines and invisible labels,
+    which is what an unresolved template binding looks like. A variant's colours are known
+    when the template is generated, so nothing is left to resolve at runtime."""
+    theme = xaml.theme_xaml()
+    for key in ("ButtonPrimary", "ButtonDanger", "ButtonSecondary", "ButtonGhost", "ButtonNeutral"):
+        template = theme.split(f'x:Key="{key}"')[1].split("</Style>")[0]
+        face = template.split('x:Name="Face"')[1].split(">")[0]
+        assert "TemplateBinding" not in face, f"{key} binds its fill instead of painting it"
+        assert "StaticResource" in face
+        label = template.split('x:Name="Label"')[1].split("/>")[0]
+        assert "TextElement.Foreground" in label, f"{key} leaves its label colour to inheritance"
 
 
 def test_the_storey_editor_has_exactly_one_primary_button():

@@ -6,21 +6,31 @@
   spliced over the ANONGEE-THEME line at load time, generated from c2b/ui/theme.py, so the
   inline copy 12.3 asks for cannot drift from the tokens it came from.
 
-  The root <Window> element carries literal values only - never a {StaticResource} - because
-  XamlReader resolves a Window's own attributes before Window.Resources is parsed (12.7.A).
+  The root element carries literal values only - never a resource reference - because
+  XamlReader resolves a window's own attributes before its Resources block is parsed (12.7.A).
+
+  SizeToContent="Height" with a MaxHeight: the window opens exactly as tall as the building
+  it is showing, and only starts scrolling past about fifteen storeys. 5.5 asks for this on a
+  tool window and it is why nobody has to drag the frame open to see the Save button.
 
   The rows are built in Python and added to RowsHost. A building has a dozen storeys, not ten
   thousand, so there is nothing to gain from a DataGrid and a great deal to lose: 12.7.G, H,
   J, K and Q are all failure modes of binding a DataGrid to Python objects under pythonnet.
   Reading a TextBox's .Text has none of them.
+
+  Each row carries its own buttons. A toolbar that acts on "the selected storey" needs the
+  user to know which one that is, and nothing on screen says so until they hunt for the focus
+  ring - so Repeat, Move and Remove live in the row they act on.
 -->
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="AnonGee &#183; Storey Editor"
-        Width="880" Height="640" MinWidth="720" MinHeight="480"
+        Width="1000" MinWidth="880"
+        SizeToContent="Height" MaxHeight="840"
         Background="#FFFFFFFF"
         FontFamily="JetBrains Mono, Source Serif 4, Inter, Segoe UI, Calibri"
         WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResize"
         ShowInTaskbar="True">
 
   <Window.Resources>
@@ -31,20 +41,20 @@
 
     <!-- Header: the tool title on the Charcoal band, and nothing else (12.6). -->
     <Border DockPanel.Dock="Top" Background="{StaticResource BrushCharcoalBlack}">
-      <StackPanel Margin="16,13">
+      <StackPanel Margin="16,9,16,10">
         <TextBlock Style="{StaticResource TextH2OnDark}" Text="AnonGee &#183; Storey Editor"/>
-        <TextBlock x:Name="HeaderSubtitle" Style="{StaticResource TextH3}"
-                   Foreground="{StaticResource BrushSilverSteel}" Margin="0,2,0,0"
+        <TextBlock x:Name="HeaderSubtitle" Style="{StaticResource TextCaption}"
+                   Foreground="{StaticResource BrushSilverSteel}" Margin="0,1,0,0"
+                   TextWrapping="Wrap"
                    Text="The storeys of the building, and how far apart they are."/>
       </StackPanel>
     </Border>
-    <!-- The 3px accent rule under the header. -->
     <Border DockPanel.Dock="Top" Height="3" Background="{StaticResource BrushVividRed}"/>
 
     <!-- Action bar: one Primary button for the whole dialog (9.1). -->
     <Border DockPanel.Dock="Bottom" Background="{StaticResource BrushOffWhite}"
             BorderBrush="{StaticResource BrushLightBorder}" BorderThickness="0,1,0,0">
-      <Grid Margin="16,12">
+      <Grid Margin="16,10">
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="Auto"/>
           <ColumnDefinition Width="*"/>
@@ -63,85 +73,84 @@
 
         <StackPanel Grid.Column="2" Orientation="Horizontal">
           <Button x:Name="BtnCancel" Style="{StaticResource ButtonGhost}" Content="Cancel"
-                  IsCancel="True" Margin="0,0,8,0"/>
+                  IsCancel="True" Margin="0,0,8,0" MinWidth="90"/>
           <Button x:Name="BtnSave" Style="{StaticResource ButtonPrimary}" Content="_Save the storeys"
                   IsDefault="True" MinWidth="170"/>
         </StackPanel>
       </Grid>
     </Border>
 
-    <!-- Problems: inline, above the action bar, never a MessageBox (11.5, 13.4). -->
+    <!-- Problems: inline, above the action bar, never a modal box (11.5, 13.4). -->
     <Border x:Name="ProblemsPanel" DockPanel.Dock="Bottom" Visibility="Collapsed"
             Background="{StaticResource BrushPureWhite}"
             BorderBrush="{StaticResource BrushLightBorder}" BorderThickness="0,1,0,0">
-      <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto" Margin="16,10">
+      <ScrollViewer MaxHeight="96" VerticalScrollBarVisibility="Auto" Margin="16,8">
         <StackPanel x:Name="ProblemsHost"/>
       </ScrollViewer>
     </Border>
 
-    <!-- Toolbar: what you can do to the stack. -->
+    <!-- Toolbar: only what is not about one particular storey. -->
     <Border DockPanel.Dock="Top" Background="{StaticResource BrushPureWhite}">
-      <StackPanel Margin="16,12,16,8">
-        <StackPanel Orientation="Horizontal">
-          <Button x:Name="BtnAdd" Style="{StaticResource ButtonSecondary}" Content="_Add storey"
-                  MinWidth="110" Margin="0,0,8,0"/>
-          <Button x:Name="BtnRepeat" Style="{StaticResource ButtonNeutral}" Content="_Repeat"
-                  MinWidth="90" Margin="0,0,8,0"
-                  ToolTip="Stack more storeys like the selected one - a typical floor drawn once"/>
-          <TextBox x:Name="RepeatTimes" Style="{StaticResource InputNumberBox}" Width="48"
-                   Height="36" Text="1" Margin="0,0,4,0" ToolTip="How many more"/>
-          <TextBlock Style="{StaticResource TextCaption}" VerticalAlignment="Center"
-                     Margin="0,0,16,0" Text="more"/>
+      <Grid Margin="16,10,16,8">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
 
-          <Button x:Name="BtnUp" Style="{StaticResource ButtonNeutral}" Content="Move _up"
-                  MinWidth="90" Margin="0,0,8,0"/>
-          <Button x:Name="BtnDown" Style="{StaticResource ButtonNeutral}" Content="Move _down"
-                  MinWidth="100" Margin="0,0,16,0"/>
-          <Button x:Name="BtnRemove" Style="{StaticResource ButtonDanger}" Content="Re_move"
-                  MinWidth="100"/>
+        <StackPanel Grid.Column="0" Orientation="Horizontal">
+          <Button x:Name="BtnAdd" Style="{StaticResource ButtonSecondary}" Content="_Add on top"
+                  MinWidth="120" Margin="0,0,8,0"/>
+          <Button x:Name="BtnAddBottom" Style="{StaticResource ButtonNeutral}" Content="Add at the _bottom"
+                  MinWidth="150"/>
         </StackPanel>
 
-        <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
           <TextBlock Style="{StaticResource TextCaption}" VerticalAlignment="Center"
-                     Text="Every storey rises from the one below it. Type a height or an elevation - the other follows."/>
-          <TextBlock Style="{StaticResource TextCaption}" VerticalAlignment="Center" Margin="16,0,6,0"
-                     Text="New storeys are"/>
-          <TextBox x:Name="DefaultHeight" Style="{StaticResource InputNumberBox}" Width="70"
+                     Margin="0,0,6,0" Text="New storeys are"/>
+          <TextBox x:Name="DefaultHeight" Style="{StaticResource InputNumberBox}" Width="64"
                    Height="28" Text="3000"/>
-          <TextBlock Style="{StaticResource TextCaption}" VerticalAlignment="Center" Margin="6,0,0,0"
-                     Text="mm tall"/>
+          <TextBlock Style="{StaticResource TextCaption}" VerticalAlignment="Center"
+                     Margin="6,0,0,0" Text="mm tall"/>
         </StackPanel>
-      </StackPanel>
+      </Grid>
     </Border>
 
-    <!-- Column headers: Charcoal band, white text (9.8). -->
+    <TextBlock DockPanel.Dock="Top" Style="{StaticResource TextCaption}" Margin="16,0,16,8"
+               TextWrapping="Wrap"
+               Text="Every storey rises from the one below it. Type a height or an elevation and the other follows. Repeat a storey to build one drawn plan more than once."/>
+
+    <!-- Column headers: Charcoal band, white text (9.8), compact density (5.4). -->
     <Border DockPanel.Dock="Top" Background="{StaticResource BrushTableHeaderBackground}" Margin="16,0">
-      <Grid Margin="10,6">
+      <Grid Margin="8,5">
         <Grid.ColumnDefinitions>
-          <ColumnDefinition Width="34"/>
-          <ColumnDefinition Width="*"  MinWidth="160"/>
-          <ColumnDefinition Width="110"/>
-          <ColumnDefinition Width="120"/>
-          <ColumnDefinition Width="170"/>
-          <ColumnDefinition Width="*"  MinWidth="120"/>
+          <ColumnDefinition Width="26"/>
+          <ColumnDefinition Width="*"  MinWidth="150"/>
+          <ColumnDefinition Width="84"/>
+          <ColumnDefinition Width="94"/>
+          <ColumnDefinition Width="172"/>
+          <ColumnDefinition Width="92"/>
+          <ColumnDefinition Width="196"/>
         </Grid.ColumnDefinitions>
         <TextBlock Grid.Column="0" Style="{StaticResource TextH3}" Foreground="{StaticResource BrushPureWhite}" Text="#"/>
         <TextBlock Grid.Column="1" Style="{StaticResource TextH3}" Foreground="{StaticResource BrushPureWhite}" Text="Storey"/>
         <TextBlock Grid.Column="2" Style="{StaticResource TextH3}" Foreground="{StaticResource BrushPureWhite}"
-                   HorizontalAlignment="Right" Text="Height mm"/>
+                   HorizontalAlignment="Right" Margin="0,0,6,0" Text="Height"/>
         <TextBlock Grid.Column="3" Style="{StaticResource TextH3}" Foreground="{StaticResource BrushPureWhite}"
-                   HorizontalAlignment="Right" Text="Elevation mm"/>
+                   HorizontalAlignment="Right" Margin="0,0,6,0" Text="Elevation"/>
         <TextBlock Grid.Column="4" Style="{StaticResource TextH3}" Foreground="{StaticResource BrushPureWhite}"
-                   Margin="10,0,0,0" Text="Built from"/>
+                   Margin="6,0,0,0" Text="Built from"/>
         <TextBlock Grid.Column="5" Style="{StaticResource TextH3}" Foreground="{StaticResource BrushPureWhite}"
-                   Margin="10,0,0,0" Text="Where it came from"/>
+                   Margin="6,0,0,0" Text="Note"/>
+        <TextBlock Grid.Column="6" Style="{StaticResource TextH3}" Foreground="{StaticResource BrushPureWhite}"
+                   Margin="6,0,0,0" Text="This storey"/>
       </Grid>
     </Border>
 
     <!-- The stack itself. Highest storey at the top, the way a section is drawn. -->
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                  Margin="16,0,16,12">
-      <StackPanel x:Name="RowsHost" Margin="0,4,0,0"/>
+                  Margin="16,0,16,10">
+      <StackPanel x:Name="RowsHost" Margin="0,3,0,0"/>
     </ScrollViewer>
 
   </DockPanel>

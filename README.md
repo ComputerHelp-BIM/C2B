@@ -199,7 +199,8 @@ src/c2b/
                      outlines.py   closed shapes out of polylines, hatches, line loops
   pipeline.py      utility 1 orchestration
   storeys.py       the building's storeys: add, remove, move, repeat    docs/storeys.md
-  ui/              WPF windows (Python drives WPF), brand tokens, Tk fallback
+  ui/              WPF windows (Python drives WPF), brand tokens, theme generated from them
+  gui/             the C2B window: WPF where it can be shown, Tkinter where it cannot
   normalize/       utility 3: spec, stacks, spans, naming, geometry, model    docs/template-spec.md
                      pipeline.py   phase order and the floor/level frame
                      columns.py    stacks → template columns and their marks

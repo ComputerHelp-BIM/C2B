@@ -31,13 +31,21 @@ editor to correct it — which, on a real job, you will.
 The highest storey is at the top, the way a section is drawn.
 
 ```
- #   Storey                    Height mm   Elevation mm   Built from        Where it came from
- 6   Terrace Floor Level            3000          18000   L07  TERRACE      a floor plan in the drawing
- 5   Refuge Floor Level             3000          15000   L06  REFUGE       a floor plan in the drawing
- 4   3rd Floor Level                3000          12000   L05  TYPICAL      a floor plan in the drawing
- 1   Ground Floor Level             3000           3000   L02  GROUND       a floor plan in the drawing
- 0   Foundation Level                                 0   L01  FOUNDATION   a floor plan in the drawing
+ #   Storey                  Height   Elevation   Built from       Note       This storey
+ 6   Terrace Floor Level       3000       18000   L07 TERRACE      assumed      ↓  [1] Repeat  ✕
+ 5   Refuge Floor Level        3000       15000   L06 REFUGE       assumed    ↑ ↓  [1] Repeat  ✕
+ 4   3rd Floor Level           3000       12000   L05 TYPICAL      assumed    ↑ ↓  [1] Repeat  ✕
+ 1   Ground Floor Level        3000        3000   L02 GROUND       assumed    ↑ ↓  [1] Repeat  ✕
+ 0   Foundation Level                         0   L01 FOUNDATION   assumed    ↑    [1] Repeat  ✕
 ```
+
+**Every row carries its own buttons.** Move it up or down, repeat it, remove it — the buttons
+are in the row they act on, so there is never a question of which storey a command is about.
+The two buttons above the table, *Add on top* and *Add at the bottom*, are the only ones that
+are not about one particular storey.
+
+The **Note** column is one word. Hover it for the whole sentence — where the storey came from,
+and anything about it worth checking.
 
 **Height** is the rise from the storey *below* — the same thing an ETABS story table or a level
 schedule means by it. **Elevation** is those heights added up from the lowest storey.
@@ -56,27 +64,29 @@ The lowest storey has no height, because there is nothing under it to rise from.
 
 ### Add
 
-Adds a storey above the selected one and makes the building that much taller — nothing already
-in the stack is squashed. **Add below** puts one underneath: that is how a foundation level gets
-under a ground floor without moving the ground floor.
+**Add on top** puts a storey above everything and makes the building that much taller — nothing
+already in the stack is squashed. **Add at the bottom** puts one underneath: that is how a
+foundation level gets under a ground floor without moving the ground floor.
 
 New storeys take the height in the **New storeys are ___ mm tall** box, which is remembered.
 
-### Remove
+### Remove  (✕ in the row)
 
-Deletes the selected storey and brings everything above it down by its height — the building
-gets shorter, which is what deleting a floor means.
+Deletes that storey and brings everything above it down by its height — the building gets
+shorter, which is what deleting a floor means.
 
 Deleting the *lowest* storey is the exception: everything else stays exactly where it is.
 Removing a foundation level does not drag the ground floor down to where the foundation was.
 
-### Move up / Move down
+### Move up / Move down  (↑ ↓ in the row)
 
-Reorders a storey, carrying its height with it.
+Reorders a storey, carrying its height with it. The arrow is greyed out at the end of the
+stack rather than hidden, so the row never changes shape as you work down it.
 
 ### Repeat — the typical floor
 
-The important one. Select the storey, type how many **more** you want, press **Repeat**.
+The important one. In the storey's own row, type how many **more** you want and press
+**Repeat**.
 
 Each copy keeps the original's height *and its floor plan*, so one drawn layout builds all of
 them. `3rd Floor Level` repeated four times becomes `4th`, `5th`, `6th`, `7th` — the numbering
@@ -139,7 +149,8 @@ window clears that box when you save storeys, so the two can never quietly contr
 
 ## 7. If the window looks different to this
 
-The storey editor is a **WPF** window — the branded one. It needs Windows and `pythonnet`:
+C2B's windows — this one and the main window — are **WPF**, the branded ones. They need
+Windows and `pythonnet`:
 
 ```bat
 pip install pythonnet

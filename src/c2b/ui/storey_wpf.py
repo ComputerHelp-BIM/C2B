@@ -9,6 +9,9 @@ read back through ``.Text``. That is not a shortcut: §12.7.G, H, J, K and Q of 
 are all ways a ``DataGrid`` bound to Python objects fails under pythonnet, from blank cells to
 a checkbox that will not tick. None of them can happen to a ``TextBox`` whose text Python put
 there and reads back itself.
+
+**Each row acts on itself.** Repeat, Move and Remove are buttons in the row they affect, so
+there is never a question of which storey a command is about.
 """
 from __future__ import annotations
 
@@ -19,12 +22,17 @@ from . import wpf
 from .storey_view import StoreyPresenter
 
 #: Names the layout file gives the controls this module drives.
-_BUTTONS = ("BtnAdd", "BtnRepeat", "BtnUp", "BtnDown", "BtnRemove", "BtnSave", "BtnCancel")
+_BUTTONS = ("BtnAdd", "BtnAddBottom", "BtnSave", "BtnCancel")
 
 _BADGE_BRUSH = {"ERROR": ("BrushErrorBadgeBackground", "BrushErrorBadgeForeground"),
                 "WARNING": ("BrushWarningBadgeBackground", "BrushWarningBadgeForeground"),
                 "SUCCESS": ("BrushSuccessBadgeBackground", "BrushSuccessBadgeForeground"),
                 "INFO": ("BrushInfoBadgeBackground", "BrushInfoBadgeForeground")}
+
+#: The columns of a row, matching the header grid in the layout file. Kept here as one list so
+#: a column cannot be widened in the header and left narrow in the rows.
+_COLUMNS = (26.0, None, 84.0, 94.0, 172.0, 92.0, 196.0)
+_ROW_MIN_WIDTH = 150.0
 
 
 class StoreyEditorWindow:
@@ -53,31 +61,24 @@ class StoreyEditorWindow:
     def _wire(self) -> None:
         for name in _BUTTONS:
             wpf.find(self.window, name)          # fail here, with the name, not at the click
-        wpf.find(self.window, "BtnAdd").Click += self._on_add
-        wpf.find(self.window, "BtnRepeat").Click += self._on_repeat
-        wpf.find(self.window, "BtnUp").Click += lambda s, e: self._command(self.presenter.move, +1)
-        wpf.find(self.window, "BtnDown").Click += lambda s, e: self._command(self.presenter.move, -1)
-        wpf.find(self.window, "BtnRemove").Click += self._on_remove
+        wpf.find(self.window, "BtnAdd").Click += self._on_add_top
+        wpf.find(self.window, "BtnAddBottom").Click += self._on_add_bottom
         wpf.find(self.window, "BtnSave").Click += self._on_save
         wpf.find(self.window, "BtnCancel").Click += self._on_cancel
 
     def _command(self, run, *args) -> None:
+        """Take what is typed, run the command, redraw. In that order, always."""
+        self._read_back()
         problem = run(*args)
         self.refresh()
         if problem:
             self._say(problem)
 
-    def _on_add(self, sender, args) -> None:
-        self._read_back()
-        self._command(self.presenter.add)
+    def _on_add_top(self, sender, args) -> None:
+        self._command(self.presenter.add_above)
 
-    def _on_remove(self, sender, args) -> None:
-        self._read_back()
-        self._command(self.presenter.remove)
-
-    def _on_repeat(self, sender, args) -> None:
-        self._read_back()
-        self._command(self.presenter.repeat, wpf.find(self.window, "RepeatTimes").Text)
+    def _on_add_bottom(self, sender, args) -> None:
+        self._command(self.presenter.add_below)
 
     def _on_save(self, sender, args) -> None:
         self._read_back()
@@ -104,6 +105,7 @@ class StoreyEditorWindow:
         """
         if self._filling:
             return
+        self.presenter.set_default_height(wpf.find(self.window, "DefaultHeight").Text)
         for storey_id, controls in list(self._fields.items()):
             self.presenter.set_name(storey_id, controls["name"].Text)
             plan = controls["plan"]
@@ -126,7 +128,7 @@ class StoreyEditorWindow:
 
     def refresh(self) -> None:
         """Rebuild the table from the schedule. Every row is new, so no handler accumulates."""
-        from System.Windows import GridLength, GridUnitType, Thickness, VerticalAlignment
+        from System.Windows import Thickness, VerticalAlignment
         from System.Windows.Controls import ComboBox, Grid, TextBlock, TextBox
 
         self._filling = True
@@ -135,34 +137,36 @@ class StoreyEditorWindow:
             self._fields.clear()
             choices = self.presenter.plan_choices()
             for row in self.presenter.rows():
-                grid = self._row_grid(Grid, GridLength, GridUnitType)
-                grid.Margin = Thickness(0, 0, 0, 4)
+                grid = self._row_grid()
+                grid.Margin = Thickness(0, 0, 0, 3)
 
                 number = TextBlock()
                 number.Text = str(row.number)
                 number.Style = self._style("TextMono")
+                number.Foreground = self._style("BrushMidGrey")
                 number.VerticalAlignment = VerticalAlignment.Center
                 self._place(Grid, grid, number, 0)
 
                 name = TextBox()
                 name.Text = row.name
-                name.Style = self._style("InputTextBox")
+                name.Style = self._style("InputRowBox")
                 name.Margin = Thickness(0, 0, t.SPACE_SM, 0)
                 self._place(Grid, grid, name, 1)
 
                 height = TextBox()
                 height.Text = row.height_text
-                height.Style = self._style("InputNumberBox")
+                height.Style = self._style("InputRowNumberBox")
                 height.IsEnabled = not row.is_base
                 height.Margin = Thickness(0, 0, t.SPACE_SM, 0)
-                if row.is_base:
-                    height.ToolTip = "The lowest storey rises from nothing. Set its elevation instead."
+                height.ToolTip = ("The lowest storey rises from nothing. Set its elevation instead."
+                                  if row.is_base else "Rise from the storey below. Everything above moves with it.")
                 self._place(Grid, grid, height, 2)
 
                 elevation = TextBox()
                 elevation.Text = row.elevation_text
-                elevation.Style = self._style("InputNumberBox")
+                elevation.Style = self._style("InputRowNumberBox")
                 elevation.Margin = Thickness(0, 0, t.SPACE_SM, 0)
+                elevation.ToolTip = "Top of the structural slab. The storeys above keep their distance."
                 self._place(Grid, grid, elevation, 3)
 
                 plan = ComboBox()
@@ -172,17 +176,22 @@ class StoreyEditorWindow:
                 plan.SelectedIndex = next((i for i, (label, _) in enumerate(choices)
                                            if label == row.plan_label), 0)
                 plan.Margin = Thickness(0, 0, t.SPACE_SM, 0)
+                plan.ToolTip = "Which drawn floor plan is built on this storey."
                 self._place(Grid, grid, plan, 4)
 
-                where = TextBlock()
-                where.Text = "; ".join(x for x in (row.source_words, row.note) if x)
-                where.Style = self._style("TextCaption")
-                where.VerticalAlignment = VerticalAlignment.Center
-                self._place(Grid, grid, where, 5)
+                flag = TextBlock()
+                flag.Text = row.flag
+                flag.Style = self._style("TextCaption")
+                flag.Margin = Thickness(t.SPACE_XS, 0, t.SPACE_SM, 0)
+                flag.VerticalAlignment = VerticalAlignment.Center
+                if row.severity:
+                    flag.Foreground = self._style("BrushErrorRed" if row.severity == "ERROR"
+                                                  else "BrushCautionAmber")
+                if row.tooltip:
+                    flag.ToolTip = row.tooltip
+                self._place(Grid, grid, flag, 5)
 
-                for control in (name, height, elevation):
-                    control.GotKeyboardFocus += self._select_on_focus(row.storey_id)
-                plan.GotKeyboardFocus += self._select_on_focus(row.storey_id)
+                self._place(Grid, grid, self._row_actions(row), 6)
 
                 self._rows_host.Children.Add(grid)
                 self._fields[row.storey_id] = {"name": name, "height": height, "elevation": elevation,
@@ -193,16 +202,68 @@ class StoreyEditorWindow:
         finally:
             self._filling = False
 
-    def _row_grid(self, Grid, GridLength, GridUnitType):
-        from System.Windows.Controls import ColumnDefinition
+    def _row_actions(self, row):
+        """The buttons that act on this row, in the row: move, repeat, remove."""
+        from System.Windows import Thickness, VerticalAlignment
+        from System.Windows.Controls import Orientation, StackPanel, TextBox
+
+        panel = StackPanel()
+        panel.Orientation = Orientation.Horizontal
+        panel.VerticalAlignment = VerticalAlignment.Center
+        panel.Margin = Thickness(t.SPACE_XS, 0, 0, 0)
+
+        up = self._row_button("↑", "Move this storey up", "ButtonRowAction",
+                              lambda s, e, sid=row.storey_id: self._command(self.presenter.move, sid, +1))
+        up.IsEnabled = not row.is_top
+        down = self._row_button("↓", "Move this storey down", "ButtonRowAction",
+                                lambda s, e, sid=row.storey_id: self._command(self.presenter.move, sid, -1))
+        down.IsEnabled = not row.is_base
+        panel.Children.Add(up)
+        panel.Children.Add(down)
+
+        times = TextBox()
+        times.Text = "1"
+        times.Style = self._style("InputRowNumberBox")
+        times.Width = 34
+        times.Margin = Thickness(t.SPACE_SM, 0, 2, 0)
+        times.ToolTip = "How many more storeys like this one"
+        panel.Children.Add(times)
+
+        repeat = self._row_button("Repeat", "Build this storey's plan this many more times "
+                                            "- a typical floor, drawn once", "ButtonSmall",
+                                  lambda s, e, sid=row.storey_id, box=times:
+                                      self._command(self.presenter.repeat, sid, box.Text))
+        panel.Children.Add(repeat)
+
+        panel.Children.Add(self._row_button(
+            "✕", "Remove this storey", "ButtonRowDanger",
+            lambda s, e, sid=row.storey_id: self._command(self.presenter.remove, sid),
+            left=t.SPACE_SM))
+        return panel
+
+    def _row_button(self, text: str, tip: str, style: str, on_click, left: int = 0):
+        from System.Windows import Thickness
+        from System.Windows.Controls import Button
+
+        button = Button()
+        button.Content = text
+        button.Style = self._style(style)
+        button.ToolTip = tip
+        button.Margin = Thickness(left, 0, 2, 0)
+        button.Click += on_click
+        return button
+
+    def _row_grid(self):
+        from System.Windows import GridLength, GridUnitType
+        from System.Windows.Controls import ColumnDefinition, Grid
 
         grid = Grid()
-        for width in (34.0, None, 110.0, 120.0, 170.0, None):
+        for width in _COLUMNS:
             column = ColumnDefinition()
             column.Width = (GridLength(1, GridUnitType.Star) if width is None
                             else GridLength(width, GridUnitType.Pixel))
             if width is None:
-                column.MinWidth = 120.0
+                column.MinWidth = _ROW_MIN_WIDTH
             grid.ColumnDefinitions.Add(column)
         return grid
 
@@ -210,12 +271,6 @@ class StoreyEditorWindow:
     def _place(Grid, grid, control, column: int) -> None:
         Grid.SetColumn(control, column)
         grid.Children.Add(control)
-
-    def _select_on_focus(self, storey_id: str):
-        def handler(sender, args):
-            if not self._filling:
-                self.presenter.select(storey_id)
-        return handler
 
     def _style(self, key: str):
         return self.window.FindResource(key)
@@ -234,7 +289,7 @@ class StoreyEditorWindow:
             # Never colour alone (§10.4): the severity is spelt out beside the message.
             line.Text = f"{severity}  {message}"
             line.Style = self._style("TextError" if severity == "ERROR" else "TextCaption")
-            line.Margin = Thickness(0, 0, 0, 2)
+            line.Margin = Thickness(0, 0, 0, 1)
             host.Children.Add(line)
         panel.Visibility = Visibility.Visible if lines else Visibility.Collapsed
 

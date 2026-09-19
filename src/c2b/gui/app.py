@@ -6,23 +6,23 @@ window stays responsive on a 25 MB drawing.
 """
 from __future__ import annotations
 
-import json
 import os
 import platform
 import queue
 import subprocess
-import sys
 import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from .. import __version__
-from .runner import COLUMN_SIZE_DEFAULT, COLUMN_SIZE_FROM, JobResult, JobSettings, column_size_label, column_size_value, run_job, run_verify
+from ..ui import theme as t
+from .runner import COLUMN_SIZE_DEFAULT, JobResult, run_job, run_verify
+from .session import FIELDS, KEYS, UNITS, MainPresenter
 
-SETTINGS_FILE = Path.home() / ".c2b" / "gui.json"
-UNITS = ("read from drawing", "mm", "cm", "m", "in", "ft")
-COLORS = {"step": "#1F4E78", "good": "#1E7B34", "warn": "#9A6700", "bad": "#B42318", "info": "#333333"}
+#: The brand tokens, by the name the progress log knows each severity as (§3.3).
+COLORS = {"step": t.CHARCOAL_BLACK, "good": t.SUCCESS_GREEN, "warn": t.CAUTION_AMBER,
+          "bad": t.ERROR_RED, "info": t.MID_GREY}
 
 
 def _open(path: Path) -> None:
@@ -48,8 +48,8 @@ class C2BWindow(tk.Tk):
         self.queue: queue.Queue = queue.Queue()
         self.result: JobResult | None = None
         self.worker: threading.Thread | None = None
-        self.vars = {k: tk.StringVar() for k in ("drawing", "seed", "profile", "levels", "out", "units",
-                                                 "col_size", "beam_depth", "slab_thk")}
+        self.presenter = MainPresenter()
+        self.vars = {k: tk.StringVar() for k in KEYS}
         self.vars["units"].set(UNITS[0])
         self.vars["col_size"].set(COLUMN_SIZE_DEFAULT)
         self._build()
@@ -71,25 +71,24 @@ class C2BWindow(tk.Tk):
         top.pack(fill="x")
         top.columnconfigure(1, weight=1)
 
-        self._row(top, 0, "Client drawing", "drawing", self._pick_drawing, "DXF from the client (DWG works when a converter is installed)")
-        self._row(top, 1, "Our template", "seed", lambda: self._pick_file("seed", [("Template DXF", "*.dxf")]), "leave empty to use the firm's CH template from the C2B folder")
-        self._row(top, 2, "Layer profile", "profile", lambda: self._pick_file("profile", [("Profile", "*.yaml *.yml")]), "optional: saved layer roles for this client")
-        self._row(top, 3, "Level heights", "levels", lambda: self._pick_file("levels", [("Level workbook", "*.xlsx")]), "optional: a level workbook to use instead of the storeys")
-        self._row(top, 4, "Save results in", "out", self._pick_out, "leave empty to write next to the drawing")
+        # The five file rows come from the shared field list, so this window and the WPF one
+        # ask for the same things in the same order and neither can gain a row alone.
+        for n, f in enumerate(FIELDS):
+            self._row(top, n, f)
 
         opts = ttk.Frame(top)
-        opts.grid(row=5, column=1, columnspan=3, sticky="w", pady=(6, 0))
-        ttk.Label(opts, text="Units:").pack(side="left")
-        ttk.Combobox(opts, textvariable=self.vars["units"], values=UNITS, width=16, state="readonly").pack(side="left", padx=(6, 18))
-        ttk.Label(opts, text="Column size from:").pack(side="left")
-        ttk.Combobox(opts, textvariable=self.vars["col_size"], values=list(COLUMN_SIZE_FROM), width=16,
-                     state="readonly").pack(side="left", padx=(6, 8))
-        ttk.Label(opts, text="what the client stated, or the drawing measured", foreground="#6B6B6B").pack(side="left")
+        opts.grid(row=len(FIELDS), column=1, columnspan=3, sticky="w", pady=(6, 0))
+        for key, label, choices, hint in self.presenter.option_boxes():
+            ttk.Label(opts, text=f"{label}:").pack(side="left")
+            ttk.Combobox(opts, textvariable=self.vars[key], values=choices, width=16,
+                         state="readonly").pack(side="left", padx=(6, 8))
+            if hint:
+                ttk.Label(opts, text=hint, foreground=COLORS["info"]).pack(side="left", padx=(0, 18))
 
         # A beam or a slab the drawing never sizes cannot go into Revit without one, and
         # dropping it loses the member. Typed once, remembered, and the run says how many used it.
         sizes = ttk.Frame(top)
-        sizes.grid(row=6, column=1, columnspan=3, sticky="w", pady=(6, 0))
+        sizes.grid(row=len(FIELDS) + 1, column=1, columnspan=3, sticky="w", pady=(6, 0))
         ttk.Label(sizes, text="When the drawing gives no size —  beam depth:").pack(side="left")
         ttk.Entry(sizes, textvariable=self.vars["beam_depth"], width=8, justify="right").pack(side="left", padx=(6, 4))
         ttk.Label(sizes, text="mm     slab thickness:").pack(side="left")
@@ -150,49 +149,38 @@ class C2BWindow(tk.Tk):
         self.status = ttk.Label(self, text="Pick a client drawing and press Run.", anchor="w", padding=(16, 6))
         self.status.pack(fill="x")
 
-    def _row(self, parent, row: int, label: str, key: str, command, hint: str) -> None:
-        ttk.Label(parent, text=label, style="Head.TLabel").grid(row=row, column=0, sticky="w", pady=3, padx=(0, 10))
-        entry = ttk.Entry(parent, textvariable=self.vars[key])
-        entry.grid(row=row, column=1, sticky="ew", pady=3)
-        ttk.Button(parent, text="Browse…", command=command, width=11).grid(row=row, column=2, padx=(8, 0))
-        ttk.Label(parent, text=hint, foreground="#666666").grid(row=row, column=3, sticky="w", padx=(10, 0))
+    def _row(self, parent, row: int, f) -> None:
+        ttk.Label(parent, text=f.label, style="Head.TLabel").grid(row=row, column=0, sticky="w", pady=3, padx=(0, 10))
+        ttk.Entry(parent, textvariable=self.vars[f.key]).grid(row=row, column=1, sticky="ew", pady=3)
+        ttk.Button(parent, text="Browse…", width=11,
+                   command=lambda f=f: self._pick(f)).grid(row=row, column=2, padx=(8, 0))
+        ttk.Label(parent, text=f.hint, foreground=COLORS["info"]).grid(row=row, column=3, sticky="w", padx=(10, 0))
 
     # -------------------------------------------------------------- pickers
-    def _pick_drawing(self) -> None:
-        path = filedialog.askopenfilename(title="Client drawing", filetypes=[("Drawings", "*.dxf *.dwg"), ("DXF", "*.dxf"), ("DWG", "*.dwg"), ("All files", "*.*")])
+    def _pick(self, f) -> None:
+        """One picker for every field. Tk wants space-separated patterns, not semicolons."""
+        if f.kind == "folder":
+            path = filedialog.askdirectory(title=f.label)
+        else:
+            types = [(name, pattern.replace(";", " ")) for name, pattern in f.filters]
+            path = filedialog.askopenfilename(title=f.label, filetypes=[*types, ("All files", "*.*")])
         if path:
-            self.vars["drawing"].set(path)
-            self.status.configure(text=f"Ready: {Path(path).name}")
-
-    def _pick_file(self, key: str, types) -> None:
-        path = filedialog.askopenfilename(title=key.title(), filetypes=[*list(types), ("All files", "*.*")])
-        if path:
-            self.vars[key].set(path)
-
-    def _pick_out(self) -> None:
-        path = filedialog.askdirectory(title="Save results in")
-        if path:
-            self.vars["out"].set(path)
+            self.vars[f.key].set(path)
+            if f.key == "drawing":
+                self.status.configure(text=f"Ready: {Path(path).name}")
 
     # --------------------------------------------------------------- running
     def start(self) -> None:
-        drawing = self.vars["drawing"].get().strip()
-        if not drawing or not Path(drawing).exists():
-            messagebox.showwarning("C2B", "Pick a client drawing first.")
+        self._sync_to_presenter()
+        problem = self.presenter.problem()
+        if problem:
+            messagebox.showwarning("C2B", problem)
             return
         if self.worker and self.worker.is_alive():
             return
         self._save_settings()
         self._reset()
-        units = self.vars["units"].get()
-        settings = JobSettings(
-            drawing=Path(drawing),
-            out_dir=Path(self.vars["out"].get()) if self.vars["out"].get().strip() else None,
-            seed=self._path("seed"), spec=None, profile=self._path("profile"), levels=self._path("levels"),
-            default_beam_depth_mm=self._number("beam_depth"), default_slab_thickness_mm=self._number("slab_thk"),
-            units=None if units == UNITS[0] else units,
-            column_size_from=column_size_value(self.vars["col_size"].get()),
-        )
+        settings = self.presenter.job_settings()
         self.status.configure(text="Working…  a large drawing can take a minute.")
         self.worker = threading.Thread(target=self._work, args=(run_job, (settings,)), daemon=True)
         self.worker.start()
@@ -214,20 +202,6 @@ class C2BWindow(tk.Tk):
 
     def _report(self, level: str, message: str) -> None:
         self.queue.put(("log", (level, message)))
-
-    def _number(self, key: str) -> float | None:
-        """A millimetre value typed in the window, or None when it is empty or not a number."""
-        text = self.vars[key].get().strip().replace(",", "")
-        if not text:
-            return None
-        try:
-            return float(text)
-        except ValueError:
-            return None
-
-    def _path(self, key: str) -> Path | None:
-        value = self.vars[key].get().strip()
-        return Path(value) if value and Path(value).exists() else None
 
     def _reset(self) -> None:
         self.log.configure(state="normal")
@@ -265,27 +239,20 @@ class C2BWindow(tk.Tk):
         self.progress.configure(value=4)
         for severity, code, count, meaning in result.issues[:200]:
             self.issues.insert("", "end", values=(severity.title(), count, meaning or code), tags=(severity,))
-        summary = "   ".join(f"{v} {k}" for k, v in result.counts.items() if v)
-        if result.error:
-            self.status.configure(text=f"Stopped: {result.error}", foreground=COLORS["bad"])
-        elif result.issues:
-            self.status.configure(text=f"{summary}   —   {len(result.issues)} kinds of thing to check below", foreground=COLORS["warn"])
-        else:
-            self.status.configure(text=f"{summary}   —   nothing to flag", foreground=COLORS["good"])
+        self.presenter.result = result
+        severity, _word, line = self.presenter.summary()
+        self.status.configure(text=line, foreground={"ERROR": COLORS["bad"], "WARNING": COLORS["warn"],
+                                                     "SUCCESS": COLORS["good"]}.get(severity, COLORS["info"]))
         self.next_label.configure(text=f"Next:  {result.next_step}" if result.next_step else "")
         # The storey editor is always offered once a drawing has been read. It is not a remedy
         # for a missing elevation any more -- it is where the building's levels are decided, and
         # a drafter reaches for it on a run that went perfectly as often as on one that did not.
         self.storeys_btn.pack_forget()
-        if result.storeys_json:
+        if self.presenter.can_edit_storeys():
             self.storeys_btn.pack(side="right", padx=(10, 0))
 
-        for label, path in (("Open the template DXF", result.template_dxf), ("Review workbook", result.review_xlsx),
-                            ("Schedules", result.schedules_xlsx), ("Overlay on the client drawing", result.review_dxf),
-                            ("What Revit will build", result.revit_xlsx), ("Check report", result.verify_md),
-                            ("Open the folder", result.out_dir)):
-            if path and Path(path).exists():
-                ttk.Button(self.actions, text=label, command=lambda p=path: _open(p)).pack(side="left", padx=(0, 8), pady=6)
+        for label, path in self.presenter.actions():
+            ttk.Button(self.actions, text=label, command=lambda p=path: _open(p)).pack(side="left", padx=(0, 8), pady=6)
 
     # ---------------------------------------------------------------- storeys
     def _edit_storeys(self) -> None:
@@ -330,44 +297,24 @@ class C2BWindow(tk.Tk):
         self.start()
 
     # -------------------------------------------------------------- settings
+    def _sync_to_presenter(self) -> None:
+        for key in self.vars:
+            self.presenter.values[key] = self.vars[key].get()
+
     def _load_settings(self) -> None:
-        try:
-            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-            for key in ("seed", "profile", "out", "units", "col_size", "beam_depth", "slab_thk"):
-                if not data.get(key):
-                    continue
-                if key == "col_size" and column_size_label(data[key]) is None:
-                    continue        # a label from an older build: keep the default
-                self.vars[key].set(data[key])
-        except Exception:
-            pass
+        self.presenter.load()
+        for key, value in self.presenter.values.items():
+            if key in self.vars and value:
+                self.vars[key].set(value)
 
     def _save_settings(self) -> None:
-        try:
-            SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-            SETTINGS_FILE.write_text(json.dumps({k: self.vars[k].get() for k in
-                                                 ("seed", "profile", "out", "units", "col_size",
-                                                  "beam_depth", "slab_thk")}, indent=2), encoding="utf-8")
-        except Exception:
-            pass
+        self._sync_to_presenter()
+        self.presenter.save()
 
 
 def run_gui(drawing: str | Path | None = None) -> int:
-    try:
-        window = C2BWindow()
-    except tk.TclError as ex:
-        print(f"No display available for the C2B window ({ex}). Use the command line: c2b run <drawing>", file=sys.stderr)
-        return 2
+    window = C2BWindow()
     if drawing:
         window.vars["drawing"].set(str(drawing))
-        window.status.configure(text=f"Ready: {Path(drawing).name}")
     window.mainloop()
     return 0
-
-
-def main() -> int:
-    return run_gui(sys.argv[1] if len(sys.argv) > 1 else None)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
