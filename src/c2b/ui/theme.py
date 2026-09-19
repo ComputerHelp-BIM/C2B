@@ -43,6 +43,7 @@ VIVID_RED_HOVER: Final = "#C41A1A"
 VIVID_RED_PRESSED: Final = "#A81515"
 VIVID_RED_10: Final = "#1AE02020"     # #AARRGGBB -- a 10% red tint for a secondary hover fill
 ERROR_RED_HOVER: Final = "#B91C1C"
+ERROR_RED_PRESSED: Final = "#991B1B"
 OFF_WHITE_HOVER: Final = "#E8E8EC"
 
 # 3.5  Surface-specific tints, for tables and selection
@@ -81,14 +82,20 @@ FONT_MONO: Final = "JetBrains Mono, Consolas, Courier New"
 FONT_SANS_FALLBACKS: Final = ("JetBrains Mono", "Source Serif 4", "Inter", "Segoe UI", "Calibri", "TkDefaultFont")
 FONT_MONO_FALLBACKS: Final = ("JetBrains Mono", "Consolas", "Courier New", "TkFixedFont")
 
+#: These are the sizes the **shipping** ``Typography.xaml`` uses, taken from the reference
+#: ``ui.xaml`` of AnonGee . One Filter Parameter, not the ones the brand document's table
+#: prints. The document is explicit about which wins: "Where a number here and a number in
+#: code disagree, the code wins and this document is wrong." Its own §4.2 already carries one
+#: such reconciliation note. Following the table instead gave a window a third larger than
+#: every other tool in the suite.
 FONT_SIZE_H1: Final = 21.0
 FONT_SIZE_H2: Final = 16.5
-FONT_SIZE_H3: Final = 12.0
-FONT_SIZE_H4: Final = 10.5
-FONT_SIZE_BODY: Final = 10.5
-FONT_SIZE_SMALL: Final = 9.0
-FONT_SIZE_CAPTION: Final = 9.0
-FONT_SIZE_CODE: Final = 9.0
+FONT_SIZE_H3: Final = 11.0          # document says 12
+FONT_SIZE_H4: Final = 9.5           # document says 10.5
+FONT_SIZE_BODY: Final = 9.5         # document says 10.5
+FONT_SIZE_SMALL: Final = 8.5        # document says 9
+FONT_SIZE_CAPTION: Final = 8.5      # document says 9
+FONT_SIZE_CODE: Final = 8.5         # document says 9
 
 LINE_HEIGHT_H1: Final = 26.0
 LINE_HEIGHT_BODY: Final = 17.0
@@ -132,10 +139,16 @@ RADIUS_MD: Final = 5        # buttons, inputs, combo boxes, list items
 RADIUS_LG: Final = 8        # cards, panels, group boxes
 RADIUS_XL: Final = 10       # dialogs and modal windows
 
-#: 5.4 -- density is control height and padding, never a smaller type scale.
-HEIGHT_COMPACT: Final = 28       # list items, checkboxes, a parameter grid
-HEIGHT_COMFORTABLE: Final = 36   # buttons and inputs in a dialog
-HEIGHT_LARGE: Final = 44         # the primary action of a dialog
+#: 5.4 -- density is control height and padding, never a smaller type scale. As with the type
+#: scale, these are the shipping numbers: a button is 28 and an input is 26 in every tool in
+#: the suite, which is tighter than the document's 28/36 table and is what a Revit user's eye
+#: is already calibrated to.
+HEIGHT_INPUT: Final = 26         # text boxes, combo boxes
+HEIGHT_COMPACT: Final = 26       # list items, checkboxes, a parameter grid
+HEIGHT_BUTTON: Final = 28        # every button unless it is the one primary action
+HEIGHT_LARGE: Final = 34         # the primary action of a dialog
+BUTTON_PADDING_H: Final = 12     # horizontal padding inside a button
+INPUT_PADDING_H: Final = 7       # horizontal inset of a text box's content
 
 DIALOG_WIDTH: Final = 480        # 5.5 -- a dialog is a fixed width and centres on its owner
 

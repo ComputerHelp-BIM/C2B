@@ -29,10 +29,12 @@ _BADGE_BRUSH = {"ERROR": ("BrushErrorBadgeBackground", "BrushErrorBadgeForegroun
                 "SUCCESS": ("BrushSuccessBadgeBackground", "BrushSuccessBadgeForeground"),
                 "INFO": ("BrushInfoBadgeBackground", "BrushInfoBadgeForeground")}
 
-#: The columns of a row, matching the header grid in the layout file. Kept here as one list so
-#: a column cannot be widened in the header and left narrow in the rows.
-_COLUMNS = (26.0, None, 84.0, 94.0, 172.0, 92.0, 196.0)
+#: The columns of a row, matching ``HeaderRow`` in the layout file. Kept here as one list so a
+#: column cannot be widened in the header and left narrow in the rows. A test reads both.
+_COLUMNS = (30.0, None, 82.0, 92.0, 168.0, 86.0, 188.0)
 _ROW_MIN_WIDTH = 150.0
+#: Compact density (§5.4): a data row is 26px of content, as the suite's DataGrid ships.
+_ROW_HEIGHT = 26.0
 
 
 class StoreyEditorWindow:
@@ -136,28 +138,33 @@ class StoreyEditorWindow:
             self._rows_host.Children.Clear()
             self._fields.clear()
             choices = self.presenter.plan_choices()
-            for row in self.presenter.rows():
+            for n, row in enumerate(self.presenter.rows()):
                 grid = self._row_grid()
-                grid.Margin = Thickness(0, 0, 0, 3)
+                grid.MinHeight = _ROW_HEIGHT
+                grid.Margin = Thickness(0, 0, 0, 1)
+                # Zebra shading in Off White, never a red tint (§9.8, §16.1), the way the
+                # suite's DataGrid alternates its rows.
+                grid.Background = self._style("BrushOffWhite" if n % 2 else "BrushPureWhite")
 
                 number = TextBlock()
                 number.Text = str(row.number)
                 number.Style = self._style("TextMono")
                 number.Foreground = self._style("BrushMidGrey")
                 number.VerticalAlignment = VerticalAlignment.Center
+                number.Margin = Thickness(t.SPACE_SM, 0, 0, 0)
                 self._place(Grid, grid, number, 0)
 
                 name = TextBox()
                 name.Text = row.name
                 name.Style = self._style("InputRowBox")
-                name.Margin = Thickness(0, 0, t.SPACE_SM, 0)
+                name.Margin = Thickness(t.SPACE_SM, 2, t.SPACE_SM, 2)
                 self._place(Grid, grid, name, 1)
 
                 height = TextBox()
                 height.Text = row.height_text
                 height.Style = self._style("InputRowNumberBox")
                 height.IsEnabled = not row.is_base
-                height.Margin = Thickness(0, 0, t.SPACE_SM, 0)
+                height.Margin = Thickness(0, 2, t.SPACE_SM, 2)
                 height.ToolTip = ("The lowest storey rises from nothing. Set its elevation instead."
                                   if row.is_base else "Rise from the storey below. Everything above moves with it.")
                 self._place(Grid, grid, height, 2)
@@ -165,24 +172,24 @@ class StoreyEditorWindow:
                 elevation = TextBox()
                 elevation.Text = row.elevation_text
                 elevation.Style = self._style("InputRowNumberBox")
-                elevation.Margin = Thickness(0, 0, t.SPACE_SM, 0)
+                elevation.Margin = Thickness(0, 2, t.SPACE_SM, 2)
                 elevation.ToolTip = "Top of the structural slab. The storeys above keep their distance."
                 self._place(Grid, grid, elevation, 3)
 
                 plan = ComboBox()
-                plan.Style = self._style("InputComboBox")
+                plan.Style = self._style("InputRowComboBox")
                 for label, _ in choices:
                     plan.Items.Add(label)
                 plan.SelectedIndex = next((i for i, (label, _) in enumerate(choices)
                                            if label == row.plan_label), 0)
-                plan.Margin = Thickness(0, 0, t.SPACE_SM, 0)
+                plan.Margin = Thickness(t.SPACE_SM, 2, t.SPACE_SM, 2)
                 plan.ToolTip = "Which drawn floor plan is built on this storey."
                 self._place(Grid, grid, plan, 4)
 
                 flag = TextBlock()
                 flag.Text = row.flag
                 flag.Style = self._style("TextCaption")
-                flag.Margin = Thickness(t.SPACE_XS, 0, t.SPACE_SM, 0)
+                flag.Margin = Thickness(t.SPACE_SM, 0, t.SPACE_SM, 0)
                 flag.VerticalAlignment = VerticalAlignment.Center
                 if row.severity:
                     flag.Foreground = self._style("BrushErrorRed" if row.severity == "ERROR"

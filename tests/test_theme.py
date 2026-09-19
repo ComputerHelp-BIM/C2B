@@ -120,24 +120,37 @@ def test_the_radius_tiers_grow_with_the_size_of_the_thing():
     assert t.RADIUS_SM < t.RADIUS_MD < t.RADIUS_LG < t.RADIUS_XL
 
 
-def test_hit_targets_meet_the_accessible_minimum():
-    """10.3 -- 28px compact, 36px comfortable, and nothing smaller than compact."""
-    assert t.HEIGHT_COMPACT >= 28
-    assert t.HEIGHT_COMFORTABLE >= 36 > t.HEIGHT_COMPACT
-    assert t.HEIGHT_LARGE > t.HEIGHT_COMFORTABLE
+def test_control_heights_match_the_shipping_suite():
+    """The suite ships a 28px button over a 26px input, which is tighter than the document's
+    28/36 table. The document's own rule settles it: where the two disagree the code wins."""
+    assert t.HEIGHT_INPUT == 26
+    assert t.HEIGHT_BUTTON == 28
+    assert t.HEIGHT_LARGE > t.HEIGHT_BUTTON > t.HEIGHT_INPUT
+
+
+def test_a_hit_target_is_never_smaller_than_an_input():
+    """10.3 -- an inline control may be compact, but nothing goes under the input height."""
+    assert min(t.HEIGHT_INPUT, t.HEIGHT_COMPACT, t.HEIGHT_BUTTON) >= 24
+
+
+def test_the_type_scale_is_the_one_the_suite_ships():
+    """Taken from the shipping ui.xaml, not from the document's §4.2 table. The document is
+    explicit that the code wins, and it already carries one such reconciliation note itself;
+    following the table gave a window a third larger than every other tool in the suite."""
+    assert (t.FONT_SIZE_H2, t.FONT_SIZE_H3, t.FONT_SIZE_BODY, t.FONT_SIZE_CAPTION) == (16.5, 11.0, 9.5, 8.5)
 
 
 def test_the_type_scale_descends_and_body_matches_h4():
     assert t.FONT_SIZE_H1 > t.FONT_SIZE_H2 > t.FONT_SIZE_H3 > t.FONT_SIZE_BODY
     assert t.FONT_SIZE_H4 == t.FONT_SIZE_BODY
-    assert t.FONT_SIZE_SMALL == t.FONT_SIZE_CAPTION == 9.0
+    assert t.FONT_SIZE_SMALL == t.FONT_SIZE_CAPTION == t.FONT_SIZE_CODE
 
 
 def test_a_type_size_crosses_to_tkinter_as_pixels_not_points():
     """A WPF unit is one CSS pixel, and Tk reads a negative size as pixels."""
-    assert t.pixels(t.FONT_SIZE_BODY) == -11        # 10.5 rounds to 11 px, not 8 pt
+    assert t.pixels(t.FONT_SIZE_BODY) == -10        # 9.5 rounds to 10 px, not 7 pt
     assert t.pixels(t.FONT_SIZE_H1) == -21
-    assert t.points(t.FONT_SIZE_BODY) == 8
+    assert t.points(t.FONT_SIZE_BODY) == 7
 
 
 def test_motion_never_makes_an_engineer_wait():

@@ -176,3 +176,31 @@ def test_the_rows_are_not_bound_to_python_objects(tree):
     used |= {a.name for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))
              for a in node.names}
     assert used.isdisjoint({"DataGrid", "ItemsSource", "ArrayList", "INotifyPropertyChanged"})
+
+
+def test_the_row_columns_match_the_header_the_layout_draws():
+    """A column widened in the header and left narrow in the rows is a table that does not
+    line up, and it is invisible until somebody opens the window."""
+    import re
+
+    from c2b.ui.storey_wpf import _COLUMNS
+
+    markup = xaml.layout_path("storey_editor").read_text(encoding="utf-8")
+    header = markup.split('x:Name="HeaderRow"')[1].split("</Grid.ColumnDefinitions>")[0]
+    widths = re.findall(r'<ColumnDefinition Width="([^"]+)"', header)
+    assert len(widths) == len(_COLUMNS), "the header and the rows have different column counts"
+    for declared, built in zip(widths, _COLUMNS):
+        if declared == "*":
+            assert built is None, "the header's stretching column is fixed in the rows"
+        else:
+            assert float(declared) == built, f"header {declared} vs row {built}"
+
+
+def test_every_column_the_header_names_is_filled_by_a_row(source):
+    """A header with seven columns over rows that place six leaves one silently blank."""
+    from c2b.ui.storey_wpf import _COLUMNS
+
+    placed = source.split("def refresh")[1].split("\n    def _row_actions")[0]
+    columns = {int(n) for n in __import__("re").findall(r"grid, \w+, (\d)\)", placed)}
+    columns |= {6}                       # the action cluster, placed by its own call
+    assert columns == set(range(len(_COLUMNS)))

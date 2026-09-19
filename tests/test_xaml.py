@@ -54,10 +54,11 @@ def test_the_theme_resolves_every_key_it_uses_itself(theme_markup):
 
 
 def test_the_theme_hardcodes_no_colour_outside_its_own_colour_block(theme_markup):
-    """13.4 - inline hex outside the colour tier is rejected."""
+    """13.4 - inline hex outside the colour tier is rejected. The shadow's own black is the
+    one exception the suite ships, and it is an opacity, not a palette colour."""
     body = theme_markup.split("</Color>")[-1]
     stray = [line.strip() for line in body.splitlines()
-             if "#" in line and "SolidColorBrush" not in line]
+             if _HEX.search(line) and "SolidColorBrush" not in line and "DropShadowEffect" not in line]
     assert stray == []
 
 
@@ -185,26 +186,49 @@ def test_the_window_opens_at_the_height_its_content_needs():
 
 
 def test_the_table_uses_compact_density_not_the_dialog_size():
-    """5.4 - a parameter table is 28px rows; 36px is for a dialog's action bar."""
+    """5.4 - a table row is smaller than the dialog's own inputs and buttons."""
     theme = xaml.theme_xaml()
-    for key in ("InputRowBox", "InputRowNumberBox", "ButtonSmall", "ButtonRowAction", "ButtonRowDanger"):
+    for key in ("InputRowBox", "InputRowNumberBox", "InputRowComboBox",
+                "ButtonSmall", "ButtonRowAction", "ButtonRowDanger"):
         assert key in xaml.declared_keys(theme), f"no compact {key}"
     row = theme.split('x:Key="InputRowBox"')[1].split("</Style>")[0]
-    assert 'Value="28"' in row and "FontSizeSmall" in row
+    assert 'Value="24"' in row and "FontSizeCaption" in row
 
 
-def test_a_button_paints_its_own_fill_rather_than_binding_to_one():
-    """The first build on a real machine came up with bare outlines and invisible labels,
-    which is what an unresolved template binding looks like. A variant's colours are known
-    when the template is generated, so nothing is left to resolve at runtime."""
+def test_the_button_template_lives_once_and_variants_are_only_colours():
+    """The shipping dictionary's shape, and the one in front of users in every other tool in
+    the suite: one template on ButtonBaseStyle, and a variant is colours plus Style.Triggers."""
     theme = xaml.theme_xaml()
+    assert theme.count("<ControlTemplate TargetType=\"Button\">") == 1
+    base = theme.split('x:Key="ButtonBaseStyle"')[1].split("\n  <Style")[0]
+    assert 'x:Name="Root"' in base and "TemplateBinding Background" in base
+    assert 'Padding="{TemplateBinding Padding}"' in base
+
     for key in ("ButtonPrimary", "ButtonDanger", "ButtonSecondary", "ButtonGhost", "ButtonNeutral"):
-        template = theme.split(f'x:Key="{key}"')[1].split("</Style>")[0]
-        face = template.split('x:Name="Face"')[1].split(">")[0]
-        assert "TemplateBinding" not in face, f"{key} binds its fill instead of painting it"
-        assert "StaticResource" in face
-        label = template.split('x:Name="Label"')[1].split("/>")[0]
-        assert "TextElement.Foreground" in label, f"{key} leaves its label colour to inheritance"
+        variant = theme.split(f'x:Key="{key}"')[1].split("\n  <Style")[0]
+        assert "BasedOn=\"{StaticResource ButtonBaseStyle}\"" in theme.split(f'x:Key="{key}"')[1][:80]
+        assert "<ControlTemplate" not in variant, f"{key} redefines the shared template"
+        assert "<Style.Triggers>" in variant, f"{key} states no hover or disabled state"
+
+
+def test_every_button_variant_states_a_disabled_look(theme_markup):
+    """10.3 - a disabled control stays visible and inert, never collapsed."""
+    assert theme_markup.count('<Trigger Property="IsEnabled" Value="False">') >= 5
+
+
+def test_the_suite_shapes_are_all_here():
+    """The window furniture One Filter Parameter uses, so a C2B window can be built the same."""
+    keys = xaml.declared_keys(xaml.theme_xaml())
+    for key in ("CardBorder", "DividerRule", "BadgeBorder", "TextBadge", "SectionLabel",
+                "FieldLabel", "StatusText", "ElevationLevel2", "InputListBox", "TextH3OnDark"):
+        assert key in keys, f"the theme has no {key}"
+
+
+def test_the_implicit_selection_controls_are_styled():
+    """9.4 - a window should not have to style every tick box and radio it puts down."""
+    theme = xaml.theme_xaml()
+    for target in ("CheckBox", "RadioButton", "ComboBoxItem", "ListBoxItem", "ScrollBar"):
+        assert f'<Style TargetType="{target}">' in theme, f"{target} has no implicit style"
 
 
 def test_the_storey_editor_has_exactly_one_primary_button():

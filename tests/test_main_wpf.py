@@ -139,9 +139,21 @@ def test_the_things_to_check_table_is_not_bound_to_python_objects(tree):
     assert used.isdisjoint({"DataGrid", "ItemsSource", "ArrayList"})
 
 
-def test_the_dispatcher_delegate_is_a_real_clr_type(source):
-    """12.8.7.1 - pythonnet needs __namespace__ to build a type from a .NET delegate."""
-    assert '__namespace__ = "AnonGee"' in source
+def test_the_dispatcher_is_handed_a_real_dotnet_delegate(source):
+    """BeginInvoke takes a Delegate. A plain Python callable is not one, and neither is a
+    Python class carrying __namespace__ -- that only means anything on a class deriving from
+    a CLR type. System.Action wraps the callable, which is what the shipping tools do."""
+    body = source.split("def _on_ui")[1].split("\n    def ")[0]
+    assert "from System import Action" in body
+    assert "Action(work)" in body
+
+
+def test_only_one_application_is_ever_constructed(source):
+    """A process holds at most one; constructing a second throws, and inside Revit there is
+    already one. That threw on the first build and the fallback quietly opened Tkinter."""
+    body = source.split("def show")[1].split("\ndef ")[0]
+    assert "Application.Current" in body
+    assert body.index("Application.Current") < body.index("Application().Run")
 
 
 def test_the_folder_picker_works_on_a_runtime_without_the_new_dialog(source):

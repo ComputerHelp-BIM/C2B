@@ -39,8 +39,14 @@ def run_gui(drawing: str | Path | None = None) -> int:
             window.show()
             return 0
         except Exception as ex:                  # a broken WPF is a reason to fall back, not to stop
-            print(f"The WPF window would not open ({type(ex).__name__}: {ex}).\n"
-                  f"Falling back to the plain window.")
+            # Loudly. The first build of the WPF window threw during construction and this
+            # fallback swallowed it, so the branded window simply never appeared and the plain
+            # one did -- which looks like the feature was never built rather than like a bug.
+            import traceback
+
+            print(f"The WPF window would not open: {type(ex).__name__}: {ex}")
+            traceback.print_exc()
+            print("Falling back to the plain window. Please report the traceback above.")
 
     try:
         from .app import run_gui as _run

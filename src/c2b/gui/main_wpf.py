@@ -197,12 +197,18 @@ class C2BWindow:
     def _on_ui(self, work) -> None:
         """Run something on the thread that owns the controls.
 
+        ``System.Action`` wraps the callable as a real .NET delegate, which is what
+        ``BeginInvoke`` takes -- a plain Python callable is not one, and neither is a Python
+        class carrying ``__namespace__`` (that only means anything on a class deriving from a
+        CLR type). The shipping tools do exactly this.
+
         ``DispatcherPriority.Background`` rather than ``Send``: a run reports a few hundred
         lines, and a blocking hop per line makes the pipeline wait for the window to paint.
         """
+        from System import Action
         from System.Windows.Threading import DispatcherPriority
 
-        self.window.Dispatcher.BeginInvoke(DispatcherPriority.Background, _Action(work))
+        self.window.Dispatcher.BeginInvoke(DispatcherPriority.Background, Action(work))
 
     # ----------------------------------------------------------- the reporting
     def _log(self, level: str, message: str) -> None:
@@ -367,8 +373,17 @@ class C2BWindow:
         return self.window.FindResource(key)
 
     def show(self) -> None:
+        """Run the window's message loop.
+
+        A process holds at most one ``Application``; constructing a second throws. Reuse the
+        one that is there -- inside Revit there always is -- and only then start a loop.
+        """
         from System.Windows import Application
 
+        existing = Application.Current
+        if existing is not None:
+            self.window.Show()
+            return
         Application().Run(self.window)
 
 
@@ -379,18 +394,6 @@ def _handle(window) -> int | None:
         return int(WindowInteropHelper(window).Handle)
     except Exception:
         return None
-
-
-class _Action:
-    """A Python callable WPF's Dispatcher will accept as a delegate."""
-
-    __namespace__ = "AnonGee"
-
-    def __init__(self, work) -> None:
-        self._work = work
-
-    def __call__(self):
-        self._work()
 
 
 def _ask_for_file(title: str, filters) -> str:
