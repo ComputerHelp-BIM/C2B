@@ -23,6 +23,9 @@ call .venv\Scripts\activate.bat
 python -m pip install --upgrade pip --quiet
 echo Installing C2B and its dependencies ...
 pip install -e ".[dev,render]" --quiet || goto :failed
+REM pythonnet is a dependency on Windows, so the branded window comes with it. If it is
+REM missing the tool still runs, in the plain window, and doctor says so below.
+python -c "import clr" >nul 2>nul || echo   note: the branded window is unavailable - see the check below
 
 echo.
 echo Checking the installation ...

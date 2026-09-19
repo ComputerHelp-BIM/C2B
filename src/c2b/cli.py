@@ -57,6 +57,16 @@ def doctor(selftest: bool = typer.Option(True, "--selftest/--no-selftest", help=
         except ImportError:
             typer.secho(f"{mod:14s} MISSING - run: pip install -e .", fg=typer.colors.RED)
             ok = False
+    # Which window C2B would open, and why. This is the first thing to look at when the
+    # branded window is not the one that appeared.
+    from .ui import wpf as _wpf
+
+    if _wpf.available():
+        typer.secho(f"{'window':14s} branded (WPF)", fg=typer.colors.GREEN)
+    else:
+        typer.secho(f"{'window':14s} plain (Tkinter) - {_wpf.why_not()}", fg=typer.colors.YELLOW)
+        typer.secho(f"{'':14s} fix with: pip install pythonnet", fg=typer.colors.YELLOW)
+
     try:
         import matplotlib
         typer.echo(f"{'matplotlib':14s} {matplotlib.__version__} (optional, for c2b render)")

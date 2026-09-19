@@ -67,6 +67,23 @@ class C2BWindow(tk.Tk):
         style.configure("Head.TLabel", font=("Segoe UI", 10, "bold"))
         style.configure("Next.TLabel", font=("Segoe UI", 10, "bold"), foreground="#1A5FB4")
 
+        # A banner, not a line in a log nobody opens: three releases went by with the plain
+        # window opening because pythonnet was missing, and nothing on screen said so.
+        from . import why_plain
+
+        reason = why_plain()
+        if reason:
+            banner = tk.Frame(self, background=t.WARNING_BADGE_BG)
+            banner.pack(fill="x")
+            tk.Label(banner, background=t.WARNING_BADGE_BG, foreground=t.WARNING_BADGE_FG,
+                     justify="left", anchor="w", padx=14, pady=8, wraplength=940,
+                     font=("Segoe UI", 9, "bold"),
+                     text="PLAIN WINDOW  -  " + reason.splitlines()[0]).pack(fill="x")
+            tk.Label(banner, background=t.WARNING_BADGE_BG, foreground=t.WARNING_BADGE_FG,
+                     justify="left", anchor="w", padx=14, pady=(0, 8), wraplength=940,
+                     font=("Segoe UI", 9),
+                     text="\n".join(reason.splitlines()[1:])).pack(fill="x")
+
         top = ttk.Frame(self, padding=(14, 12, 14, 6))
         top.pack(fill="x")
         top.columnconfigure(1, weight=1)

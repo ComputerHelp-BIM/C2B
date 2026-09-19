@@ -285,3 +285,19 @@ def test_no_layout_declares_a_font_or_a_colour_of_its_own():
         # is no resource-key form of them.
         stray = [h for h in _HEX.findall(body) if h.upper() not in ("#FEF2F2", "#141414")]
         assert stray == [], stray
+
+
+def test_no_window_asks_for_a_font_the_brand_has_moved_off():
+    """12.7.A makes a root FontFamily a literal, so changing the token does not reach it --
+    the main window kept asking for JetBrains Mono for a release after the token changed."""
+    import re
+
+    from c2b.ui import theme as t
+
+    first = t.FONT_SANS.split(",")[0].strip()
+    for name in LAYOUTS:
+        markup = without_comments(xaml.layout_path(name).read_text(encoding="utf-8"))
+        declared = re.findall(r'FontFamily="([^"]+)"', markup)
+        assert declared, f"{name} states no font on its root element"
+        for chain in declared:
+            assert chain.split(",")[0].strip() == first, f"{name} leads with {chain.split(',')[0]}"

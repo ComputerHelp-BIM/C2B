@@ -59,7 +59,23 @@ class StoreyEditorTk(tk.Toplevel):
         self._styles()
         self._build(subtitle)
         self.refresh()
+        self._centre_on(parent)
         self.grab_set()
+
+    def _centre_on(self, parent) -> None:
+        """Middle of whatever opened it. Tk puts a new Toplevel at the screen's top left."""
+        self.update_idletasks()
+        width, height = self.winfo_width(), self.winfo_height()
+        try:
+            if parent is not None and parent.winfo_viewable():
+                x = parent.winfo_rootx() + (parent.winfo_width() - width) // 2
+                y = parent.winfo_rooty() + (parent.winfo_height() - height) // 2
+            else:
+                raise RuntimeError
+        except Exception:
+            x = (self.winfo_screenwidth() - width) // 2
+            y = (self.winfo_screenheight() - height) // 2
+        self.geometry(f"+{max(0, x)}+{max(0, y)}")
 
     # ---------------------------------------------------------------- layout
     def _styles(self) -> None:
@@ -76,13 +92,24 @@ class StoreyEditorTk(tk.Toplevel):
         style.configure("C2BSub.TLabel", background=t.CHARCOAL_BLACK, foreground=t.SILVER_STEEL, font=self._f_caption)
         style.configure("C2BCol.TLabel", background=t.CHARCOAL_BLACK, foreground=t.PURE_WHITE, font=self._f_h3)
         style.configure("C2B.TButton", font=self._f_body, padding=(t.SPACE_MD, 6))
-        style.configure("C2BPrimary.TButton", font=self._f_body, padding=(t.SPACE_MD, 6),
-                        background=t.VIVID_RED, foreground=t.PURE_WHITE)
-        style.map("C2BPrimary.TButton", background=[("active", t.VIVID_RED_HOVER), ("disabled", t.LIGHT_BORDER)],
-                  foreground=[("disabled", t.SILVER_STEEL)])
-        style.configure("C2BDanger.TButton", font=self._f_body, padding=(t.SPACE_MD, 6),
-                        background=t.ERROR_RED, foreground=t.PURE_WHITE)
-        style.map("C2BDanger.TButton", background=[("active", t.ERROR_RED_HOVER)])
+
+    def _filled_button(self, parent, text, fill, hover, command, width=None):
+        """A coloured button that is actually coloured.
+
+        ttk's Windows themes draw a TButton from a theme element and ignore ``background`` and
+        ``foreground`` entirely, so a styled Primary or Danger button comes out as a bare box
+        with no label -- which is exactly what the red rectangles in the screenshots were. A
+        plain ``tk.Button`` takes its colours, so the two that must be coloured use one.
+        """
+        button = tk.Button(parent, text=text, command=command, font=self._f_body,
+                           background=fill, foreground=t.PURE_WHITE,
+                           activebackground=hover, activeforeground=t.PURE_WHITE,
+                           disabledforeground=t.SILVER_STEEL,
+                           relief="flat", borderwidth=0, padx=t.SPACE_MD, pady=5,
+                           cursor="hand2", highlightthickness=0)
+        if width:
+            button.configure(width=width)
+        return button
 
     def _build(self, subtitle: str) -> None:
         header = ttk.Frame(self, style="C2BHead.TFrame", padding=(t.SPACE_MD, 13))
@@ -142,7 +169,8 @@ class StoreyEditorTk(tk.Toplevel):
         self.badge.pack(side="left")
         self.status = ttk.Label(footer, text="", style="C2BBar.TLabel")
         self.status.pack(side="left", padx=(t.SPACE_SM, 0))
-        self.save_btn = ttk.Button(footer, text="Save the storeys", style="C2BPrimary.TButton", command=self._save)
+        self.save_btn = self._filled_button(footer, "Save the storeys", t.VIVID_RED,
+                                            t.VIVID_RED_HOVER, self._save)
         self.save_btn.pack(side="right")
         ttk.Button(footer, text="Cancel", style="C2B.TButton", command=self._cancel).pack(side="right", padx=(0, t.SPACE_SM))
         self.bind("<Escape>", lambda e: self._cancel())
@@ -208,9 +236,9 @@ class StoreyEditorTk(tk.Toplevel):
                 ttk.Button(actions, text="Repeat", style="C2B.TButton",
                            command=lambda s=sid, box=times: self._command(self.presenter.repeat, s, box.get())
                            ).pack(side="left")
-                ttk.Button(actions, text="\u2715", width=2, style="C2BDanger.TButton",
-                           command=lambda s=sid: self._command(self.presenter.remove, s)
-                           ).pack(side="left", padx=(t.SPACE_SM, 0))
+                self._filled_button(actions, "\u2715", t.ERROR_RED, t.ERROR_RED_HOVER,
+                                    lambda s=sid: self._command(self.presenter.remove, s), width=2
+                                    ).pack(side="left", padx=(t.SPACE_SM, 0))
 
                 self._fields[row.storey_id] = {"name": name, "height": height, "elevation": elevation,
                                                "plan": plan, "repeat": repeat, "build": build,
@@ -280,7 +308,8 @@ class StoreyEditorTk(tk.Toplevel):
         background, foreground, _ = t.BADGE.get(severity, t.BADGE["INFO"])
         self.badge.configure(text=word, background=background, foreground=foreground)
         self.status.configure(text=line)
-        self.save_btn.state(["!disabled"] if self.presenter.can_save() else ["disabled"])
+        self.save_btn.configure(state="normal" if self.presenter.can_save() else "disabled",
+                                background=t.VIVID_RED if self.presenter.can_save() else t.LIGHT_BORDER)
 
 
 def edit_storeys_tk(parent, presenter: StoreyPresenter, subtitle: str = "") -> bool:

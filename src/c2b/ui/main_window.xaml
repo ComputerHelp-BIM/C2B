@@ -21,7 +21,7 @@
         Width="1120" Height="820" MinWidth="960" MinHeight="660"
         Background="White"
         UseLayoutRounding="True"
-        FontFamily="JetBrains Mono, Source Serif 4, Inter, Segoe UI, Calibri"
+        FontFamily="Segoe UI, Inter, Calibri, Arial"
         WindowStartupLocation="CenterScreen"
         ResizeMode="CanResize"
         ShowInTaskbar="True">

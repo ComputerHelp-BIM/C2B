@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "c2b"
-version = "0.24.0"
+version = "0.24.1"
 description = "C2B (CAD to BIM): extract structural elements from client DXF drawings into a canonical JSON schema, an Excel review workbook, a review DXF and a diagnostics report."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -17,6 +17,10 @@ dependencies = [
     "openpyxl>=3.1,<4",
     "typer>=0.12",
     "pyyaml>=6.0",
+    # The branded WPF windows. Windows only -- everywhere else C2B falls back to Tkinter,
+    # and the marker keeps a Linux or macOS install from failing on a package that cannot
+    # build there. Without this the whole tool runs in the plain window and nothing says why.
+    "pythonnet>=3.0; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

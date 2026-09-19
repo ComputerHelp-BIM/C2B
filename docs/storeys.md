@@ -154,11 +154,19 @@ window clears that box when you save storeys, so the two can never quietly contr
 ## 7. If the window looks different to this
 
 C2B's windows — this one and the main window — are **WPF**, the branded ones. They need
-Windows and `pythonnet`:
+Windows and **pythonnet**, which installs with C2B from 0.24.1 onward. On an installation from
+before that, or one where it did not install:
 
 ```bat
-pip install pythonnet
+.venv\Scripts\pip install pythonnet
 ```
+
+**To check which window you are getting**, run `windows\C2B-debug.bat`. It prints the
+installation check — including a `window` line saying `branded (WPF)` or
+`plain (Tkinter)` and why — and then opens C2B with a console behind it, so anything the tool
+says stays on screen. `C2B.bat` starts C2B with `pythonw.exe`, which has no console at all.
+
+The plain window also says so on itself: an amber banner across the top naming the reason.
 
 Without it C2B falls back to a plain Tkinter window with the same columns, the same buttons and
 exactly the same behaviour. Nothing is lost but the styling, and no drawing is treated

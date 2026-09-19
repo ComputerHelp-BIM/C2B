@@ -40,14 +40,38 @@ class ElapsedTk(tk.Toplevel):
                  foreground=t.MID_GREY, font=(sans, abs(t.pixels(t.FONT_SIZE_CAPTION))),
                  anchor="w", wraplength=400, justify="left").pack(fill="x", pady=(6, 0))
 
+        tk.Frame(self, height=1, background=t.LIGHT_BORDER).pack(fill="x")
         footer = tk.Frame(self, background=t.OFF_WHITE)
         footer.pack(fill="x")
         self.countdown = tk.Label(footer, text="", background=t.OFF_WHITE, foreground=t.MID_GREY,
                                   font=(sans, abs(t.pixels(t.FONT_SIZE_CAPTION))))
         self.countdown.pack(side="left", padx=16, pady=8)
-        ttk.Button(footer, text="Close", command=self._close).pack(side="right", padx=16, pady=8)
+        tk.Button(footer, text="Close", command=self._close, font=(sans, abs(t.pixels(t.FONT_SIZE_BODY))),
+                  background=t.VIVID_RED, foreground=t.PURE_WHITE, activebackground=t.VIVID_RED_HOVER,
+                  activeforeground=t.PURE_WHITE, relief="flat", borderwidth=0, padx=20, pady=4,
+                  cursor="hand2", highlightthickness=0).pack(side="right", padx=16, pady=8)
         self.bind("<Escape>", lambda e: self._close())
+        self._centre_on(parent)
         self._tick()
+
+    def _centre_on(self, parent) -> None:
+        """Middle of whatever opened it, or of the screen.
+
+        Tk puts a new Toplevel at the top left of the screen, which for a small dialog that
+        appears on its own is somewhere nobody is looking.
+        """
+        self.update_idletasks()
+        width, height = self.winfo_width(), self.winfo_height()
+        try:
+            if parent is not None and parent.winfo_viewable():
+                x = parent.winfo_rootx() + (parent.winfo_width() - width) // 2
+                y = parent.winfo_rooty() + (parent.winfo_height() - height) // 2
+            else:
+                raise RuntimeError
+        except Exception:
+            x = (self.winfo_screenwidth() - width) // 2
+            y = (self.winfo_screenheight() - height) // 2
+        self.geometry(f"+{max(0, x)}+{max(0, y)}")
 
     def _tick(self) -> None:
         if self._left <= 0:
