@@ -135,8 +135,9 @@ class StoreyEditorTk(tk.Toplevel):
         ttk.Label(buttons, text="New storeys are", style="C2B.TLabel").pack(side="right", padx=(0, 6))
 
         ttk.Label(bar, style="C2B.TLabel", wraplength=900,
-                  text="Every storey rises from the one below it. Type a height or an elevation and the "
-                       "other follows. Repeat a storey to build one drawn plan more than once."
+                  text="Every storey rises from the one below it. Type a height; the elevations are "
+                       "worked out from the heights and repeats below them, and only the bottom "
+                       "storey's can be typed. Repeat a storey to build one drawn plan more than once."
                   ).pack(fill="x", pady=(8, 0))
 
         columns = tk.Frame(self, background=t.CHARCOAL_BLACK)
@@ -202,8 +203,13 @@ class StoreyEditorTk(tk.Toplevel):
                 if row.is_base:
                     entry.state(["disabled"])
                 elevation = tk.StringVar(value=row.elevation_text)
-                ttk.Entry(line, textvariable=elevation, width=11, justify="right",
-                          font=self._f_mono).pack(side="left", padx=2)
+                cell = ttk.Entry(line, textvariable=elevation, width=11, justify="right",
+                                 font=self._f_mono)
+                cell.pack(side="left", padx=2)
+                if not row.is_base:
+                    # Derived from the heights and repeats below it. The presenter refuses the
+                    # edit anyway; this is so nobody types one and wonders where it went.
+                    cell.state(["disabled"])
                 plan = tk.StringVar(value=row.plan_label)
                 ttk.Combobox(line, textvariable=plan, values=labels, width=18, state="readonly",
                              font=self._f_small).pack(side="left", padx=2)

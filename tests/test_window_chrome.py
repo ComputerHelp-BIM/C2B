@@ -131,6 +131,14 @@ def test_every_window_is_titled_the_way_the_naming_rule_writes_it(layout):
     assert " - " not in title.group(1), "a hyphen where the middle dot belongs"
 
 
+def test_no_comment_in_a_layout_contains_a_double_hyphen(layout):
+    """It is illegal inside an XML comment, and the parser rejects the whole window for it --
+    reported as a position in a file the person reading has no reason to suspect."""
+    for comment in layout.read_text(encoding="utf-8").split("<!--")[1:]:
+        body = comment.split("-->")[0]
+        assert "--" not in body, f"{layout.name}: {body.strip()[:70]!r} will not parse"
+
+
 def test_no_layout_sets_its_own_type(layout):
     """§13.4 -- a size or a face on a control is a token that has escaped the token module.
     The root element is the one exception: XamlReader resolves it before Resources (§12.7.A)."""

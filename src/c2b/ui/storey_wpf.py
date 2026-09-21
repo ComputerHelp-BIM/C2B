@@ -48,7 +48,12 @@ from . import wpf
 from .storey_view import StoreyPresenter, format_mm
 
 #: Names the layout file gives the controls this module drives.
-_BUTTONS = ("BtnUp", "BtnDown", "BtnAdd", "BtnAddBottom", "BtnRemove", "BtnSave", "BtnCancel")
+_BUTTONS = ("BtnUp", "BtnDown", "BtnAdd", "BtnDuplicate", "BtnAddBottom", "BtnRemove",
+            "BtnSave", "BtnCancel")
+
+#: The one column the table works out for itself. Its header, because that is what the
+#: BeginningEdit guard and the edit table both key on.
+ELEVATION = "Elevation mm"
 
 #: Set on the Build tick in the layout so the grid-wide handler can tell it from the
 #: ``ToggleButton`` inside a ComboBox's template, which raises the very same routed events.
@@ -112,6 +117,9 @@ def grid_row(row, choices: Any) -> Any:
     values["Repeat"] = str(row.repeat)
     values["Flag"] = row.flag
     values["Build"] = bool(row.build)
+    # Every elevation but the lowest is the heights and repeats below it added up. The field
+    # is what greys the cell; _on_beginning_edit is what stops it being typed into.
+    values["Derived"] = not row.is_base
     return item
 
 
@@ -152,6 +160,7 @@ class StoreyEditorWindow:
         wpf.find(self.window, "BtnUp").Click += lambda s, e: self._on_selected("move", +1)
         wpf.find(self.window, "BtnDown").Click += lambda s, e: self._on_selected("move", -1)
         wpf.find(self.window, "BtnAdd").Click += self._on_add
+        wpf.find(self.window, "BtnDuplicate").Click += lambda s, e: self._on_selected("duplicate")
         wpf.find(self.window, "BtnAddBottom").Click += self._on_add_bottom
         wpf.find(self.window, "BtnRemove").Click += lambda s, e: self._on_selected("remove")
         wpf.find(self.window, "BtnSave").Click += self._on_save
@@ -167,7 +176,19 @@ class StoreyEditorWindow:
         # A ComboBox in a cell raises Selector.SelectionChanged, which bubbles to the grid's
         # own. One handler, told apart by what raised it.
         self.grid.SelectionChanged += self._on_selection_changed
+        self.grid.BeginningEdit += self._on_beginning_edit
         self.grid.CellEditEnding += self._on_cell_edit_ending
+
+    def _on_beginning_edit(self, sender, args) -> None:
+        """A derived elevation is not typed into, and says why rather than simply refusing."""
+        if str(args.Column.Header) != ELEVATION:
+            return
+        index = args.Row.GetIndex()
+        if not 0 <= index < len(self._rows) or not field(self._rows[index][1], "Derived"):
+            return
+        args.Cancel = True
+        self._say("Elevations are worked out from the heights and repeats below. Change this "
+                  "storey's height, or the bottom storey's elevation to move the whole building.")
 
     # ------------------------------------------------------- what is selected
     def _row_id(self, item: Any) -> str | None:
@@ -289,7 +310,8 @@ class StoreyEditorWindow:
     def _on_build_clicked(self, sender, args) -> None:
         """A storey ticked or unticked. The one edit that is not about the table's shape.
 
-        Ticking a row that is part of a selection ticks the whole selection. Six storeys to
+        Ticking a row that is part of a selection ticks the whole selection. So does any
+        command from the buttons, duplicating included. Six storeys to
         leave out is then six rows to pick and one click, rather than six clicks that each
         have to land on a 21-pixel box.
         """
@@ -440,5 +462,5 @@ def edit_storeys_wpf(presenter: StoreyPresenter, subtitle: str = "",
     return StoreyEditorWindow(presenter, subtitle).show(owner_handle)
 
 
-__all__ = ["BUILD_TICK", "EDITS", "PLAN_PICK", "StoreyEditorWindow", "edit_storeys_wpf",
+__all__ = ["BUILD_TICK", "EDITS", "ELEVATION", "PLAN_PICK", "StoreyEditorWindow", "edit_storeys_wpf",
            "field", "fields", "format_mm", "grid_row", "set_field"]

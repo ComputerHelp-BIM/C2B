@@ -124,7 +124,7 @@
     <!-- 3a  How to read the table. -->
     <StackPanel DockPanel.Dock="Top" Margin="0,10,0,8">
       <TextBlock Style="{StaticResource HelpText}"
-                 Text="One row per storey, BOTTOM-UP: the first row is built first, on the base elevation. Built from is which detected floor plan that storey uses -- pick the same plan on several rows, or set Repeat to build one plan more than once. Height is that storey's floor-to-floor rise; type a height or an elevation and the other follows. Untick Build to leave a storey out -- the footer counts what is left out. Click a storey's NAME to pick its row, ctrl-click or shift-click to pick several, then use the buttons under the table to move, add or remove them. Ticking one row of a selection ticks all of it."/>
+                 Text="One row per storey, BOTTOM-UP: the first row is built first, on the base elevation. Built from is which detected floor plan that storey uses -- pick the same plan on several rows, or set Repeat to build one plan more than once. Height is that storey's floor-to-floor rise. Elevations are worked out from the heights and repeats below them and cannot be typed -- only the bottom storey's, which is where the building sits. Untick Build to leave a storey out -- the footer counts what is left out. Click a storey's NAME to pick its row, ctrl-click or shift-click to pick several, then use the buttons under the table to move, duplicate, add or remove them. Ticking one row of a selection ticks all of it."/>
       <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
         <TextBlock Text="New storeys are" Style="{StaticResource TextLabel}" VerticalAlignment="Center"/>
         <TextBox x:Name="DefaultHeight" Style="{StaticResource InputNumberBox}"
@@ -146,6 +146,8 @@
                     Width="124" Margin="8,0,0,0"/>
             <Button x:Name="BtnAdd" Content="Add storey" Style="{StaticResource ButtonNeutral}"
                     Width="124" Margin="8,0,0,0"/>
+            <Button x:Name="BtnDuplicate" Content="Duplicate" Style="{StaticResource ButtonNeutral}"
+                    Width="116" Margin="8,0,0,0"/>
             <Button x:Name="BtnAddBottom" Content="Add at the bottom"
                     Style="{StaticResource ButtonNeutral}" Width="172" Margin="8,0,0,0"/>
             <Button x:Name="BtnRemove" Content="Remove" Style="{StaticResource ButtonNeutral}"
@@ -191,9 +193,12 @@
                                 ElementStyle="{StaticResource GridNumber}"
                                 EditingElementStyle="{StaticResource GridEditNumberBox}"/>
 
+            <!-- Worked out from the heights and repeats below it, on every row but the
+                 lowest. BeginningEdit refuses the rest, and they are drawn muted to say so
+                 before anybody tries. The lowest one is where the building sits. -->
             <DataGridTextColumn Header="Elevation mm" Binding="{Binding Elevation, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
                                 Width="126"
-                                ElementStyle="{StaticResource GridNumber}"
+                                ElementStyle="{StaticResource GridDerivedNumber}"
                                 EditingElementStyle="{StaticResource GridEditNumberBox}"/>
 
             <DataGridTemplateColumn Header="Built from" Width="220" IsReadOnly="True">

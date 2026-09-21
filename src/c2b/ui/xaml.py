@@ -806,6 +806,18 @@ def _datagrid() -> str:
       </DataTrigger>
     </Style.Triggers>
   </Style>
+  <!-- A number the table works out rather than one a person types. Muted where it is
+       derived, body colour on the one row that can be edited - and body colour on a selected
+       row too, which it inherits from GridMuted along with the reason. -->
+  <Style x:Key="GridDerivedNumber" TargetType="TextBlock" BasedOn="{{StaticResource GridMuted}}">
+    <Setter Property="FontFamily" Value="{{StaticResource FontMono}}"/>
+    <Setter Property="TextAlignment" Value="Right"/>
+    <Style.Triggers>
+      <DataTrigger Binding="{{Binding Derived}}" Value="False">
+        <Setter Property="Foreground" Value="{{StaticResource BrushCharcoalBlack}}"/>
+      </DataTrigger>
+    </Style.Triggers>
+  </Style>
   <!-- The editor a cell puts up on F2 or a double click. -->
   <Style x:Key="GridEditBox" TargetType="TextBox" BasedOn="{{StaticResource InputTextBox}}">
     <Setter Property="Height" Value="{t.HEIGHT_INPUT - 5}"/>

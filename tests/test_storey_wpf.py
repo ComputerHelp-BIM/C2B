@@ -128,14 +128,22 @@ def test_the_rows_bind_the_way_the_suite_proved_and_no_other(tree):
     assert "ArrayList" in used, "12.7.G asks for an ArrayList, not a Python list"
 
 
-def test_no_datatrigger_reads_a_value_off_a_row():
-    """12.7.Q, the one that looks correct and silently does nothing. The only DataTrigger the
-    theme has reads DataGridRow.IsSelected, which is a real .NET bool on a real .NET object."""
-    for trigger in (xaml.theme_xaml() + xaml.layout_path("storey_editor").read_text(
-            encoding="utf-8")).split("<DataTrigger")[1:]:
+def test_every_datatrigger_reads_something_that_is_really_there(tree):
+    """12.7.Q is about a DataTrigger on a *Python* value, which never fires. The rows are .NET
+    objects now, so a trigger may read one -- but only a field the row actually carries, and a
+    typo in a binding path is the same silence 12.7.Q warns about."""
+    filled = set(re.findall(r'values\[[\'"](\w+)[\'"]\]', function(tree, "grid_row")))
+    triggers = (xaml.theme_xaml()
+                + xaml.layout_path("storey_editor").read_text(encoding="utf-8"))
+    seen = 0
+    for trigger in triggers.split("<DataTrigger")[1:]:
         binding = trigger.split("</DataTrigger>")[0]
-        assert "AncestorType=DataGridRow" in binding, f"a DataTrigger on a row value: {binding[:90]}"
-        assert "IsSelected" in binding
+        path = re.search(r"\{Binding (\w+)", binding)
+        assert path, f"a DataTrigger with no readable path: {binding[:90]}"
+        assert path.group(1) in filled or "AncestorType=DataGridRow" in binding, \
+            f"nothing fills {path.group(1)!r}, so this trigger can never fire"
+        seen += 1
+    assert seen >= 2, "no DataTriggers at all, so this proves nothing"
 
 
 def test_the_muted_columns_stay_readable_on_a_selected_row():
@@ -262,6 +270,28 @@ def test_a_redraw_never_happens_inside_the_event_that_asked_for_it(tree):
 # ---------------------------------------------------------------------------
 # Selection means the rows the buttons act on -- all of them
 # ---------------------------------------------------------------------------
+
+def test_an_elevation_the_table_works_out_cannot_be_typed_into(tree, markup):
+    """Two ways to say where a storey goes is two answers whenever they disagree. The height
+    and the repeats below it are the one way; the bottom storey's elevation is where the
+    building sits."""
+    body = function(tree, "_on_beginning_edit")
+    assert "args.Cancel = True" in body
+    assert "ELEVATION" in body and "'Derived'" in body
+    assert "self._say(" in body, "a cell that refuses an edit and says nothing is a broken cell"
+
+    column = markup.split('Header="Elevation mm"')[1].split("/>")[0]
+    assert "GridDerivedNumber" in column, "a derived elevation is not drawn as one"
+
+
+def test_a_storey_can_be_duplicated(tree, markup):
+    """A typical floor that differs by one beam is a copy and an edit, not a row retyped."""
+    assert 'x:Name="BtnDuplicate"' in markup
+    assert "'duplicate'" in function(tree, "_wire")
+    from c2b.ui.storey_view import StoreyPresenter
+
+    assert hasattr(StoreyPresenter, "duplicate")
+
 
 def test_a_person_can_pick_more_than_one_storey(markup):
     """Ctrl-click and shift-click are what a Windows user reaches for on a table, and they do

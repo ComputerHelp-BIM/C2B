@@ -94,18 +94,48 @@ def test_a_height_typed_on_the_lowest_storey_is_ignored_without_complaint():
     assert p.schedule.elevations() == [0, 3000]
 
 
-def test_typing_an_elevation_leaves_the_storeys_above_where_they_are():
+def test_only_the_lowest_storeys_elevation_can_be_typed():
+    """Every other one is the heights and repeats below it added up. Two ways to say where a
+    storey goes is two answers whenever they disagree."""
     p = presenter(0, 3000, 3000, names=["GF", "1F", "2F"])
-    assert p.set_elevation(p.schedule.storeys[1].id, "3500") == ""
-    assert p.schedule.elevations() == [0, 3500, 6500]
+    refused = p.set_elevation(p.schedule.storeys[1].id, "3500")
+    assert "worked out from the heights and repeats" in refused
+    assert p.schedule.elevations() == [0, 3000, 6000], "it moved anyway"
 
 
-def test_an_impossible_elevation_is_kept_and_reported_not_corrected():
+def test_the_lowest_storeys_elevation_moves_the_whole_building():
+    p = presenter(0, 3000, 3000, names=["GF", "1F", "2F"])
+    assert p.set_elevation(p.schedule.storeys[0].id, "-2500") == ""
+    assert p.schedule.elevations() == [-2500, 500, 3500]
+
+
+def test_an_impossible_base_elevation_is_kept_and_reported_not_corrected():
     """The window shows what was typed; the problem panel says why it cannot be built."""
-    p = presenter(0, 3000, 3000, names=["GF", "1F", "2F"])
-    assert p.set_elevation(p.schedule.storeys[1].id, "-500") == ""
+    p = presenter(0, 3000, names=["GF", "1F"])
+    p.set_height(p.schedule.storeys[1].id, "-500")
     assert p.schedule.elevations()[1] == -500
     assert any(s == "ERROR" for s, _ in p.problem_lines())
+
+
+def test_a_storey_can_be_duplicated_and_the_copy_sits_directly_above_it():
+    """The copy lands on top of the original and everything above rises by its height, which
+    is what happens when a floor is built twice. It takes the next free name in the original's
+    own style -- 2F is spoken for here, so the copy of 1F is 3F."""
+    p = presenter(0, 3000, 3000, names=["GF", "1F", "2F"])
+    assert p.duplicate(p.schedule.storeys[1].id) == ""
+    assert [s.name for s in p.schedule.storeys] == ["GF", "1F", "3F", "2F"]
+    assert p.schedule.elevations() == [0, 3000, 6000, 9000]
+
+
+def test_a_duplicate_carries_the_plan_and_the_repeat_it_was_copied_from():
+    """The point of it is a storey that is the same as the one below."""
+    p = presenter(0, 3000, names=["GF", "TYPICAL"])
+    p.set_repeat(p.schedule.storeys[1].id, "4")
+    p.set_plan(p.schedule.storeys[1].id, "F02")
+    p.duplicate(p.schedule.storeys[1].id)
+    copy = p.schedule.storeys[2]
+    assert copy.repeat == 4 and copy.plan_floor_id == "F02"
+    assert copy.id != p.schedule.storeys[1].id
 
 
 def test_renaming_a_storey_takes():

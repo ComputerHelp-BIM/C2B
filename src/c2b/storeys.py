@@ -296,12 +296,36 @@ class StoreySchedule(BaseModel):
         On the lowest storey this moves the whole building; anywhere else it is the height
         below that changes, which is the only one that can put a storey where it was asked for
         without disturbing what is under it.
+
+        A storey rises from the **top** of the row below it, which is not the same thing as
+        that row's elevation when the row repeats: a typical floor built five times occupies
+        four more storey heights than its own elevation admits to.
         """
         self._check_index(index)
         if index == 0:
             self.base_elevation_mm = float(elevation_mm)
-        else:
-            self.storeys[index].height_mm = float(elevation_mm) - self.elevations()[index - 1]
+            return
+        below = self.storeys[index - 1]
+        top_of_below = (self.elevations()[index - 1]
+                        + below.height_mm * (max(s_repeat(below), 1) - 1))
+        self.storeys[index].height_mm = float(elevation_mm) - top_of_below
+
+    def duplicate(self, index: int) -> Storey:
+        """Copy a storey and put the copy directly above it.
+
+        Everything above rises by the copy's height, which is what happens when a floor is
+        built twice. The copy carries the original's height, plan, repeat and note -- the
+        point of it is a storey that is the same as the one below -- and takes the next free
+        name in the original's own style, because Revit will not hold two levels of one name.
+        """
+        self._check_index(index)
+        original = self.storeys[index]
+        copy = Storey(id=self._mint_id(), name=self._free_name(original.name),
+                      height_mm=original.height_mm, repeat=max(s_repeat(original), 1),
+                      plan_floor_id=original.plan_floor_id, source="added",
+                      note=original.note)
+        self.storeys.insert(index + 1, copy)
+        return copy
 
     def set_repeat(self, index: int, times: int) -> None:
         """How many levels this row builds. One is an ordinary storey."""

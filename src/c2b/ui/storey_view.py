@@ -167,10 +167,27 @@ class StoreyPresenter:
         return ""
 
     def set_elevation(self, storey_id: str, text: str) -> str:
+        """Only the lowest storey's, which is where the whole building sits.
+
+        Every other elevation is the heights and repeats below it added up. Two ways to say
+        where a storey goes is two answers whenever they disagree, and the one a person typed
+        wins until the next edit quietly recomputes it -- so there is one way, and it is the
+        one a repeat cannot get wrong.
+        """
+        index = self.at(storey_id)
+        if index != 0:
+            return ("Elevations are worked out from the heights and repeats below. "
+                    "Change this storey's height, or the bottom storey's elevation to move "
+                    "the whole building.")
         value = parse_mm(text)
         if value is None:
             return f"'{text.strip()}' is not an elevation in millimetres."
-        self.schedule.set_elevation(self.at(storey_id), value)
+        self.schedule.set_elevation(index, value)
+        return ""
+
+    def duplicate(self, storey_id: str) -> str:
+        """Another storey the same as this one, directly above it."""
+        self.schedule.duplicate(self.at(storey_id))
         return ""
 
     def set_plan(self, storey_id: str, floor_id: str | None) -> str:
