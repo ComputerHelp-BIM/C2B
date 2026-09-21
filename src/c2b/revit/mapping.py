@@ -59,7 +59,12 @@ class RevitMapping(BaseModel):
     # Every name that exists on the element is written, and the run reports which ones took.
     # R25_TEMPLATE binds the firm's own CH- names; "Mark" is Revit's built-in and is always
     # there, so a mark is never lost even on a template that binds nothing.
-    mark_params: list[str] = Field(default_factory=lambda: ["CH-ScheduleMark", "Mark"])
+    #: The firm's own shared parameters, and only those. Revit's built-in ``Mark`` is meant to
+    #: be unique within a category, and a structural mark is not: a column stack carries one
+    #: mark on every level it passes through, and a typical floor repeats its slab marks on
+    #: every storey built from it. Writing it produced 468 "Elements have duplicate Mark
+    #: values" warnings on one template, which is 468 warnings about the marks working.
+    mark_params: list[str] = Field(default_factory=lambda: ["CH-ScheduleMark"])
     id_params: list[str] = Field(default_factory=lambda: ["CH-ID"])
     # The level an element was built on, written where the firm's schedules read it from.
     level_params: list[str] = Field(default_factory=lambda: ["CH-LEVEL"])
@@ -131,6 +136,11 @@ class RevitMapping(BaseModel):
     # A column holds up its own floor, so that floor's level is its top and the level beneath is
     # its base. On the lowest level there is nothing beneath, so it hangs this far below its own
     # level instead of not being built.
+    #: How far the end of an outline edge may sit off horizontal or vertical before it is
+    #: squared up. Revit warns "Line in Sketch is slightly off axis" on anything inside about a
+    #: tenth of a degree and a traced outline is full of them -- 1962 on one import. Set it to
+    #: 0 to leave the client's geometry exactly as drawn and live with the warnings.
+    slab_axis_snap_mm: float = 5.0
     column_min_height_mm: float = 3000.0
     # ...but only where nothing is drawn to hold it. A foundation plan draws the columns again
     # at their base, and the column between foundation and ground is already built from the

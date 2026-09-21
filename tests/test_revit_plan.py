@@ -416,7 +416,11 @@ def test_the_level_name_is_written_where_the_firm_schedules_read_it():
     """Their template binds CH-LEVEL, and C2B is the only thing that knows which level it is."""
     plan = build_plan(_model(columns=[_column()]), RevitMapping())
     assert plan.level_params == ["CH-LEVEL"]
-    assert plan.mark_params == ["CH-ScheduleMark", "Mark"]
+    assert plan.mark_params == ["CH-ScheduleMark"]
+    assert "Mark" not in plan.mark_params, (
+        "Revit's built-in Mark is meant to be unique within a category and a structural mark "
+        "is not: a column stack carries one on every level, and a typical floor repeats its "
+        "slab marks on every storey. Writing it produced 468 duplicate-Mark warnings.")
     assert plan.id_params == ["CH-ID"]
 
 

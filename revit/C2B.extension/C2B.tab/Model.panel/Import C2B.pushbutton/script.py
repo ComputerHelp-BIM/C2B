@@ -393,8 +393,29 @@ def level_id_of(element):
     return None
 
 
-def read_level_offset(element):
-    """A point-hosted instance's offset from its level, in millimetres."""
+#: A structural column's offset from its BASE level, which is a different idea from the
+#: "Height Offset From Level" a point-hosted footing carries and lives in a different
+#: parameter. Reading the footing's one off a column reported 171 of them as built at 0 mm
+#: when they were at -3000 -- a warning about a fault the model did not have, which costs more
+#: of a person's afternoon than no warning would.
+_COLUMN_OFFSET_BIPS = (BuiltInParameter.FAMILY_BASE_LEVEL_OFFSET_PARAM,)
+
+
+def read_level_offset(element, bips=None):
+    """An instance's offset from the level it is on, in millimetres.
+
+    ``bips`` names where to look when the element is not point-hosted; without it the
+    point-hosted parameters are used, which is right for a footing and wrong for a column.
+    """
+    if bips:
+        for bip in bips:
+            try:
+                p = element.get_Parameter(bip)
+            except Exception:
+                p = None
+            if p is not None and p.StorageType.ToString() == "Double":
+                return to_mm(p.AsDouble())
+        return None
     p = element.LookupParameter("Height Offset From Level")
     if p is None or p.StorageType.ToString() != "Double":
         for bip in _LEVEL_OFFSET_BIPS:
@@ -422,7 +443,8 @@ def check_offsets_of(placed, rows):
             continue
         want = action.get("base_offset_mm", 0.0)
         try:
-            got = read_level_offset(element)
+            got = read_level_offset(
+                element, _COLUMN_OFFSET_BIPS if action.get("kind") in ("column", "pile") else None)
         except Exception:
             continue
         if got is None or abs(got - want) <= 1.0:

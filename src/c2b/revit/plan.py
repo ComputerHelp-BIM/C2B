@@ -210,9 +210,81 @@ def _clean_ring(points: list[list[float]], tol: float = _COLLINEAR_TOL_MM) -> li
     return ring
 
 
-def _loop(points) -> list[list[float]] | None:
+#: How far the end of a slab edge may sit off horizontal or vertical before it is left where
+#: it was drawn. Revit warns "Line in Sketch is slightly off axis and may cause inaccuracies"
+#: on anything inside about a tenth of a degree, and an outline traced round beam faces that
+#: are a fraction of a degree out of square is full of them: 1962 of them on one import.
+#:
+#: A distance and not an angle, deliberately. A tenth of a degree is 2 mm on a short edge and
+#: 20 mm on a long one, and 20 mm on a long one is a wall somebody measured. This squares up
+#: what is obviously meant to be square and leaves alone what might not be.
+AXIS_SNAP_MM = 5.0
+
+
+def _snap_to_axis(ring: list[list[float]], tol: float) -> tuple[list[list[float]], int]:
+    """Square up the edges that are within a hair of horizontal or vertical.
+
+    Moving one edge moves the vertex its neighbour shares, which can bring the neighbour into
+    range, so it goes round a few times. An edge that is already square has no component left
+    to move and is not counted twice.
+    """
+    ring = [list(p) for p in ring]
+    n, snapped = len(ring), 0
+    for _ in range(3):
+        moved = False
+        for i in range(n):
+            a, b = ring[i], ring[(i + 1) % n]
+            dx, dy = b[0] - a[0], b[1] - a[1]
+            if dy and abs(dy) <= tol and abs(dx) > abs(dy):
+                a[1] = b[1] = round((a[1] + b[1]) / 2.0, 3)
+                moved, snapped = True, snapped + 1
+            elif dx and abs(dx) <= tol and abs(dy) > abs(dx):
+                a[0] = b[0] = round((a[0] + b[0]) / 2.0, 3)
+                moved, snapped = True, snapped + 1
+        if not moved:
+            break
+    return ring, snapped
+
+
+def _loop(points, snap_mm: float = 0.0, tally: dict | None = None) -> list[list[float]] | None:
     """A ring in floor-local millimetres, which is what stacks floor to floor."""
-    return _clean_ring([[round(p.x, 2), round(p.y, 2)] for p in points])
+    ring = _clean_ring([[round(p.x, 2), round(p.y, 2)] for p in points])
+    if ring is None or snap_mm <= 0:
+        return ring
+    ring, snapped = _snap_to_axis(ring, snap_mm)
+    if snapped and tally is not None:
+        tally["snapped"] = tally.get("snapped", 0) + snapped
+    # Squaring an edge can turn the corner at its end into a straight run.
+    return _clean_ring(ring) if snapped else ring
+
+
+def _revit_ready(rings: list[list[list[float]]]) -> str:
+    """What Revit will refuse, said before it is asked, in words naming which of it.
+
+    shapely calls a ring valid that touches its own outline at a single point; Revit calls
+    that an intersection and refuses the boundary. So the rings are checked against what Revit
+    actually requires rather than against what shapely tolerates -- and a panel that still
+    cannot be built is named here, by C2B, rather than becoming one more line of the same
+    six-cause sentence an hour later.
+    """
+    from shapely.geometry import LinearRing, Polygon
+
+    for ring in rings:
+        if len(ring) < 3:
+            return "a ring with fewer than three corners"
+        if not LinearRing(ring).is_simple:
+            return "a ring that crosses itself"
+        for j in range(len(ring)):
+            if math.dist(ring[j], ring[(j + 1) % len(ring)]) < _MIN_EDGE_MM:
+                return f"an edge shorter than the {_MIN_EDGE_MM:.0f} mm Revit can draw"
+    outer = Polygon(rings[0])
+    patches = [Polygon(h) for h in rings[1:]]
+    for i, patch in enumerate(patches):
+        if not outer.contains(patch) or patch.exterior.intersects(outer.exterior):
+            return "an opening that touches or crosses the edge of the panel"
+        if any(patch.intersects(other) for other in patches[i + 1:]):
+            return "two openings that touch or overlap"
+    return ""
 
 
 def _boundary(outer: list[list[float]],
@@ -239,40 +311,73 @@ def _boundary(outer: list[list[float]],
     worse than one that was refused.
     """
     from shapely.geometry import Polygon
+    from shapely.ops import unary_union
     from shapely.validation import make_valid
+
+    def largest(geometry):
+        parts = [g for g in (getattr(geometry, "geoms", None) or [geometry])
+                 if g.geom_type == "Polygon" and not g.is_empty]
+        parts.sort(key=lambda g: g.area, reverse=True)
+        return parts[0] if parts and parts[0].area > _COLLINEAR_TOL_MM ** 2 else None
+
+    def rings_of(body, notes):
+        rings = [_clean_ring([list(c) for c in body.exterior.coords[:-1]])]
+        if rings[0] is None:
+            return None
+        for interior in body.interiors:
+            ring = _clean_ring([list(c) for c in interior.coords[:-1]])
+            if ring is not None:
+                rings.append(ring)
+        cut = len(rings) - 1
+        if cut != len(holes):
+            drawn = f"{len(holes)} opening{'s' if len(holes) != 1 else ''}"
+            was = "were" if len(holes) != 1 else "was"
+            notes.append(f"{drawn} {was} drawn and {cut} cut: one that is not wholly inside the "
+                         "outline, or two that overlap, cannot be cut on their own")
+        return rings
 
     notes: list[str] = []
     try:
-        whole = Polygon(outer, holes)
-        if whole.is_valid:
+        if Polygon(outer, holes).is_valid and not _revit_ready([outer, *holes]):
             return [outer, *holes], notes
-        # Which of the three it was, because "invalid" sends a drafter to look at everything.
         crossed = not Polygon(outer).is_valid
-        repaired = make_valid(whole)
-        parts = [g for g in (getattr(repaired, "geoms", None) or [repaired])
-                 if g.geom_type == "Polygon" and not g.is_empty]
+        # Cut rather than declare. difference() answers all four at once: an opening outside
+        # the outline takes nothing away, two that overlap come out as one, and one that
+        # reaches the edge becomes a notch in the outline instead of an opening Revit refuses.
+        shape = largest(make_valid(Polygon(outer)))
+        if shape is None:
+            return None, ["the outline encloses no area"]
+        patches = [largest(make_valid(Polygon(h))) for h in holes]
+        patches = [g for g in patches if g is not None]
+        if patches:
+            shape = largest(shape.difference(unary_union(patches)))
+        if shape is None:
+            return None, ["the openings take away the whole panel"]
     except Exception as ex:                      # a ring shapely cannot read at all
         return None, [f"the outline could not be read as a shape ({type(ex).__name__})"]
 
-    parts.sort(key=lambda g: g.area, reverse=True)
-    if not parts or parts[0].area <= _COLLINEAR_TOL_MM ** 2:
-        return None, ["the outline crosses itself and encloses no area once that is undone"]
-    best = parts[0]
     if crossed:
         notes.append("the outline crossed itself; the largest piece of it was built")
-
-    rings = [_clean_ring([list(c) for c in best.exterior.coords[:-1]])]
-    if rings[0] is None:
+    rings = rings_of(shape, notes)
+    if rings is None:
         return None, [*notes, "nothing enclosing an area was left"]
-    for interior in best.interiors:
-        ring = _clean_ring([list(c) for c in interior.coords[:-1]])
-        if ring is not None:
-            rings.append(ring)
-    cut = len(rings) - 1
-    if cut != len(holes):
-        drawn = f"{len(holes)} opening{'s' if len(holes) != 1 else ''} {'were' if len(holes) != 1 else 'was'} drawn"
-        notes.append(f"{drawn} and {cut} cut: one that is not wholly inside the outline, or two "
-                     "that overlap, cannot be cut on their own")
+
+    refused = _revit_ready(rings)
+    if refused:
+        # One thing difference() cannot resolve: an opening that meets the outline at exactly
+        # one point stays an opening, and Revit counts that meeting as an intersection. Widen
+        # the openings by the smallest edge it can draw and cut again, so the meeting becomes
+        # a crossing and the opening becomes a notch.
+        try:
+            widened = [g.buffer(_MIN_EDGE_MM) for g in patches]
+            wider = largest(largest(make_valid(Polygon(outer))).difference(unary_union(widened)))
+            again = rings_of(wider, []) if wider is not None else None
+        except Exception:
+            again = None
+        if again is None or _revit_ready(again):
+            return None, [*notes, refused]
+        notes.append(f"{refused}; it was widened by {_MIN_EDGE_MM:.0f} mm so the panel could be cut")
+        rings = again
     return rings, notes
 
 
@@ -368,6 +473,12 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
 
     def levels_for(floor_id: str) -> list[str]:
         return floor_levels.get(floor_id, [])
+
+    squared: dict[str, int] = {}
+
+    def ring(points):
+        """Every outline goes through one place, so one setting squares all of them."""
+        return _loop(points, mapping.slab_axis_snap_mm, squared)
 
     def plan_level_name(level_id: str | None) -> str:
         return next((lv.name for lv in levels if lv.id == level_id), str(level_id))
@@ -504,13 +615,13 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
                              "set, so it is not built", floor_id=p.floor_id, element_id=p.id)
                 continue
             rule = mapping.ramp_floor if p.kind == "ramp" else mapping.floor
-            outer = _loop(p.outline)
+            outer = ring(p.outline)
             if outer is None:
                 diag.warning("REVIT_NO_OUTLINE", f"Slab panel {p.mark} ({p.id}) has no usable outline once "
                              "the near-collinear vertices are removed; it is skipped",
                              floor_id=p.floor_id, element_id=p.id)
                 continue
-            holes = [h for h in (_loop(h) for h in p.holes) if h is not None]
+            holes = [h for h in (ring(h) for h in p.holes) if h is not None]
             loops, repairs = _boundary(outer, holes)
             if loops is None:
                 diag.warning("REVIT_BAD_OUTLINE", f"Slab panel {p.mark} ({p.id}) has an outline Revit "
@@ -541,7 +652,7 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
                 continue          # drawn on the plan; the engineer models the step in Revit
             if x.kind in ("raft", "pilecap", "pit"):
                 rule = mapping.raft
-                outline = _sole_ring(_loop(x.outline), f"{x.kind} {x.mark}", diag,
+                outline = _sole_ring(ring(x.outline), f"{x.kind} {x.mark}", diag,
                                      floor_id=x.floor_id, element_id=x.id)
                 if outline is None:
                     diag.warning("REVIT_NO_OUTLINE", f"{x.kind} {x.mark} has no usable outline; it is skipped",
@@ -565,7 +676,7 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
                     type_name=_fmt(rule.type_name, w=w, d=d, thk=thk), base_type=rule.fallback_type,
                     params={k: v for k, v in ((rule.width_param, w), (rule.depth_param, d), (rule.thickness_param, thk)) if k},
                     level_id=lid, point=[x.center.x, x.center.y], rotation_deg=x.rotation_deg, mark=x.mark, comment=x.kind))
-            pcc_outline = _loop(x.pcc_outline) if x.pcc_outline else None
+            pcc_outline = ring(x.pcc_outline) if x.pcc_outline else None
             if mapping.build.get("pcc") and pcc_outline and x.pcc_thickness_mm:
                 pthk = _round(x.pcc_thickness_mm, step)
                 plan.actions.append(RevitAction(
@@ -614,7 +725,7 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
             if lid is None:
                 continue
             top = level_above.get(lid)
-            outline = _sole_ring(_loop(o.outline), f"cut-out {o.label}", diag, floor_id=o.floor_id)
+            outline = _sole_ring(ring(o.outline), f"cut-out {o.label}", diag, floor_id=o.floor_id)
             if outline is None:
                 continue
             plan.actions.append(RevitAction(
@@ -625,6 +736,15 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
     # was given, and this measures what actually came out of them. A plan is not handed over
     # holding a member Revit will refuse.
     audit_heights(plan, diag, mapping.column_min_height_mm)
+
+    if squared.get("snapped"):
+        diag.info("REVIT_EDGES_SQUARED",
+                  f"{squared['snapped']} outline edges sat within {mapping.slab_axis_snap_mm:.0f} mm "
+                  "of horizontal or vertical and were squared up. Revit warns that every one of "
+                  "them is slightly off axis otherwise, which is thousands of warnings about a "
+                  "drawing traced round beam faces a fraction of a degree out of square. Set "
+                  "slab_axis_snap_mm to 0 in the mapping to keep the client's geometry exactly "
+                  "as drawn.")
 
     plan.diagnostics = diag.items
     plan.recount()
