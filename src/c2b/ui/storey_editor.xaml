@@ -19,9 +19,21 @@
   and left the table nothing to fill. The window opened with no table on it at all.
 
   The table is a real DataGrid, laid out like the Multi-storey page of cad2bim. Columns are
-  resizable. The buttons under it act on the row the user clicked, which is what selection
-  means here and the only thing it means: the Build tick is the storey's own value, read one
-  way and written back through the tick's Checked event (12.7.Q).
+  resizable, and selection is Extended: ctrl-click and shift-click pick several storeys and
+  every button under the table applies to all of them.
+
+  THE ROWS ARE ExpandoObjects, NOT PYTHON OBJECTS, and every binding here depends on it.
+  pythonnet hands the binding engine a PyObject whatever the Python value was, and WPF can
+  only make a string out of one. A binding to a string target therefore worked and every
+  other binding failed in silence: IsChecked wants bool? and stayed unticked on every row,
+  SelectedItem never matched an item and left every "Built from" cell blank. An ExpandoObject
+  carries real .NET values, so the tick ticks and the picker shows its plan.
+
+  Nothing is read back out of these bindings either. Every edit is taken from the control the
+  person touched - the TextBox in CellEditEnding, the CheckBox in its Click, the ComboBox in
+  its SelectionChanged - which is one direction of marshalling rather than two.
+
+  The Build tick is the storey's own value and has nothing to do with which row is selected.
 -->
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -107,7 +119,7 @@
     <!-- 3a  How to read the table. -->
     <StackPanel DockPanel.Dock="Top" Margin="0,10,0,8">
       <TextBlock Style="{StaticResource HelpText}"
-                 Text="One row per storey, BOTTOM-UP: the first row is built first, on the base elevation. Built from is which detected floor plan that storey uses -- pick the same plan on several rows, or set Repeat to build one plan more than once. Height is that storey's floor-to-floor rise; type a height or an elevation and the other follows. Untick Build to leave a storey out. Click a row, then use the buttons under the table to move, add or remove it."/>
+                 Text="One row per storey, BOTTOM-UP: the first row is built first, on the base elevation. Built from is which detected floor plan that storey uses -- pick the same plan on several rows, or set Repeat to build one plan more than once. Height is that storey's floor-to-floor rise; type a height or an elevation and the other follows. Untick Build to leave a storey out -- the footer counts what is left out. Click a row to pick it, ctrl-click or shift-click to pick several, then use the buttons under the table to move, add or remove them."/>
       <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
         <TextBlock Text="New storeys are" Style="{StaticResource TextLabel}" VerticalAlignment="Center"/>
         <TextBox x:Name="DefaultHeight" Style="{StaticResource InputNumberBox}"
@@ -138,7 +150,8 @@
           </StackPanel>
         </Border>
 
-        <DataGrid x:Name="StoreyGrid" Style="{StaticResource DataGridStyle}">
+        <DataGrid x:Name="StoreyGrid" Style="{StaticResource DataGridStyle}"
+                  SelectionMode="Extended">
           <DataGrid.Resources>
             <!-- 12.7.H: the DataGrid's visual state manager paints a selected row with the
                  system highlight unless these keys are redefined at its own scope. -->
@@ -163,7 +176,7 @@
             <DataGridTextColumn Header="No." Binding="{Binding Number}" Width="52" IsReadOnly="True"
                                 ElementStyle="{StaticResource GridMuted}"/>
 
-            <DataGridTextColumn Header="Storey" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+            <DataGridTextColumn Header="Storey" Binding="{Binding Storey, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
                                 Width="*" MinWidth="170"
                                 ElementStyle="{StaticResource GridText}"
                                 EditingElementStyle="{StaticResource GridEditBox}"/>
@@ -181,7 +194,7 @@
             <DataGridTemplateColumn Header="Built from" Width="220" IsReadOnly="True">
               <DataGridTemplateColumn.CellTemplate>
                 <DataTemplate>
-                  <ComboBox Style="{StaticResource GridComboBox}"
+                  <ComboBox Style="{StaticResource GridComboBox}" Tag="PlanPick"
                             ItemsSource="{Binding PlanChoices}"
                             SelectedItem="{Binding Plan, Mode=TwoWay}"/>
                 </DataTemplate>

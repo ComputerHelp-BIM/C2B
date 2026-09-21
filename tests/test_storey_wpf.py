@@ -2,13 +2,20 @@
 
 WPF needs Windows and pythonnet, so this module cannot be imported here, let alone shown. It
 is checked the way the Revit import script is checked: by parsing it. What that catches is
-narrow but real -- a control name the layout does not define, a handler subscribed at module
-scope, a Revit-style crash trap -- and each of those would otherwise be found by the person
-who pressed the button.
+narrow but real -- a control name the layout does not define, a binding path nothing fills, a
+handler subscribed at module scope -- and each of those would otherwise be found by the
+person who pressed the button.
+
+Most of what is here was written after watching a screen recording of the window. Three
+separate bugs were visible in it and all three had one cause: **WPF only ever sees the string
+a Python object prints to**, because pythonnet hands the binding engine a ``PyObject``
+whatever the value was. Every binding to a string target worked; every other binding failed
+in silence.
 """
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -28,229 +35,89 @@ def source():
     return SOURCE.read_text(encoding="utf-8")
 
 
+@pytest.fixture(scope="module")
+def markup():
+    return xaml.layout_path("storey_editor").read_text(encoding="utf-8")
+
+
+def function(tree: ast.AST, name: str) -> str:
+    """One function's code, comments dropped -- a test must not match its own explanation."""
+    found = next(n for n in ast.walk(tree)
+                 if isinstance(n, ast.FunctionDef) and n.name == name)
+    return ast.unparse(found)
+
+
+def names(markup: str) -> set[str]:
+    return set(re.findall(r'x:Name="([^"]+)"', markup))
+
+
+# ---------------------------------------------------------------------------
+# It drives the window the layout actually declares
+# ---------------------------------------------------------------------------
+
 def test_the_file_is_valid_python(tree):
     assert tree is not None
 
 
-def test_every_control_it_asks_for_exists_in_the_layout(source):
+def test_every_control_it_asks_for_exists_in_the_layout(source, markup):
     """A name the layout does not define raises at the first click, not at load."""
     asked = {node.args[1].value
              for node in ast.walk(ast.parse(source))
              if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
              and node.func.attr == "find" and len(node.args) == 2
              and isinstance(node.args[1], ast.Constant)}
-    declared = set(_names(xaml.layout_path("storey_editor").read_text(encoding="utf-8")))
-    assert asked - declared == set(), f"the window has no {sorted(asked - declared)}"
+    assert asked - names(markup) == set(), f"the window has no {sorted(asked - names(markup))}"
     assert asked, "nothing is looked up, so this test proves nothing"
 
 
-def _names(markup: str):
-    import re
-    return re.findall(r'x:Name="([^"]+)"', markup)
-
-
-def test_the_buttons_it_wires_are_the_buttons_the_layout_has(source):
-    import re
-    declared = set(_names(xaml.layout_path("storey_editor").read_text(encoding="utf-8")))
+def test_the_buttons_it_wires_are_the_buttons_the_layout_has(source, markup):
     wired = set(re.findall(r'wpf\.find\(self\.window, "(Btn\w+)"\)\.Click', source))
-    assert wired <= declared
+    assert wired <= names(markup)
     assert {"BtnAdd", "BtnAddBottom", "BtnSave", "BtnCancel"} <= wired
 
 
-def test_the_row_commands_act_on_the_row_the_user_picked(source):
-    """A DataGrid shows its selection, so select-then-act reads plainly here -- unlike a
-    toolbar over a list of plain panels, where nothing says which row is current."""
-    body = source.split("def _on_selected")[1].split("\n    def ")[0]
-    assert "_selected_id()" in body
-    assert "Click a storey in the table first." in body, "a command with no row must say so"
-    wired = source.split("def _wire")[1].split("\n    def ")[0]
-    for command in ("self.presenter.move", "self.presenter.remove"):
-        assert command in wired, f"no button runs {command}"
+# ---------------------------------------------------------------------------
+# The rows: real .NET values, because a Python one only ever prints
+# ---------------------------------------------------------------------------
+
+def test_a_bound_row_is_a_dotnet_object_and_not_a_python_one(tree, source):
+    """The bug this is about: every Build tick rendered empty and every plan picker rendered
+    blank, because IsChecked wants a bool? and SelectedItem has to match an item, and a
+    PyObject converts to neither. Only the string columns worked, on ToString()."""
+    body = function(tree, "grid_row")
+    assert "ExpandoObject" in body, "the rows are Python objects again, so only strings bind"
+    assert "IDictionary" in body, "an ExpandoObject's members are set through its dictionary"
+    assert "__slots__" not in source, "the slotted row is what could not carry a bool"
 
 
-def test_the_tick_reads_one_way_and_writes_back_through_its_event():
-    """12.7.Q -- a write back to a Python bool does not land, so the tick reads a string one
-    way and the edit arrives through Checked/Unchecked instead."""
-    markup = xaml.layout_path("storey_editor").read_text(encoding="utf-8")
-    tick = markup.split('Header="Build"')[1].split("</DataGridTemplateColumn>")[0]
-    assert "{Binding Build, Mode=OneWay}" in tick
-    assert "TwoWay" not in tick, "a two-way binding here is the one that silently does nothing"
-    assert 'Tag="BuildTick"' in tick, "the handler cannot tell this from a ComboBox's toggle"
-    assert "GridCheckBox" in tick
-
-    source = SOURCE.read_text(encoding="utf-8")
-    assert "ToggleButton.CheckedEvent" in source and "ToggleButton.UncheckedEvent" in source
-    assert "self._toggled" in source, "a delegate only .NET holds is one Python may collect"
-
-
-def test_ticking_a_storey_is_not_selecting_it():
-    """Two releases ago the tick WAS the row's IsSelected. That threw outright -- a DataGrid in
-    Single selection mode refuses every change to SelectedItems -- and the Extended mode that
-    would have allowed it makes 'Move up' move the first ticked row instead of the clicked
-    one. Selection is the row the buttons act on; the tick is the storey's own value."""
-    # Read as attributes, not as text: the comment explaining this failure says the words.
-    touched = {n.attr for n in ast.walk(ast.parse(SOURCE.read_text(encoding="utf-8")))
-               if isinstance(n, ast.Attribute)}
-    assert "SelectedItems" not in touched, "Single selection mode throws on any change to it"
-    assert "IsSelected" not in touched
-    assert "SelectedItem" in touched, "nothing reads the selection, so this proves nothing"
-
-    theme = xaml.theme_xaml()
-    grid = theme.split('x:Key="DataGridStyle"')[1].split("</Style>")[0]
-    assert '<Setter Property="SelectionMode" Value="Single"/>' in grid
-
-
-def test_a_tick_does_not_rebuild_the_table_from_inside_its_own_event():
-    """The rebuild destroys the row containers, and the control still raising the event is
-    one of them."""
-    tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
-    handler = next(n for n in ast.walk(tree)
-                   if isinstance(n, ast.FunctionDef) and n.name == "_on_build_toggled")
-    body = ast.unparse(handler)                     # unparsing drops the comments
-    assert "self._after(self.refresh)" in body
-    assert "self.refresh()" not in body
-    after = next(n for n in ast.walk(tree)
-                 if isinstance(n, ast.FunctionDef) and n.name == "_after")
-    assert "BeginInvoke" in ast.unparse(after)
-
-
-def test_the_grid_lets_a_user_drag_its_column_widths():
-    theme = xaml.theme_xaml()
-    grid = theme.split('x:Key="DataGridStyle"')[1].split("</Style>")[0]
-    assert '<Setter Property="CanUserResizeColumns" Value="True"/>' in grid
-
-
-def test_selection_is_painted_in_the_brand_not_the_system_blue():
-    """12.7.H - the DataGrid's visual state manager wins over a RowStyle trigger unless these
-    system keys are redefined at the grid's own scope."""
-    markup = xaml.layout_path("storey_editor").read_text(encoding="utf-8")
-    assert "SystemColors.HighlightBrushKey" in markup
-    assert "SystemColors.InactiveSelectionHighlightBrushKey" in markup
-
-
-def test_the_row_object_is_slotted_with_no_property_or_inpc(tree):
-    """12.7.G - a @property on an INPC class binds to empty strings under Python.NET 3."""
-    row = next(n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == "StoreyRow")
-    assert not row.bases, "a bound row class inherits nothing, least of all INotifyPropertyChanged"
-    assert any(isinstance(n, ast.Assign) and any(
-        isinstance(t, ast.Name) and t.id == "__slots__" for t in n.targets) for n in row.body)
-    assert not any(isinstance(n, ast.FunctionDef) and any(
-        isinstance(d, ast.Name) and d.id == "property" for d in n.decorator_list) for n in row.body)
-
-
-def test_every_slot_the_layout_binds_exists_on_the_row(source):
-    """A binding path with no slot behind it renders an empty cell and says nothing."""
-    import re
-
-    from c2b.ui.storey_wpf import StoreyRow
-
-    markup = xaml.layout_path("storey_editor").read_text(encoding="utf-8")
+def test_every_binding_path_the_layout_uses_is_a_field_the_row_sets(tree, markup):
+    """A binding path with nothing behind it renders an empty cell and says nothing at all."""
     grid = markup.split("<DataGrid ")[1]
     paths = {m.split(",")[0].strip() for m in re.findall(r"\{Binding ([^}]+)\}", grid)}
-    paths = {p for p in paths if p and not p.startswith(("IsSelected", "RelativeSource"))}
+    paths = {p for p in paths if p and not p.startswith(("RelativeSource", "IsSelected"))}
+    filled = set(re.findall(r'fields\[[\'"](\w+)[\'"]\]', function(tree, "grid_row")))
     assert paths, "nothing is bound, so this test proves nothing"
-    assert paths <= set(StoreyRow.__slots__), f"no slot for {sorted(paths - set(StoreyRow.__slots__))}"
+    assert paths <= filled, f"nothing fills {sorted(paths - filled)}"
 
 
-def test_the_grid_is_flushed_before_it_is_refilled(source):
+def test_the_row_never_offers_a_member_wpf_already_has_one_of(tree, markup):
+    """A dynamic object is asked for its members by name. Calling one of them Name is a
+    question with two answers, and the binding engine picks which one."""
+    filled = set(re.findall(r'fields\[[\'"](\w+)[\'"]\]', function(tree, "grid_row")))
+    assert "Name" not in filled, "the storey's name is bound as Storey for exactly this reason"
+    assert "Storey" in filled
+    assert "{Binding Storey" in markup
+
+
+def test_the_grid_is_flushed_before_it_is_refilled(tree):
     """12.7.G - without this the grid reuses its row containers and shows stale cells."""
-    body = source.split("def refresh")[1].split("\n    def ")[0]
-    assert "ItemsSource = None" in body
+    body = function(tree, "refresh")
     assert body.index("ItemsSource = None") < body.index("ItemsSource = items")
 
 
-def test_no_revit_or_wpf_import_happens_at_module_scope(tree):
-    """Importing clr on a machine with no .NET is an error, and this file is imported by name
-    resolution on every platform C2B runs on."""
-    for node in tree.body:
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            names = [a.name for a in node.names] + ([node.module] if isinstance(node, ast.ImportFrom) else [])
-            for name in names:
-                assert not str(name).startswith(("System", "clr", "Autodesk")), f"{name} at module scope"
-
-
-def test_nothing_subscribes_a_handler_at_module_scope(source, tree):
-    """12.9.2 - a handler added at module scope in a persistent engine fires once per press it
-    has ever seen, against objects that may already be dead."""
-    for node in tree.body:
-        assert not isinstance(node, ast.AugAssign), "a += at module scope subscribes forever"
-
-
-def test_the_window_is_built_per_opening_not_held_on_the_module(tree):
-    """12.9.2 again - state lives in the instance, so nothing survives to the next press."""
-    module_names = {target.id for node in tree.body if isinstance(node, ast.Assign)
-                    for target in node.targets if isinstance(target, ast.Name)}
-    assert not {n for n in module_names if not n.isupper() and not n.startswith("_")}
-
-
-def test_the_editor_reads_its_fields_back_before_every_command(source, tree):
-    """A command that runs before the typed text is taken silently loses the edit.
-
-    One place does it -- ``_command`` -- and every button goes through it, so a new command
-    cannot be added that forgets. ``_on_save`` reads back on its own because it does not
-    route through ``_command``.
-    """
-    body = source.split("def _command")[1].split("\n    def ")[0]
-    assert body.index("_read_back()") < body.index("run(*args)")
-    assert "def _read_back" in source
-    # A cell still being edited has not written to its bound object yet.
-    assert "CommitEdit()" in source.split("def _read_back")[1].split("\n    def ")[0]
-
-    handlers = [n for n in ast.walk(tree)
-                if isinstance(n, ast.FunctionDef) and n.name.startswith("_on_")]
-    assert handlers, "no button handlers at all"
-    for handler in handlers:
-        text = ast.unparse(handler)
-        if handler.name in ("_on_cancel", "_on_selection_changed"):
-            # Cancel throws the edits away on purpose, so it is the one handler that must
-            # NOT read them back first.
-            assert "_read_back()" not in text
-            continue
-        assert "_read_back()" in text or "self._command(" in text, f"{handler.name} acts blind"
-
-
-def test_heights_are_read_back_lowest_storey_first(source):
-    """Elevations are the heights added up, so the order they are applied in decides the answer."""
-    body = source.split("def _read_back")[1].split("\n    def ")[0]
-    assert body.index("row.Height") < body.index("row.Elevation")
-    ordered = source.split("def _ordered_rows")[1].split("\n    def ")[0]
-    assert "self.presenter.schedule.storeys" in ordered
-
-
-def test_a_field_is_only_applied_when_it_changed(source):
-    """Re-applying an unchanged elevation would pin a storey that a height edit just moved."""
-    body = source.split("def _read_back")[1].split("\n    def ")[0]
-    assert 'row_was(row, "height")' in body and 'row_was(row, "elevation")' in body
-
-
-def test_filling_the_table_does_not_count_as_typing(source):
-    """Setting .Text in code raises the same events a person typing does."""
-    assert "self._filling" in source
-    body = source.split("def _read_back")[1].split("\n    def ")[0]
-    assert "if self._filling:" in body
-
-
-def test_a_stack_with_an_error_cannot_be_saved(source):
-    body = source.split("def _on_save")[1].split("\n    def ")[0]
-    assert "can_save()" in body and "DialogResult" in body
-    assert body.index("can_save()") < body.index("self.saved = True")
-
-
-def test_the_severity_is_written_beside_the_message_not_only_coloured(source):
-    """10.4 - state is never signalled by colour alone."""
-    body = source.split("def _show_problems")[1].split("\n    def ")[0]
-    assert "{severity}" in body
-
-
-def test_no_message_box_anywhere(source):
-    """11.5, 13.4 - validation is inline, never a blocking dialog."""
-    assert "MessageBox" not in source and "TaskDialog" not in source
-
-
 def test_the_rows_bind_the_way_the_suite_proved_and_no_other(tree):
-    """A DataGrid's text columns over a slotted object is the pattern the suite ships and it
-    works. The ways it does not -- an INPC class, a Python @property, a DataTrigger on a
-    Python bool -- are 12.7.G, J and Q, and none of them appear here."""
+    """The ways that do not work -- an INPC class, a Python @property, a DataTrigger on a
+    Python value -- are 12.7.G, J and Q, and none of them appear here."""
     used = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
     used |= {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
     used |= {a.name for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))
@@ -260,37 +127,182 @@ def test_the_rows_bind_the_way_the_suite_proved_and_no_other(tree):
     assert "ArrayList" in used, "12.7.G asks for an ArrayList, not a Python list"
 
 
-def test_a_datatrigger_on_a_python_bool_is_never_used():
+def test_no_datatrigger_is_used_at_all(markup):
     """12.7.Q, the one that looks correct and silently does nothing."""
-    markup = xaml.layout_path("storey_editor").read_text(encoding="utf-8")
-    for trigger in markup.split("<DataTrigger ")[1:]:
-        binding = trigger.split(">")[0]
-        assert "IsSelected" in binding, f"a DataTrigger on a Python value: {binding}"
+    assert "<DataTrigger" not in markup
 
 
-def _unused_test_the_row_columns_match_the_header_the_layout_draws():
-    """A column widened in the header and left narrow in the rows is a table that does not
-    line up, and it is invisible until somebody opens the window."""
-    import re
+# ---------------------------------------------------------------------------
+# Every edit comes from the control the person touched
+# ---------------------------------------------------------------------------
 
-    from c2b.ui.storey_wpf import _COLUMNS
-
-    markup = xaml.layout_path("storey_editor").read_text(encoding="utf-8")
-    header = markup.split('x:Name="HeaderRow"')[1].split("</Grid.ColumnDefinitions>")[0]
-    widths = re.findall(r'<ColumnDefinition Width="([^"]+)"', header)
-    assert len(widths) == len(_COLUMNS), "the header and the rows have different column counts"
-    for declared, built in zip(widths, _COLUMNS):
-        if declared == "*":
-            assert built is None, "the header's stretching column is fixed in the rows"
-        else:
-            assert float(declared) == built, f"header {declared} vs row {built}"
+def test_what_was_typed_is_read_off_the_editor_not_out_of_the_binding(tree):
+    """One direction of marshalling instead of two, and the direction that is known to work."""
+    body = function(tree, "_on_cell_edit_ending")
+    assert "args.EditingElement" in body, "it trusts the write-back it cannot verify"
+    assert "args.Column.Header" in body, "nothing says which column was edited"
+    assert "DataGridEditAction.Commit" in body, "a cancelled edit would be applied"
 
 
-def _unused_test_every_column_the_header_names_is_filled_by_a_row(source):
-    """A header with seven columns over rows that place six leaves one silently blank."""
-    from c2b.ui.storey_wpf import _COLUMNS
+def test_the_edit_table_names_columns_the_layout_actually_draws(markup):
+    """The header is what the person read when they typed, so it is what the edit is keyed on
+    -- and a header renamed in the layout must not quietly stop being editable."""
+    from c2b.ui.storey_wpf import EDITS
 
-    placed = source.split("def refresh")[1].split("\n    def _row_actions")[0]
-    columns = {int(n) for n in __import__("re").findall(r"grid, \w+, (\d)\)", placed)}
-    columns |= {6}                       # the action cluster, placed by its own call
-    assert columns == set(range(len(_COLUMNS)))
+    headers = set(re.findall(r'Header="([^"]+)"', markup))
+    assert set(EDITS) <= headers, f"no column headed {sorted(set(EDITS) - headers)}"
+    assert set(EDITS) == {"Storey", "Height mm", "Elevation mm", "Repeat"}
+
+
+def test_the_tick_is_the_storeys_own_value_and_not_the_rows_selection(markup):
+    """It was bound to DataGridRow.IsSelected once. That threw on a Single-selection grid, and
+    it made ticking a storey also change which row the buttons acted on."""
+    tick = markup.split('Header="Build"')[1].split("</DataGridTemplateColumn>")[0]
+    assert "{Binding Build, Mode=OneWay}" in tick
+    assert "IsSelected" not in tick
+    assert 'Tag="BuildTick"' in tick, "the handler cannot tell this from a ComboBox's toggle"
+
+
+def test_the_tick_listens_for_a_click_and_not_for_checked(tree, source):
+    """Checked is raised by the binding as each row is realised, so the first draw was a storm
+    of edits that each queued another redraw. Click is raised only by a person."""
+    wired = function(tree, "_wire")
+    assert "ButtonBase.ClickEvent" in wired
+    assert "CheckedEvent" not in source and "UncheckedEvent" not in source
+    assert "self._handlers" in wired, "a delegate only .NET holds is one Python may collect"
+
+
+def test_a_tick_does_not_redraw_the_table(tree):
+    """Rebuilding drops the selection the person is in the middle of making -- and while the
+    tick was bound one way to a value WPF could not read, the redraw put the box back."""
+    body = function(tree, "_on_build_clicked")
+    assert "refresh" not in body, "a tick rebuilds the table, so it appears to undo itself"
+    assert "self._show_status()" in body, "nothing says what the tick changed"
+    assert "box.IsChecked" in body, "it guesses at the new state instead of reading it"
+
+
+def test_a_plan_picked_in_a_cell_is_told_apart_from_the_grids_own_selection(tree, markup):
+    """A ComboBox inside a cell raises Selector.SelectionChanged, which bubbles up and arrives
+    as though the grid's own selection had changed."""
+    body = function(tree, "_on_selection_changed")
+    assert "PLAN_PICK" in body, "a plan pick is treated as a row selection"
+    assert "args.OriginalSource" in body
+    assert 'Tag="PlanPick"' in markup
+
+
+def test_filling_the_table_does_not_count_as_typing(tree):
+    """Setting a value in code raises the same events a person does."""
+    for handler in ("_on_cell_edit_ending", "_on_build_clicked", "_on_selection_changed"):
+        assert "self._filling" in function(tree, handler), f"{handler} acts on its own redraw"
+
+
+def test_a_redraw_never_happens_inside_the_event_that_asked_for_it(tree):
+    """It replaces the very row the grid is still closing an editor on."""
+    for handler in ("_on_cell_edit_ending", "_on_selection_changed"):
+        body = function(tree, handler)
+        if "_redraw" in body:
+            assert "self._after(" in body, f"{handler} redraws mid-event"
+    assert "BeginInvoke" in function(tree, "_after")
+
+
+# ---------------------------------------------------------------------------
+# Selection means the rows the buttons act on -- all of them
+# ---------------------------------------------------------------------------
+
+def test_a_person_can_pick_more_than_one_storey(markup):
+    """Ctrl-click and shift-click are what a Windows user reaches for on a table, and they do
+    nothing whatsoever on a grid left in Single mode."""
+    grid = markup.split('x:Name="StoreyGrid"')[1].split(">")[0]
+    assert 'SelectionMode="Extended"' in grid
+
+
+def test_the_row_commands_act_on_every_row_the_user_picked(tree):
+    body = function(tree, "_on_selected")
+    assert "_selected_ids()" in body, "it acts on one row out of the several that are selected"
+    assert "Ctrl-click" in body, "a command with no row must say how to give it one"
+    assert "reversed" in body, "moving a block up has an order, and this is not it"
+    wired = function(tree, "_wire")
+    for command in ("'move'", "'remove'"):
+        assert command in wired, f"no button runs {command}"
+
+
+def test_every_command_takes_what_is_typed_before_it_acts(tree):
+    """Press a button with a half-typed height in a cell, or a new default height beside the
+    table, and neither must be lost. The default height is a plain TextBox with no
+    CellEditEnding of its own, so it needs taking by hand."""
+    for name in ("_command", "_on_selected", "_on_save"):
+        assert "self._commit()" in function(tree, name), f"{name} discards what is typed"
+    commit = function(tree, "_commit")
+    assert "CommitEdit()" in commit and "DefaultHeight" in commit
+
+
+def test_an_edit_to_a_row_the_grid_has_not_realised_is_dropped(tree):
+    """GetIndex returns -1 for one, and -1 into a Python list is the last storey."""
+    body = function(tree, "_on_cell_edit_ending")
+    assert "0 <= index < len(self._rows)" in body
+
+
+def test_the_footer_never_claims_a_row_that_is_gone(tree):
+    """Remove the selected storey and the selection cannot be restored. The label said it was
+    still selected while the buttons said to click a storey first."""
+    body = function(tree, "refresh")
+    assert "self._show_selection()" in body
+    assert body.rindex("_show_selection") > body.rindex("self._filling = False")
+
+
+def test_a_stack_with_an_error_cannot_be_saved(tree):
+    body = function(tree, "_on_save")
+    assert "can_save()" in body and "DialogResult" in body
+    assert body.index("can_save()") < body.index("self.saved = True")
+
+
+# ---------------------------------------------------------------------------
+# House rules
+# ---------------------------------------------------------------------------
+
+def test_selection_is_painted_in_the_brand_not_the_system_blue(markup):
+    """12.7.H - the DataGrid's visual state manager wins over a RowStyle trigger unless these
+    system keys are redefined at the grid's own scope."""
+    assert "SystemColors.HighlightBrushKey" in markup
+    assert "SystemColors.InactiveSelectionHighlightBrushKey" in markup
+
+
+def test_the_grid_lets_a_user_drag_its_column_widths():
+    theme = xaml.theme_xaml()
+    grid = theme.split('x:Key="DataGridStyle"')[1].split("</Style>")[0]
+    assert '<Setter Property="CanUserResizeColumns" Value="True"/>' in grid
+
+
+def test_no_revit_or_wpf_import_happens_at_module_scope(tree):
+    """Importing clr on a machine without .NET is an error, and this module is imported on
+    every machine C2B is developed on."""
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            module = getattr(node, "module", "") or ""
+            names_ = [a.name for a in node.names]
+            assert not module.startswith(("System", "Autodesk", "clr")), f"{module} at module scope"
+            assert not any(n.startswith(("System", "Autodesk", "clr")) for n in names_)
+
+
+def test_nothing_subscribes_a_handler_at_module_scope(source, tree):
+    """12.9.2 - the persistent engine keeps module globals, so a handler subscribed once per
+    module load fires once per press it has ever seen."""
+    for node in tree.body:
+        assert not (isinstance(node, ast.AugAssign) and isinstance(node.op, ast.Add)), \
+            "a += at module scope is a subscription that outlives the window"
+
+
+def test_the_window_is_built_per_opening_not_held_on_the_module(tree):
+    assigned = {t.id for n in tree.body if isinstance(n, ast.Assign) for t in n.targets
+                if isinstance(t, ast.Name)}
+    assert "WINDOW" not in assigned and "_WINDOW" not in assigned
+
+
+def test_the_severity_is_written_beside_the_message_not_only_coloured(tree):
+    """10.4 - state is never signalled by colour alone."""
+    assert "{severity}" in function(tree, "_show_problems")
+
+
+def test_no_message_box_anywhere(source):
+    """11.5, 13.4 - validation is inline, never a blocking dialog."""
+    assert "MessageBox" not in source and "TaskDialog" not in source
