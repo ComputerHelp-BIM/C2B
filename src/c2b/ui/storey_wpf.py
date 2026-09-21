@@ -91,6 +91,9 @@ class StoreyEditorWindow:
         self.grid = wpf.find(self.window, "StoreyGrid")
         self._rows: list[Any] = []
         self._filling = False              # so a programmatic rebuild is not a user's edit
+        from .. import __version__
+
+        wpf.find(self.window, "VersionBadge").Text = f"v{__version__}"
         if subtitle:
             wpf.find(self.window, "HeaderSubtitle").Text = subtitle
         wpf.find(self.window, "DefaultHeight").Text = f"{presenter.schedule.default_height_mm:.0f}"

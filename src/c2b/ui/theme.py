@@ -70,6 +70,15 @@ DARK_TEXT_MUTED: Final = "#B4BBC8"
 DARK_DISABLED: Final = "#8A8D96"
 VIVID_RED_ON_DARK: Final = "#FF5F4C"    # accents and borders on dark; fills keep VIVID_RED
 
+def _half_up(value: float) -> int:
+    """Round half away from zero.
+
+    Python rounds halves to even, which on a scale carrying 10.5 and 16.5 would send one down
+    and the other up. A size is rounded the way a designer reads it.
+    """
+    return math.floor(value + 0.5) if value >= 0 else -math.floor(-value + 0.5)
+
+
 # ---------------------------------------------------------------------------
 # 4  Typography. WPF device-independent units are authoritative.
 # ---------------------------------------------------------------------------
@@ -93,7 +102,8 @@ FONT_MONO_FALLBACKS: Final = ("Consolas", "Courier New", "TkFixedFont")
 #: the code wins and this document is wrong." Following the table instead gave a window a
 #: third larger than every other tool in the suite.
 SUITE_FONT_SIZES: Final = {"h1": 21.0, "h2": 16.5, "h3": 11.0, "h4": 9.5, "body": 9.5,
-                           "small": 8.5, "caption": 8.5, "code": 8.5, "help": 12.0}
+                           "small": 8.5, "caption": 8.5, "code": 8.5, "help": 12.0,
+                           "figure": 40.0}
 
 #: What C2B multiplies those by, and the reason it has to.
 #:
@@ -103,45 +113,43 @@ SUITE_FONT_SIZES: Final = {"h1": 21.0, "h2": 16.5, "h3": 11.0, "h4": 9.5, "body"
 #: **Segoe UI** at the owner's instruction (a monospace face reads as a terminal across a
 #: whole desktop window), and at the suite's sizes that came out small enough to squint at.
 #:
-#: One factor rather than nine retuned sizes, so the relationship to the rest of the suite
+#: One factor rather than ten retuned sizes, so the relationship to the rest of the suite
 #: stays a thing you can read rather than something to reverse-engineer. Raise it and every
 #: surface follows -- the windows, the fallback, the workbook.
-FONT_SCALE: Final = 1.2
+#:
+#: 1.32 is 1.2 and then a tenth again, at the owner's instruction after seeing 1.2 on a
+#: drafting screen. Every tier lands on a whole unit at this factor, which is the other half
+#: of that instruction: a scale of round numbers is one a person can hold in their head.
+FONT_SCALE: Final = 1.32
 
 
 def _tier(name: str) -> float:
-    """A type size for C2B, on the half-unit grid the suite's own scale is written in."""
-    return round(SUITE_FONT_SIZES[name] * FONT_SCALE * 2.0) / 2.0
+    """A type size for C2B: the suite's, scaled, and rounded to a whole unit."""
+    return float(_half_up(SUITE_FONT_SIZES[name] * FONT_SCALE))
 
 
-FONT_SIZE_H1: Final = _tier("h1")           # 25.0
-FONT_SIZE_H2: Final = _tier("h2")           # 20.0
-FONT_SIZE_H3: Final = _tier("h3")           # 13.0
-FONT_SIZE_H4: Final = _tier("h4")           # 11.5
-FONT_SIZE_BODY: Final = _tier("body")       # 11.5 -- Windows' own UI size is 12
-FONT_SIZE_SMALL: Final = _tier("small")     # 10.0
-FONT_SIZE_CAPTION: Final = _tier("caption")  # 10.0
-FONT_SIZE_CODE: Final = _tier("code")       # 10.0
+FONT_SIZE_H1: Final = _tier("h1")            # 28
+FONT_SIZE_H2: Final = _tier("h2")            # 22
+FONT_SIZE_H3: Final = _tier("h3")            # 15
+FONT_SIZE_H4: Final = _tier("h4")            # 13
+FONT_SIZE_BODY: Final = _tier("body")        # 13 -- Windows' own UI size is 12
+FONT_SIZE_SMALL: Final = _tier("small")      # 11
+FONT_SIZE_CAPTION: Final = _tier("caption")  # 11
+FONT_SIZE_CODE: Final = _tier("code")        # 11
 #: Help text is a tier of its own in the suite and is *larger* than body: it carries the
 #: instructions, which are the part a drafter actually has to read.
-FONT_SIZE_HELP: Final = _tier("help")       # 14.5
+FONT_SIZE_HELP: Final = _tier("help")        # 16
+#: One figure, once per window: the number a "finished" dialog exists to show, read from
+#: across a desk. It was a literal inside the markup generator until the scale caught it.
+FONT_SIZE_FIGURE: Final = _tier("figure")    # 53
 
-LINE_HEIGHT_H1: Final = round(26.0 * FONT_SCALE * 2.0) / 2.0     # 31.0
-LINE_HEIGHT_BODY: Final = round(17.0 * FONT_SCALE * 2.0) / 2.0   # 20.5
-LINE_HEIGHT_CODE: Final = round(14.0 * FONT_SCALE * 2.0) / 2.0   # 17.0
+LINE_HEIGHT_H1: Final = float(_half_up(26.0 * FONT_SCALE))      # 34
+LINE_HEIGHT_BODY: Final = float(_half_up(17.0 * FONT_SCALE))    # 22
+LINE_HEIGHT_CODE: Final = float(_half_up(14.0 * FONT_SCALE))    # 18
 
 #: A WPF device-independent unit is 1/96 inch, which is one CSS pixel. Tkinter reads a
 #: *negative* font size as pixels, so a size crosses over exactly rather than through a
 #: rounding that would make the scale drift between the two toolkits.
-def _half_up(value: float) -> int:
-    """Round half away from zero.
-
-    Python rounds halves to even, which on a type scale of 10.5 and 16.5 would send one down
-    and the other up. A size is rounded the way a designer reads it.
-    """
-    return math.floor(value + 0.5) if value >= 0 else -math.floor(-value + 0.5)
-
-
 def pixels(wpf_units: float) -> int:
     """A WPF type size as the negative pixel size Tkinter wants."""
     return -max(8, _half_up(wpf_units))
@@ -171,15 +179,15 @@ RADIUS_XL: Final = 10       # dialogs and modal windows
 #: 5.4 -- density is control height and padding, never a smaller type scale. The suite's
 #: shipping numbers are 26 for an input and 28 for a button; they carry :data:`FONT_SCALE`
 #: because a control that did not grow with its text is a control the text no longer fits in.
-HEIGHT_INPUT: Final = _half_up(26 * FONT_SCALE)      # 31 -- text boxes, combo boxes
-HEIGHT_COMPACT: Final = _half_up(26 * FONT_SCALE)    # 31 -- list items, a parameter grid row
-HEIGHT_BUTTON: Final = _half_up(28 * FONT_SCALE)     # 34 -- every button but the primary one
-HEIGHT_LARGE: Final = _half_up(34 * FONT_SCALE)      # 41 -- the primary action of a dialog
-BUTTON_PADDING_H: Final = _half_up(12 * FONT_SCALE)  # 14 -- padding inside a button
-INPUT_PADDING_H: Final = _half_up(7 * FONT_SCALE)    # 8  -- inset of a text box's content
+HEIGHT_INPUT: Final = _half_up(26 * FONT_SCALE)      # 34 -- text boxes, combo boxes
+HEIGHT_COMPACT: Final = _half_up(26 * FONT_SCALE)    # 34 -- list items, a parameter grid row
+HEIGHT_BUTTON: Final = _half_up(28 * FONT_SCALE)     # 37 -- every button but the primary one
+HEIGHT_LARGE: Final = _half_up(34 * FONT_SCALE)      # 45 -- the primary action of a dialog
+BUTTON_PADDING_H: Final = _half_up(12 * FONT_SCALE)  # 16 -- padding inside a button
+INPUT_PADDING_H: Final = _half_up(7 * FONT_SCALE)    # 9  -- inset of a text box's content
 
 #: A tick box, square, sized against the text beside it rather than fixed at 16.
-CHECKBOX_SIZE: Final = _half_up(16 * FONT_SCALE)     # 19
+CHECKBOX_SIZE: Final = _half_up(16 * FONT_SCALE)     # 21
 
 DIALOG_WIDTH: Final = 480        # 5.5 -- a dialog is a fixed width and centres on its owner
 

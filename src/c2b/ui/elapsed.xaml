@@ -1,19 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  AnonGee . CAD to BIM - finished.
+  AnonGee . Run Finished  -  what the run cost, after it is over.
 
-  What the run cost, after it is over. One number, big: the time the tool spent building,
-  which is the tool's own time and the only figure it is fair to be judged on. The parts are
-  underneath in caption size - the time spent in dialogs is the person's, and the time from
-  the click is both.
+  One number, big: the time the tool spent working, which is the tool's own time and the only
+  figure it is fair to be judged on. The parts are underneath in caption size - the time spent
+  in dialogs is the person's, and the time from the click is both.
 
-  The root element carries literal values only (12.7.A).
+  The root element carries literal values only (12.7.A). Every child of the DockPanel but the
+  last declares its Dock, because DockPanel.Dock defaults to Left without saying so.
+
+  The shape is the suite's, the same five parts as every other C2B window: inset frame,
+  Charcoal header with rounded top corners, 3px accent rule, body, Off White footer. It had
+  none of them for two releases and read as a different product from the window that opened it.
 -->
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="CAD to BIM - finished"
-        Width="460" SizeToContent="Height"
-        WindowStartupLocation="CenterScreen"
+        Title="AnonGee &#183; Run Finished"
+        Width="560" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
         ShowInTaskbar="False"
         Background="White"
@@ -24,31 +28,57 @@
     <!-- ANONGEE-THEME -->
   </Window.Resources>
 
-  <DockPanel LastChildFill="True">
+  <DockPanel Margin="12,8" LastChildFill="True" Background="{StaticResource BrushPureWhite}">
 
-    <Border DockPanel.Dock="Bottom" Background="{StaticResource BrushOffWhite}"
-            BorderBrush="{StaticResource BrushLightBorder}" BorderThickness="0,1,0,0"
-            Padding="16,8">
+    <Border DockPanel.Dock="Top" Background="{StaticResource BrushCharcoalBlack}"
+            Padding="16,12" CornerRadius="5,5,0,0">
       <Grid>
-        <TextBlock x:Name="CountdownText" VerticalAlignment="Center"
-                   Style="{StaticResource TextCaption}" HorizontalAlignment="Left"/>
-        <Button x:Name="BtnClose" Content="Close" Style="{StaticResource ButtonPrimary}"
-                Width="110" HorizontalAlignment="Right" IsDefault="True" IsCancel="True"/>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <StackPanel Grid.Column="0">
+          <TextBlock Style="{StaticResource TextH2OnDark}" Text="Run Finished"/>
+          <TextBlock x:Name="HeadlineText" Style="{StaticResource TextH3OnDark}" Margin="0,2,0,0"
+                     Text="Drawing prepared"/>
+        </StackPanel>
+        <StackPanel Grid.Column="1" VerticalAlignment="Top" HorizontalAlignment="Right">
+          <TextBlock Style="{StaticResource TextCaption}" HorizontalAlignment="Right"
+                     Foreground="{StaticResource BrushSilverSteel}" Text="AnonGee &#183; CAD to BIM"/>
+          <TextBlock x:Name="VersionBadge" Style="{StaticResource TextBadge}" Margin="0,2,0,0"
+                     HorizontalAlignment="Right"
+                     Foreground="{StaticResource BrushSilverSteel}" Text="v0"/>
+        </StackPanel>
       </Grid>
     </Border>
 
-    <StackPanel Margin="24,20,24,18">
-      <TextBlock x:Name="HeadlineText" Text="Model prepared" Style="{StaticResource TextH3}"
-                 Margin="0,0,0,2"/>
+    <Rectangle DockPanel.Dock="Top" Height="3" Fill="{StaticResource BrushVividRed}"/>
 
+    <Border DockPanel.Dock="Bottom" Background="{StaticResource BrushOffWhite}"
+            BorderBrush="{StaticResource BrushLightBorder}" BorderThickness="0,1,0,0"
+            Padding="12,8">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <TextBlock x:Name="CountdownText" Grid.Column="0" VerticalAlignment="Center"
+                   Style="{StaticResource TextCaption}"/>
+        <Button x:Name="BtnClose" Grid.Column="1" Content="Close"
+                Style="{StaticResource ButtonPrimary}" Width="132"
+                IsDefault="True" IsCancel="True"/>
+      </Grid>
+    </Border>
+
+    <StackPanel Margin="16,14,16,16">
       <!-- The one thing on this window. -->
       <TextBlock x:Name="ElapsedText" Text="-" Style="{StaticResource TextFigure}"
-                 TextAlignment="Left" Margin="0,2,0,2"/>
+                 TextAlignment="Left" Margin="0,0,0,2"/>
 
       <TextBlock x:Name="ElapsedCaption" Text="preparing the model"
-                 Style="{StaticResource TextCaption}" Margin="0,0,0,6"/>
+                 Style="{StaticResource TextCaption}" Margin="0,0,0,8"/>
 
-      <WrapPanel Margin="0,2,0,0">
+      <WrapPanel>
         <TextBlock Text="in the dialogs" Style="{StaticResource TextCaption}" VerticalAlignment="Center"/>
         <TextBlock x:Name="WaitingText" Text="-" Style="{StaticResource TextFigureSmall}"
                    VerticalAlignment="Center" Margin="6,0,0,0"/>
@@ -59,7 +89,7 @@
       </WrapPanel>
 
       <TextBlock x:Name="BreakdownText" Style="{StaticResource TextCaption}"
-                 TextWrapping="Wrap" Margin="0,6,0,0"/>
+                 TextWrapping="Wrap" Margin="0,8,0,0"/>
     </StackPanel>
   </DockPanel>
 </Window>

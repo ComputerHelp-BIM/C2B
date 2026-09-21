@@ -374,9 +374,33 @@ def load_window(name: str) -> Any:
     markup = xaml.window_xaml(name)
     stream = MemoryStream(Encoding.UTF8.GetBytes(markup))
     try:
-        return XamlReader.Load(stream)
+        window = XamlReader.Load(stream)
     finally:
         stream.Close()
+    fit_to_screen(window)
+    return window
+
+
+def fit_to_screen(window: Any) -> None:
+    """Never open a window bigger than the screen it opens on.
+
+    A layout is sized for the table it holds -- the storey editor opens tall enough to show a
+    building's worth of storeys without being dragged -- and a drafting laptop is 768 pixels
+    high. A dialog taller than the screen puts its own Save button under the taskbar, which is
+    a worse failure than a table that scrolls. The minimums go with it, because a minimum
+    larger than the screen simply wins.
+    """
+    from System.Windows import SystemParameters
+
+    work = SystemParameters.WorkArea
+    for axis, room in (("Width", float(work.Width)), ("Height", float(work.Height))):
+        smallest = getattr(window, f"Min{axis}")
+        if smallest > room:
+            setattr(window, f"Min{axis}", room)
+        wanted = getattr(window, axis)
+        # SizeToContent leaves the axis it measures as NaN, and NaN fails every comparison.
+        if wanted == wanted and wanted > room:
+            setattr(window, axis, room)
 
 
 def find(window: Any, name: str) -> Any:

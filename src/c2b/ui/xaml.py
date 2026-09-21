@@ -102,7 +102,8 @@ def _typography() -> str:
     sizes = [("FontSizeH1", t.FONT_SIZE_H1), ("FontSizeH2", t.FONT_SIZE_H2), ("FontSizeH3", t.FONT_SIZE_H3),
              ("FontSizeH4", t.FONT_SIZE_H4), ("FontSizeBody", t.FONT_SIZE_BODY),
              ("FontSizeSmall", t.FONT_SIZE_SMALL), ("FontSizeCaption", t.FONT_SIZE_CAPTION),
-             ("FontSizeCode", t.FONT_SIZE_CODE), ("FontSizeHelp", t.FONT_SIZE_HELP)]
+             ("FontSizeCode", t.FONT_SIZE_CODE), ("FontSizeHelp", t.FONT_SIZE_HELP),
+             ("FontSizeFigure", t.FONT_SIZE_FIGURE)]
     out = [f'  <FontFamily x:Key="FontSans">{t.FONT_SANS}</FontFamily>',
            f'  <FontFamily x:Key="FontMono">{t.FONT_MONO}</FontFamily>']
     out += [f'  <sys:Double x:Key="{key}">{value}</sys:Double>' for key, value in sizes]
@@ -171,7 +172,6 @@ def _typography() -> str:
     <Setter Property="Margin" Value="0,{t.SPACE_XS},0,0"/>
     <Setter Property="TextWrapping" Value="Wrap"/>
   </Style>
-  <sys:Double x:Key="FontSizeFigure">40</sys:Double>
   <!-- One figure, once per window: the number a "finished" dialog exists to show. Bigger than
        the Display level of §4.2 on purpose - there is nothing else on the surface to balance
        it against, and it is read from across a desk. -->

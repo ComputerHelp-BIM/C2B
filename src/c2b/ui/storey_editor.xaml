@@ -9,23 +9,24 @@
   The root element carries literal values only - never a resource reference - because
   XamlReader resolves a window's own attributes before its Resources block is parsed (12.7.A).
 
-  The table is a real DataGrid, laid out like the Multi-storey page of cad2bim: a Build tick,
-  the storey number, the plan it is drawn from, its height, and how many levels the one row
-  builds. Columns are resizable. The buttons under it act on the selected row, which in a
-  DataGrid is a row the user can see is selected.
+  THE SHAPE IS THE SUITE'S, and it is the same five parts in the same order in every C2B
+  window: an inset frame, a Charcoal header with rounded top corners carrying the title, the
+  subtitle and the identity, a 3px accent rule, the body, and an Off White footer.
 
-  Build and selection are two different things and were one for a release. Binding the tick to
-  DataGridRow.IsSelected made ticking a storey also make it the row the buttons act on, and it
-  threw outright: a DataGrid in Single selection mode refuses any change to SelectedItems, and
-  Extended mode would have made "Move up" move whichever ticked row came first rather than the
-  row that was clicked. So: selection is the row you clicked, and the tick is the row's own
-  Build value, written back through the Checked/Unchecked routed event (12.7.Q - a write back
-  to a Python bool does not land, so the value is read one way and the event carries the edit).
+  EVERY CHILD OF A DOCKPANEL BUT THE LAST DECLARES ITS DOCK. DockPanel.Dock defaults to Left,
+  silently: the instruction panel below had no Dock for a release, took the whole width as a
+  left column because a wrapping TextBlock measures unwrapped when it is given infinite width,
+  and left the table nothing to fill. The window opened with no table on it at all.
+
+  The table is a real DataGrid, laid out like the Multi-storey page of cad2bim. Columns are
+  resizable. The buttons under it act on the row the user clicked, which is what selection
+  means here and the only thing it means: the Build tick is the storey's own value, read one
+  way and written back through the tick's Checked event (12.7.Q).
 -->
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="AnonGee &#183; Storey Editor"
-        Width="1040" Height="720" MinWidth="900" MinHeight="580"
+        Width="1120" Height="880" MinWidth="980" MinHeight="600"
         Background="White"
         UseLayoutRounding="True"
         FontFamily="Segoe UI, Inter, Calibri, Arial"
@@ -37,26 +38,41 @@
     <!-- ANONGEE-THEME -->
   </Window.Resources>
 
-  <DockPanel LastChildFill="True" Background="{StaticResource BrushPureWhite}">
+  <DockPanel Margin="12,8" LastChildFill="True" Background="{StaticResource BrushPureWhite}">
 
-    <Border DockPanel.Dock="Top" Background="{StaticResource BrushCharcoalBlack}" Padding="16,12">
+    <!-- 1  The header: what this window is, and whose it is. -->
+    <Border DockPanel.Dock="Top" Background="{StaticResource BrushCharcoalBlack}"
+            Padding="16,12" CornerRadius="5,5,0,0">
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="*"/>
           <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
-        <TextBlock Grid.Column="0" Style="{StaticResource TextH2OnDark}"
-                   Text="Storey Editor" VerticalAlignment="Center"/>
-        <TextBlock Grid.Column="1" Style="{StaticResource TextCaption}" VerticalAlignment="Center"
-                   Foreground="{StaticResource BrushSilverSteel}" Text="AnonGee &#183; C2B"/>
+        <StackPanel Grid.Column="0">
+          <TextBlock Style="{StaticResource TextH2OnDark}" Text="Storey Editor"/>
+          <!-- Filled from the run, so it is a sentence of unknown length and must wrap: the
+               subtitle style does not, and a clipped sentence is worse than a wrapped one. -->
+          <TextBlock x:Name="HeaderSubtitle" Style="{StaticResource TextH3OnDark}" Margin="0,2,0,0"
+                     TextWrapping="Wrap"
+                     Text="The storeys of the building, and how far apart they are."/>
+        </StackPanel>
+        <StackPanel Grid.Column="1" VerticalAlignment="Top" HorizontalAlignment="Right">
+          <TextBlock Style="{StaticResource TextCaption}" HorizontalAlignment="Right"
+                     Foreground="{StaticResource BrushSilverSteel}" Text="AnonGee &#183; CAD to BIM"/>
+          <TextBlock x:Name="VersionBadge" Style="{StaticResource TextBadge}" Margin="0,2,0,0"
+                     HorizontalAlignment="Right"
+                     Foreground="{StaticResource BrushSilverSteel}" Text="v0"/>
+        </StackPanel>
       </Grid>
     </Border>
+
+    <!-- 2  The accent rule. -->
     <Rectangle DockPanel.Dock="Top" Height="3" Fill="{StaticResource BrushVividRed}"/>
 
-    <!-- Footer: status left, actions right (12.6). -->
+    <!-- 5  The footer: where it stands on the left, what to do about it on the right (12.6). -->
     <Border DockPanel.Dock="Bottom" Background="{StaticResource BrushOffWhite}"
             BorderBrush="{StaticResource BrushLightBorder}" BorderThickness="0,1,0,0"
-            Padding="16,8">
+            Padding="12,8">
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="Auto"/>
@@ -69,56 +85,55 @@
           <TextBlock x:Name="StatusBadge" Style="{StaticResource TextBadge}"
                      Foreground="{StaticResource BrushInfoBadgeForeground}" Text="READY"/>
         </Border>
-        <TextBlock x:Name="StatusLine" Grid.Column="1" Style="{StaticResource TextStatus}"
+        <TextBlock x:Name="StatusLine" Grid.Column="1" Style="{StaticResource TextCaption}"
                    Margin="10,0,8,0" VerticalAlignment="Center"
                    TextTrimming="CharacterEllipsis" Text=""/>
         <Button x:Name="BtnCancel" Grid.Column="2" Content="Cancel"
-                Style="{StaticResource ButtonGhost}" Width="90" IsCancel="True"/>
+                Style="{StaticResource ButtonGhost}" Width="100" IsCancel="True"/>
         <Button x:Name="BtnSave" Grid.Column="3" Content="Save the storeys"
-                Style="{StaticResource ButtonPrimary}" Width="170" Margin="8,0,0,0" IsDefault="True"/>
+                Style="{StaticResource ButtonPrimary}" Width="184" Margin="8,0,0,0" IsDefault="True"/>
       </Grid>
     </Border>
 
-    <!-- Problems: inline, above the footer, never a modal box (11.5, 13.4). -->
+    <!-- 4  Problems: inline, above the footer, never a modal box (11.5, 13.4). -->
     <Border x:Name="ProblemsPanel" DockPanel.Dock="Bottom" Visibility="Collapsed"
             Background="{StaticResource BrushPureWhite}"
             BorderBrush="{StaticResource BrushLightBorder}" BorderThickness="0,1,0,0">
-      <ScrollViewer MaxHeight="104" VerticalScrollBarVisibility="Auto" Margin="16,8">
+      <ScrollViewer MaxHeight="112" VerticalScrollBarVisibility="Auto" Margin="12,8">
         <StackPanel x:Name="ProblemsHost"/>
       </ScrollViewer>
     </Border>
 
-    <StackPanel Margin="16,12">
-      <TextBlock x:Name="HeaderSubtitle" Style="{StaticResource HelpText}"
-                 Text="The storeys of the building, and how far apart they are."/>
-      <TextBlock Style="{StaticResource HelpText}" Margin="0,4,0,8"
+    <!-- 3a  How to read the table. -->
+    <StackPanel DockPanel.Dock="Top" Margin="0,10,0,8">
+      <TextBlock Style="{StaticResource HelpText}"
                  Text="One row per storey, BOTTOM-UP: the first row is built first, on the base elevation. Built from is which detected floor plan that storey uses -- pick the same plan on several rows, or set Repeat to build one plan more than once. Height is that storey's floor-to-floor rise; type a height or an elevation and the other follows. Untick Build to leave a storey out. Click a row, then use the buttons under the table to move, add or remove it."/>
-
-      <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+      <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
         <TextBlock Text="New storeys are" Style="{StaticResource TextLabel}" VerticalAlignment="Center"/>
         <TextBox x:Name="DefaultHeight" Style="{StaticResource InputNumberBox}"
-                 Width="84" Margin="8,0,6,0" Text="3000"/>
+                 Width="92" Margin="8,0,6,0" Text="3000"/>
         <TextBlock Text="mm tall" Style="{StaticResource TextLabel}" VerticalAlignment="Center"/>
       </StackPanel>
     </StackPanel>
 
-    <Border Style="{StaticResource CardBorder}" Padding="0" Margin="16,0,16,12">
+    <!-- 3b  The table itself, filling whatever is left. -->
+    <Border Style="{StaticResource CardBorder}" Padding="0" Margin="0,0,0,10">
       <DockPanel LastChildFill="True">
 
         <Border DockPanel.Dock="Bottom" Background="{StaticResource BrushOffWhite}"
                 BorderBrush="{StaticResource BrushLightBorder}" BorderThickness="0,1,0,0"
                 CornerRadius="0,0,7,7" Padding="10,6">
           <StackPanel Orientation="Horizontal">
-            <Button x:Name="BtnUp" Content="Move up" Style="{StaticResource ButtonNeutral}" Width="98"/>
+            <Button x:Name="BtnUp" Content="Move up" Style="{StaticResource ButtonNeutral}" Width="108"/>
             <Button x:Name="BtnDown" Content="Move down" Style="{StaticResource ButtonNeutral}"
-                    Width="112" Margin="8,0,0,0"/>
+                    Width="124" Margin="8,0,0,0"/>
             <Button x:Name="BtnAdd" Content="Add storey" Style="{StaticResource ButtonNeutral}"
-                    Width="112" Margin="8,0,0,0"/>
+                    Width="124" Margin="8,0,0,0"/>
             <Button x:Name="BtnAddBottom" Content="Add at the bottom"
-                    Style="{StaticResource ButtonNeutral}" Width="156" Margin="8,0,0,0"/>
+                    Style="{StaticResource ButtonNeutral}" Width="172" Margin="8,0,0,0"/>
             <Button x:Name="BtnRemove" Content="Remove" Style="{StaticResource ButtonNeutral}"
-                    Width="98" Margin="8,0,0,0"/>
-            <TextBlock x:Name="SelectionText" Style="{StaticResource HelpText}"
+                    Width="108" Margin="8,0,0,0"/>
+            <TextBlock x:Name="SelectionText" Style="{StaticResource TextCaption}"
                        VerticalAlignment="Center" Margin="12,0,0,0"/>
           </StackPanel>
         </Border>
@@ -134,7 +149,7 @@
           </DataGrid.Resources>
           <DataGrid.Columns>
 
-            <DataGridTemplateColumn Header="Build" Width="56" CanUserResize="False" IsReadOnly="True">
+            <DataGridTemplateColumn Header="Build" Width="62" CanUserResize="False" IsReadOnly="True">
               <DataGridTemplateColumn.CellTemplate>
                 <DataTemplate>
                   <!-- Tag names this tick for the grid-wide Checked handler: a ComboBox raises
@@ -145,25 +160,25 @@
               </DataGridTemplateColumn.CellTemplate>
             </DataGridTemplateColumn>
 
-            <DataGridTextColumn Header="No." Binding="{Binding Number}" Width="48" IsReadOnly="True"
+            <DataGridTextColumn Header="No." Binding="{Binding Number}" Width="52" IsReadOnly="True"
                                 ElementStyle="{StaticResource GridMuted}"/>
 
             <DataGridTextColumn Header="Storey" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
-                                Width="*" MinWidth="160"
+                                Width="*" MinWidth="170"
                                 ElementStyle="{StaticResource GridText}"
                                 EditingElementStyle="{StaticResource GridEditBox}"/>
 
             <DataGridTextColumn Header="Height mm" Binding="{Binding Height, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
-                                Width="100"
+                                Width="110"
                                 ElementStyle="{StaticResource GridNumber}"
                                 EditingElementStyle="{StaticResource GridEditNumberBox}"/>
 
             <DataGridTextColumn Header="Elevation mm" Binding="{Binding Elevation, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
-                                Width="114"
+                                Width="126"
                                 ElementStyle="{StaticResource GridNumber}"
                                 EditingElementStyle="{StaticResource GridEditNumberBox}"/>
 
-            <DataGridTemplateColumn Header="Built from" Width="200" IsReadOnly="True">
+            <DataGridTemplateColumn Header="Built from" Width="220" IsReadOnly="True">
               <DataGridTemplateColumn.CellTemplate>
                 <DataTemplate>
                   <ComboBox Style="{StaticResource GridComboBox}"
@@ -174,11 +189,11 @@
             </DataGridTemplateColumn>
 
             <DataGridTextColumn Header="Repeat" Binding="{Binding Repeat, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
-                                Width="70"
+                                Width="78"
                                 ElementStyle="{StaticResource GridNumber}"
                                 EditingElementStyle="{StaticResource GridEditNumberBox}"/>
 
-            <DataGridTextColumn Header="Note" Binding="{Binding Flag}" Width="106" IsReadOnly="True"
+            <DataGridTextColumn Header="Note" Binding="{Binding Flag}" Width="118" IsReadOnly="True"
                                 ElementStyle="{StaticResource GridMuted}"/>
           </DataGrid.Columns>
         </DataGrid>

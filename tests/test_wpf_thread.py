@@ -183,6 +183,17 @@ def test_a_dialog_that_wanted_an_owner_and_got_none_is_not_left_in_the_corner():
     assert body.index("owner_handle:") < body.index("CenterOwner"), "the owner still wins"
 
 
+def test_a_window_never_opens_bigger_than_the_screen_it_opens_on():
+    """The storey editor opens tall enough to show a building's worth of storeys. A drafting
+    laptop is 768 pixels high, and a dialog taller than that hides its own Save button."""
+    body = source("ui", "wpf.py").split("def fit_to_screen")[1].split("\ndef ")[0]
+    assert "SystemParameters.WorkArea" in body
+    assert "MinWidth" in body or 'f"Min{axis}"' in body, "a minimum bigger than the screen wins"
+    assert "wanted == wanted" in body, "SizeToContent leaves an axis NaN, and NaN beats every >"
+    load = source("ui", "wpf.py").split("def load_window")[1].split("\ndef ")[0]
+    assert "fit_to_screen(window)" in load, "nothing calls it, so no window is ever clamped"
+
+
 def test_doctor_says_which_thread_the_window_will_open_on():
     text = source("cli.py")
     assert "apartment()" in text and "window thread" in text

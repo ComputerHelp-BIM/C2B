@@ -150,14 +150,21 @@ def test_the_suite_sizes_are_the_ones_the_reference_ui_xaml_declares():
 def test_c2b_carries_one_scale_over_the_suite_and_every_tier_follows_it():
     """The suite's sizes were set against JetBrains Mono, whose glyphs are wide; C2B leads with
     Segoe UI at the owner's instruction and came out small enough to squint at. One factor, so
-    what C2B did to the suite's scale stays readable instead of nine hand-tuned numbers."""
+    what C2B did to the suite's scale stays readable instead of ten hand-tuned numbers."""
     assert t.FONT_SCALE > 1.0
-    for tier, attribute in (("h1", "H1"), ("h2", "H2"), ("h3", "H3"), ("h4", "H4"),
-                            ("body", "BODY"), ("small", "SMALL"), ("caption", "CAPTION"),
-                            ("code", "CODE"), ("help", "HELP")):
-        want = round(t.SUITE_FONT_SIZES[tier] * t.FONT_SCALE * 2) / 2
-        assert getattr(t, f"FONT_SIZE_{attribute}") == want, f"{tier} is off the scale"
-    assert t.FONT_SIZE_BODY >= 11.0, "smaller than this is what the owner asked to be fixed"
+    for tier in t.SUITE_FONT_SIZES:
+        want = float(t._half_up(t.SUITE_FONT_SIZES[tier] * t.FONT_SCALE))
+        assert getattr(t, f"FONT_SIZE_{tier.upper()}") == want, f"{tier} is off the scale"
+    assert t.FONT_SIZE_BODY >= 12.0, "smaller than this is what the owner asked to be fixed"
+
+
+def test_every_size_on_the_scale_is_a_whole_number():
+    """Asked for outright: a scale of round numbers is one a person can hold in their head."""
+    for tier in t.SUITE_FONT_SIZES:
+        size = getattr(t, f"FONT_SIZE_{tier.upper()}")
+        assert size == int(size), f"{tier} is {size}, which is not a round number"
+    for name in ("LINE_HEIGHT_H1", "LINE_HEIGHT_BODY", "LINE_HEIGHT_CODE"):
+        assert getattr(t, name) == int(getattr(t, name)), f"{name} is not a round number"
 
 
 def test_help_prose_is_read_and_so_is_bigger_than_body():
@@ -172,9 +179,9 @@ def test_the_type_scale_descends_and_body_matches_h4():
 
 def test_a_type_size_crosses_to_tkinter_as_pixels_not_points():
     """A WPF unit is one CSS pixel, and Tk reads a negative size as pixels."""
-    assert t.pixels(t.FONT_SIZE_BODY) == -12        # 11.5 rounds to 12 px, not 9 pt
-    assert t.pixels(t.FONT_SIZE_H1) == -25
-    assert t.points(t.FONT_SIZE_BODY) == 9          # which is what Windows itself uses
+    assert t.pixels(t.FONT_SIZE_BODY) == -13        # 13 px, not 13 pt
+    assert t.pixels(t.FONT_SIZE_H1) == -28
+    assert t.points(t.FONT_SIZE_BODY) == 10
 
 
 def test_motion_never_makes_an_engineer_wait():

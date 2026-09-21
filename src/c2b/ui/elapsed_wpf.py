@@ -19,7 +19,10 @@ class ElapsedWindow:
     """One showing of the finished window."""
 
     def __init__(self, report: dict, close_after: int = CLOSE_AFTER_SECONDS) -> None:
+        from .. import __version__
+
         self.window = wpf.load_window("elapsed")
+        wpf.find(self.window, "VersionBadge").Text = f"v{__version__}"
         self._left = max(0, int(close_after))
         self._timer = None
         for control, key in (("HeadlineText", "headline"), ("ElapsedCaption", "caption"),
