@@ -712,12 +712,18 @@ def _datagrid() -> str:
     """
     return f'''  <Style x:Key="GridCheckBox" TargetType="CheckBox">
     <Setter Property="Cursor" Value="Hand"/>
-    <Setter Property="HorizontalAlignment" Value="Center"/>
-    <Setter Property="VerticalAlignment" Value="Center"/>
+    <!-- The control fills its cell and the drawn box sits in the middle of it, so the target
+         is the whole cell rather than {t.CHECKBOX_SIZE} pixels of it. A tick that has to be
+         hit exactly is a tick somebody reports as not working. -->
+    <Setter Property="HorizontalAlignment" Value="Stretch"/>
+    <Setter Property="VerticalAlignment" Value="Stretch"/>
+    <Setter Property="HorizontalContentAlignment" Value="Center"/>
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="CheckBox">
+         <Border Background="Transparent">
           <Border x:Name="Box" Width="{t.CHECKBOX_SIZE}" Height="{t.CHECKBOX_SIZE}" CornerRadius="{t.RADIUS_SM}"
+                  HorizontalAlignment="Center" VerticalAlignment="Center"
                   BorderBrush="{{StaticResource BrushLightBorder}}" BorderThickness="1"
                   Background="{{StaticResource BrushPureWhite}}">
             <Viewbox x:Name="CheckMark" Margin="3" Visibility="Collapsed">
@@ -726,6 +732,7 @@ def _datagrid() -> str:
                     StrokeStartLineCap="Round" StrokeEndLineCap="Round" Fill="Transparent"/>
             </Viewbox>
           </Border>
+         </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsChecked" Value="True">
               <Setter TargetName="CheckMark" Property="Visibility" Value="Visible"/>
@@ -788,6 +795,16 @@ def _datagrid() -> str:
   </Style>
   <Style x:Key="GridMuted" TargetType="TextBlock" BasedOn="{{StaticResource GridText}}">
     <Setter Property="Foreground" Value="{{StaticResource BrushMidGrey}}"/>
+    <Style.Triggers>
+      <!-- Mid Grey is 4.8:1 on white and only 3.8:1 on a selected row, so the muted columns
+           stop being muted and go back to body colour there. 12.7.Q permits this DataTrigger
+           and only this one: DataGridRow.IsSelected is a real .NET bool on a real .NET
+           object, not a value read off a row. -->
+      <DataTrigger Value="True"
+                   Binding="{{Binding IsSelected, RelativeSource={{RelativeSource AncestorType=DataGridRow}}}}">
+        <Setter Property="Foreground" Value="{{StaticResource BrushCharcoalBlack}}"/>
+      </DataTrigger>
+    </Style.Triggers>
   </Style>
   <!-- The editor a cell puts up on F2 or a double click. -->
   <Style x:Key="GridEditBox" TargetType="TextBox" BasedOn="{{StaticResource InputTextBox}}">

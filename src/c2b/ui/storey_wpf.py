@@ -23,9 +23,22 @@ binding at all. Every edit is taken from the control the person actually touched
 ``SelectionChanged`` -- which is one direction of marshalling instead of two, and the
 direction that is known to work.
 
+**A tick has to change what it is bound to, or it does not stay ticked.** ``ToggleButton``
+flips ``IsChecked`` with ``SetCurrentValue``, which deliberately leaves the binding in place,
+so the control shows the new state and the *source* still holds the old one. The next thing
+that re-evaluates the binding -- a row container recycled as the problems panel opens and the
+table resizes, a scroll, a redraw -- reads the source and puts the tick back. Telling the
+presenter is not enough: the row object has to be written too.
+
 **The tick is not the selection.** Selection is which rows the buttons act on, and the grid is
-in ``Extended`` mode, so ctrl-click and shift-click pick several and every button applies to
-all of them. Build is the storey's own value and is never touched by clicking a row.
+in ``Extended`` mode, so ctrl-click and shift-click pick several. Ticking one row of a
+selection ticks all of it, which is what makes unticking six storeys six rows of work rather
+than six rounds of clicking. Build is still the storey's own value and clicking a row never
+changes it.
+
+**A redraw costs the selection anchor.** Replacing ``ItemsSource`` destroys every container,
+and with them the row shift-click measures its range from. So a redraw happens only when
+something actually changed -- an edit that retypes the same text does nothing at all.
 """
 from __future__ import annotations
 
@@ -43,15 +56,36 @@ BUILD_TICK = "BuildTick"
 #: And on the "Built from" picker, whose SelectionChanged bubbles up to the grid's own.
 PLAN_PICK = "PlanPick"
 
-#: Column header -> the presenter call that takes what was typed into it. The header is what
-#: the person read when they typed, which makes this table the documentation as well.
-EDITS = {"Storey": "set_name", "Height mm": "set_height",
-         "Elevation mm": "set_elevation", "Repeat": "set_repeat"}
+#: Column header -> the row field it shows, and the presenter call that takes what was typed
+#: into it. The header is what the person read when they typed, which makes this table the
+#: documentation as well. The field is there so an edit that changed nothing can be told from
+#: one that did, and only the second kind redraws.
+EDITS = {"Storey": ("Storey", "set_name"),
+         "Height mm": ("Height", "set_height"),
+         "Elevation mm": ("Elevation", "set_elevation"),
+         "Repeat": ("Repeat", "set_repeat")}
 
 _BADGE_BRUSH = {"ERROR": ("BrushErrorBadgeBackground", "BrushErrorBadgeForeground"),
                 "WARNING": ("BrushWarningBadgeBackground", "BrushWarningBadgeForeground"),
                 "SUCCESS": ("BrushSuccessBadgeBackground", "BrushSuccessBadgeForeground"),
                 "INFO": ("BrushInfoBadgeBackground", "BrushInfoBadgeForeground")}
+
+
+def fields(item: Any) -> Any:
+    """An ExpandoObject's members, as the dictionary it keeps them in."""
+    from System import Object, String
+    from System.Collections.Generic import IDictionary
+
+    return IDictionary[String, Object](item)
+
+
+def field(item: Any, key: str) -> Any:
+    return fields(item)[key]
+
+
+def set_field(item: Any, key: str, value: Any) -> None:
+    """Write a row's own value, which is the half of a tick that WPF does not do for you."""
+    fields(item)[key] = value
 
 
 def grid_row(row, choices: Any) -> Any:
@@ -65,21 +99,19 @@ def grid_row(row, choices: Any) -> Any:
     ``Storey`` and not ``Name``: a dynamic object is asked for its members by name, and giving
     one of them the name of a property half of WPF already has is a question with two answers.
     """
-    from System import Object, String
-    from System.Collections.Generic import IDictionary
     from System.Dynamic import ExpandoObject
 
     item = ExpandoObject()
-    fields = IDictionary[String, Object](item)
-    fields["Number"] = str(row.number)
-    fields["Storey"] = row.name
-    fields["Height"] = "" if row.is_base else row.height_text
-    fields["Elevation"] = row.elevation_text
-    fields["Plan"] = row.plan_label
-    fields["PlanChoices"] = choices
-    fields["Repeat"] = str(row.repeat)
-    fields["Flag"] = row.flag
-    fields["Build"] = bool(row.build)
+    values = fields(item)
+    values["Number"] = str(row.number)
+    values["Storey"] = row.name
+    values["Height"] = "" if row.is_base else row.height_text
+    values["Elevation"] = row.elevation_text
+    values["Plan"] = row.plan_label
+    values["PlanChoices"] = choices
+    values["Repeat"] = str(row.repeat)
+    values["Flag"] = row.flag
+    values["Build"] = bool(row.build)
     return item
 
 
@@ -143,15 +175,20 @@ class StoreyEditorWindow:
         index = self.grid.Items.IndexOf(item)
         return self._rows[index][0] if 0 <= index < len(self._rows) else None
 
-    def _container_id(self, element: Any) -> str | None:
-        """The storey whose row container holds this control."""
+    def _container_index(self, element: Any) -> int | None:
+        """Which row of the table holds this control, or None if it is not in one."""
         from System.Windows.Controls import ItemsControl
 
         container = ItemsControl.ContainerFromElement(self.grid, element)
         if container is None:
             return None
         index = container.GetIndex()
-        return self._rows[index][0] if 0 <= index < len(self._rows) else None
+        return index if 0 <= index < len(self._rows) else None
+
+    def _container_id(self, element: Any) -> str | None:
+        """The storey whose row container holds this control."""
+        index = self._container_index(element)
+        return None if index is None else self._rows[index][0]
 
     def _selected_ids(self) -> list[str]:
         """Every selected storey, in the order the stack has them, lowest first."""
@@ -233,40 +270,67 @@ class StoreyEditorWindow:
         if self._filling or args.EditAction != DataGridEditAction.Commit:
             return
         typed = getattr(args.EditingElement, "Text", None)
-        call = EDITS.get(str(args.Column.Header))
+        edit = EDITS.get(str(args.Column.Header))
         index = args.Row.GetIndex()
-        if typed is None or call is None or not 0 <= index < len(self._rows):
-            return                         # -1 for a row the grid has not realised, and -1
-        storey_id = self._rows[index][0]   # into a Python list is the last storey, silently
+        if typed is None or edit is None or not 0 <= index < len(self._rows):
+            return                          # -1 for a row the grid has not realised, and -1
+        storey_id, item = self._rows[index]  # into a Python list is the last storey, silently
+        shown, call = edit
+        # An editor closes whenever focus leaves a cell, whether or not anything was typed in
+        # it. Redrawing on those replaced the table between a click and the shift-click meant
+        # to extend from it, and took the anchor with it.
+        if typed.strip() == str(field(item, shown)).strip():
+            return
         problem = getattr(self.presenter, call)(storey_id, typed)
         # After the edit has finished, never during it: a redraw here replaces the very row
         # the grid is still closing an editor on.
         self._after(lambda: self._redraw(problem))
 
     def _on_build_clicked(self, sender, args) -> None:
-        """A storey ticked or unticked. The one edit that is not about the table's shape."""
+        """A storey ticked or unticked. The one edit that is not about the table's shape.
+
+        Ticking a row that is part of a selection ticks the whole selection. Six storeys to
+        leave out is then six rows to pick and one click, rather than six clicks that each
+        have to land on a 21-pixel box.
+        """
         box = args.OriginalSource
         if self._filling or getattr(box, "Tag", None) != BUILD_TICK:
             return
-        storey_id = self._container_id(box)
-        if storey_id is None:
+        index = self._container_index(box)
+        if index is None:
             return
-        self.presenter.set_build(storey_id, bool(box.IsChecked))
-        # No redraw. Ticking a storey changes nothing about the table's shape, and rebuilding
-        # it would drop the selection the person is in the middle of making. The footer says
-        # what changed; the Note column catches up on the next command.
+        ticked = bool(box.IsChecked)
+        clicked = self._rows[index][0]
+        chosen = set(self._selected_ids())
+        targets = chosen if len(chosen) > 1 and clicked in chosen else {clicked}
+        for storey_id, item in self._rows:
+            if storey_id in targets:
+                # The row object, not only the presenter. ToggleButton flipped IsChecked with
+                # SetCurrentValue, which leaves the binding alive, so the source still says
+                # what it said before and the next re-evaluation puts the tick back.
+                set_field(item, "Build", ticked)
+                self.presenter.set_build(storey_id, ticked)
         self._show_problems()
         self._show_status()
+        if len(targets) > 1:
+            # One box was clicked and several changed. A redraw is the only way to be certain
+            # the rest of them show it; for a single row it would only cost the anchor that
+            # shift-click measures from.
+            self._after(lambda: self._redraw(""))
 
     def _on_selection_changed(self, sender, args) -> None:
         """Two events arrive here: the grid's own, and a plan picker's bubbling up through it."""
         source = args.OriginalSource
         if getattr(source, "Tag", None) == PLAN_PICK:
-            storey_id = self._container_id(source)
+            index = self._container_index(source)
             picked = source.SelectedItem
-            if storey_id is not None and picked is not None and not self._filling:
-                self.presenter.set_plan_label(storey_id, str(picked))
-                self._after(lambda: self._redraw(""))
+            if index is None or picked is None or self._filling:
+                return
+            storey_id, item = self._rows[index]
+            if str(picked) == str(field(item, "Plan")):
+                return                      # the picker settling on what it already showed
+            self.presenter.set_plan_label(storey_id, str(picked))
+            self._after(lambda: self._redraw(""))
             return
         if source is not None and not self._filling:
             self._show_selection()
@@ -377,4 +441,4 @@ def edit_storeys_wpf(presenter: StoreyPresenter, subtitle: str = "",
 
 
 __all__ = ["BUILD_TICK", "EDITS", "PLAN_PICK", "StoreyEditorWindow", "edit_storeys_wpf",
-           "format_mm", "grid_row"]
+           "field", "fields", "format_mm", "grid_row", "set_field"]

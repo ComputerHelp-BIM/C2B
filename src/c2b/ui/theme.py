@@ -48,7 +48,10 @@ OFF_WHITE_HOVER: Final = "#E8E8EC"
 
 # 3.5  Surface-specific tints, for tables and selection
 TABLE_ROW_HOVER: Final = "#FDECEA"
-TABLE_ROW_SELECTED: Final = "#FEF2F2"
+#: Deeper than the #FEF2F2 of §3.5, which is 2% away from the Off White of an alternating row
+#: and all but invisible next to one. A table whose selection cannot be seen is a table where
+#: ctrl-click looks broken, and this one is picked from several rows at a time.
+TABLE_ROW_SELECTED: Final = "#FBDCD8"
 SUCCESS_BADGE_BG: Final = "#DCFCE7"
 SUCCESS_BADGE_FG: Final = "#15803D"
 WARNING_BADGE_BG: Final = "#FEF9C3"

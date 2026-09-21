@@ -84,9 +84,10 @@ def test_a_bound_row_is_a_dotnet_object_and_not_a_python_one(tree, source):
     """The bug this is about: every Build tick rendered empty and every plan picker rendered
     blank, because IsChecked wants a bool? and SelectedItem has to match an item, and a
     PyObject converts to neither. Only the string columns worked, on ToString()."""
-    body = function(tree, "grid_row")
-    assert "ExpandoObject" in body, "the rows are Python objects again, so only strings bind"
-    assert "IDictionary" in body, "an ExpandoObject's members are set through its dictionary"
+    assert "ExpandoObject" in function(tree, "grid_row"), \
+        "the rows are Python objects again, so only strings bind"
+    assert "IDictionary" in function(tree, "fields"), \
+        "an ExpandoObject's members are reached through its dictionary"
     assert "__slots__" not in source, "the slotted row is what could not carry a bool"
 
 
@@ -95,7 +96,7 @@ def test_every_binding_path_the_layout_uses_is_a_field_the_row_sets(tree, markup
     grid = markup.split("<DataGrid ")[1]
     paths = {m.split(",")[0].strip() for m in re.findall(r"\{Binding ([^}]+)\}", grid)}
     paths = {p for p in paths if p and not p.startswith(("RelativeSource", "IsSelected"))}
-    filled = set(re.findall(r'fields\[[\'"](\w+)[\'"]\]', function(tree, "grid_row")))
+    filled = set(re.findall(r'values\[[\'"](\w+)[\'"]\]', function(tree, "grid_row")))
     assert paths, "nothing is bound, so this test proves nothing"
     assert paths <= filled, f"nothing fills {sorted(paths - filled)}"
 
@@ -103,7 +104,7 @@ def test_every_binding_path_the_layout_uses_is_a_field_the_row_sets(tree, markup
 def test_the_row_never_offers_a_member_wpf_already_has_one_of(tree, markup):
     """A dynamic object is asked for its members by name. Calling one of them Name is a
     question with two answers, and the binding engine picks which one."""
-    filled = set(re.findall(r'fields\[[\'"](\w+)[\'"]\]', function(tree, "grid_row")))
+    filled = set(re.findall(r'values\[[\'"](\w+)[\'"]\]', function(tree, "grid_row")))
     assert "Name" not in filled, "the storey's name is bound as Storey for exactly this reason"
     assert "Storey" in filled
     assert "{Binding Storey" in markup
@@ -127,9 +128,33 @@ def test_the_rows_bind_the_way_the_suite_proved_and_no_other(tree):
     assert "ArrayList" in used, "12.7.G asks for an ArrayList, not a Python list"
 
 
-def test_no_datatrigger_is_used_at_all(markup):
-    """12.7.Q, the one that looks correct and silently does nothing."""
-    assert "<DataTrigger" not in markup
+def test_no_datatrigger_reads_a_value_off_a_row():
+    """12.7.Q, the one that looks correct and silently does nothing. The only DataTrigger the
+    theme has reads DataGridRow.IsSelected, which is a real .NET bool on a real .NET object."""
+    for trigger in (xaml.theme_xaml() + xaml.layout_path("storey_editor").read_text(
+            encoding="utf-8")).split("<DataTrigger")[1:]:
+        binding = trigger.split("</DataTrigger>")[0]
+        assert "AncestorType=DataGridRow" in binding, f"a DataTrigger on a row value: {binding[:90]}"
+        assert "IsSelected" in binding
+
+
+def test_the_muted_columns_stay_readable_on_a_selected_row():
+    """A selection that can be seen needs a tint, and Mid Grey does not survive one."""
+    from c2b.ui import theme as t
+
+    assert t.contrast_ratio(t.CHARCOAL_BLACK, t.TABLE_ROW_SELECTED) >= 4.5
+    assert t.contrast_ratio(t.MID_GREY, t.TABLE_ROW_SELECTED) < 4.5, \
+        "if Mid Grey now passes, the trigger that replaces it is no longer needed"
+    grid = xaml.theme_xaml().split('x:Key="GridMuted"')[1].split("</Style>")[0]
+    assert "BrushCharcoalBlack" in grid, "the muted columns are unreadable when selected"
+
+
+def test_a_selected_row_can_be_told_from_the_one_above_it():
+    """#FEF2F2 is 1.004:1 against an alternating row -- a difference nobody can see, on a
+    table that is now picked from several rows at a time."""
+    from c2b.ui import theme as t
+
+    assert t.contrast_ratio(t.TABLE_ROW_SELECTED, t.OFF_WHITE) >= 1.1
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +183,9 @@ def test_the_tick_is_the_storeys_own_value_and_not_the_rows_selection(markup):
     """It was bound to DataGridRow.IsSelected once. That threw on a Single-selection grid, and
     it made ticking a storey also change which row the buttons acted on."""
     tick = markup.split('Header="Build"')[1].split("</DataGridTemplateColumn>")[0]
-    assert "{Binding Build, Mode=OneWay}" in tick
+    assert "{Binding Build, Mode=TwoWay}" in tick, (
+        "OneWay leaves the source saying the opposite of what the box shows, and the next "
+        "thing to re-evaluate the binding puts the tick back")
     assert "IsSelected" not in tick
     assert 'Tag="BuildTick"' in tick, "the handler cannot tell this from a ComboBox's toggle"
 
@@ -172,13 +199,30 @@ def test_the_tick_listens_for_a_click_and_not_for_checked(tree, source):
     assert "self._handlers" in wired, "a delegate only .NET holds is one Python may collect"
 
 
-def test_a_tick_does_not_redraw_the_table(tree):
-    """Rebuilding drops the selection the person is in the middle of making -- and while the
-    tick was bound one way to a value WPF could not read, the redraw put the box back."""
+def test_a_tick_writes_the_row_and_not_only_the_presenter(tree):
+    """ToggleButton flips IsChecked with SetCurrentValue, which leaves the binding alive on
+    purpose. A tick that only told the presenter left the source saying the opposite, and the
+    next thing to re-evaluate the binding put the box back -- five or six clicks to land one."""
     body = function(tree, "_on_build_clicked")
-    assert "refresh" not in body, "a tick rebuilds the table, so it appears to undo itself"
-    assert "self._show_status()" in body, "nothing says what the tick changed"
+    assert "set_field(item, 'Build', ticked)" in body, "the row's own value is never written"
+    assert "self.presenter.set_build" in body
     assert "box.IsChecked" in body, "it guesses at the new state instead of reading it"
+
+
+def test_ticking_one_row_of_a_selection_ticks_all_of_it(tree):
+    """Six storeys to leave out should be six rows picked and one click, not six clicks that
+    each have to land on a 21-pixel box."""
+    body = function(tree, "_on_build_clicked")
+    assert "self._selected_ids()" in body
+    assert "len(chosen) > 1 and clicked in chosen" in body, (
+        "a tick on a row outside the selection must still be about that row alone")
+
+
+def test_a_tick_on_one_row_alone_does_not_redraw_the_table(tree):
+    """A redraw replaces every container and takes the anchor shift-click measures from."""
+    body = function(tree, "_on_build_clicked")
+    assert "if len(targets) > 1:" in body, "either every tick redraws, or none does"
+    assert body.index("self._show_status()") < body.index("if len(targets) > 1:")
 
 
 def test_a_plan_picked_in_a_cell_is_told_apart_from_the_grids_own_selection(tree, markup):
@@ -194,6 +238,16 @@ def test_filling_the_table_does_not_count_as_typing(tree):
     """Setting a value in code raises the same events a person does."""
     for handler in ("_on_cell_edit_ending", "_on_build_clicked", "_on_selection_changed"):
         assert "self._filling" in function(tree, handler), f"{handler} acts on its own redraw"
+
+
+def test_an_edit_that_changed_nothing_redraws_nothing(tree):
+    """A cell editor closes whenever focus leaves it, typed in or not. Redrawing on those
+    replaced the table between a click and the shift-click meant to extend from it."""
+    for handler, shown in (("_on_cell_edit_ending", "field(item, shown)"),
+                           ("_on_selection_changed", "field(item, 'Plan')")):
+        body = function(tree, handler)
+        assert shown in body, f"{handler} redraws on an edit that changed nothing"
+        assert body.index(shown) < body.index("self._after("), "it acts first and checks after"
 
 
 def test_a_redraw_never_happens_inside_the_event_that_asked_for_it(tree):
@@ -265,6 +319,15 @@ def test_selection_is_painted_in_the_brand_not_the_system_blue(markup):
     system keys are redefined at the grid's own scope."""
     assert "SystemColors.HighlightBrushKey" in markup
     assert "SystemColors.InactiveSelectionHighlightBrushKey" in markup
+
+
+def test_the_whole_build_cell_is_the_ticks_target():
+    """A 21-pixel box in a 62-pixel column is a tick people report as not working, because
+    most of the clicks aimed at it land on the cell instead."""
+    box = xaml.theme_xaml().split('x:Key="GridCheckBox"')[1].split("</Style>")[0]
+    assert '<Setter Property="HorizontalAlignment" Value="Stretch"/>' in box
+    assert '<Setter Property="VerticalAlignment" Value="Stretch"/>' in box
+    assert 'Background="Transparent"' in box, "a control with no fill is not hit-tested"
 
 
 def test_the_grid_lets_a_user_drag_its_column_widths():

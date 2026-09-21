@@ -34,6 +34,11 @@
   its SelectionChanged - which is one direction of marshalling rather than two.
 
   The Build tick is the storey's own value and has nothing to do with which row is selected.
+  It binds TwoWay, and the handler writes the row's value as well. ToggleButton flips
+  IsChecked with SetCurrentValue, which leaves the binding in place on purpose, so a tick that
+  only told the presenter left the source saying the opposite - and the next thing to
+  re-evaluate the binding, a container recycled when the problems panel opened and the table
+  resized, put the tick straight back. It took five or six clicks to make one stick.
 -->
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -119,7 +124,7 @@
     <!-- 3a  How to read the table. -->
     <StackPanel DockPanel.Dock="Top" Margin="0,10,0,8">
       <TextBlock Style="{StaticResource HelpText}"
-                 Text="One row per storey, BOTTOM-UP: the first row is built first, on the base elevation. Built from is which detected floor plan that storey uses -- pick the same plan on several rows, or set Repeat to build one plan more than once. Height is that storey's floor-to-floor rise; type a height or an elevation and the other follows. Untick Build to leave a storey out -- the footer counts what is left out. Click a row to pick it, ctrl-click or shift-click to pick several, then use the buttons under the table to move, add or remove them."/>
+                 Text="One row per storey, BOTTOM-UP: the first row is built first, on the base elevation. Built from is which detected floor plan that storey uses -- pick the same plan on several rows, or set Repeat to build one plan more than once. Height is that storey's floor-to-floor rise; type a height or an elevation and the other follows. Untick Build to leave a storey out -- the footer counts what is left out. Click a storey's NAME to pick its row, ctrl-click or shift-click to pick several, then use the buttons under the table to move, add or remove them. Ticking one row of a selection ticks all of it."/>
       <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
         <TextBlock Text="New storeys are" Style="{StaticResource TextLabel}" VerticalAlignment="Center"/>
         <TextBox x:Name="DefaultHeight" Style="{StaticResource InputNumberBox}"
@@ -168,7 +173,7 @@
                   <!-- Tag names this tick for the grid-wide Checked handler: a ComboBox raises
                        the same routed event from the ToggleButton inside its own template. -->
                   <CheckBox Style="{StaticResource GridCheckBox}" Tag="BuildTick"
-                            IsChecked="{Binding Build, Mode=OneWay}"/>
+                            IsChecked="{Binding Build, Mode=TwoWay}"/>
                 </DataTemplate>
               </DataGridTemplateColumn.CellTemplate>
             </DataGridTemplateColumn>
