@@ -147,6 +147,67 @@ _LEVEL_OFFSET_BIPS = (BuiltInParameter.INSTANCE_FREE_HOST_OFFSET_PARAM,
                       BuiltInParameter.INSTANCE_ELEVATION_PARAM)
 
 
+#: What a column is dropped to when Revit would otherwise measure it as flat. A column this
+#: short is a thing to go and look at; a rolled-back import is not, because there is nothing
+#: left to look at.
+MIN_COLUMN_HEIGHT_MM = 300.0
+
+
+def _level_elevation_mm(parameter):
+    """The elevation of the level a parameter points at, or None."""
+    if parameter is None:
+        return None
+    level = doc.GetElement(parameter.AsElementId())
+    return to_mm(level.Elevation) if level is not None else None
+
+
+def _offset_mm(inst, bip):
+    p = inst.get_Parameter(bip)
+    return to_mm(p.AsDouble()) if p is not None else 0.0
+
+
+def column_height_mm(inst):
+    """What Revit will measure this column as, from the levels and offsets it actually holds.
+
+    Read back rather than taken from the plan: the plan says what was asked for, and this says
+    what Revit did with it. The two were not the same, and the difference stopped a whole run.
+    """
+    base = _level_elevation_mm(inst.get_Parameter(BuiltInParameter.FAMILY_BASE_LEVEL_PARAM))
+    top = _level_elevation_mm(inst.get_Parameter(BuiltInParameter.FAMILY_TOP_LEVEL_PARAM))
+    if base is None or top is None:
+        return None
+    return ((top + _offset_mm(inst, BuiltInParameter.FAMILY_TOP_LEVEL_OFFSET_PARAM))
+            - (base + _offset_mm(inst, BuiltInParameter.FAMILY_BASE_LEVEL_OFFSET_PARAM)))
+
+
+def ensure_standing(inst, action):
+    """Never leave behind a column Revit will measure as having no height.
+
+    "Change Offset Value so that Column height is not 0.0" is an ERROR and not a warning, so
+    one of them refuses the whole transaction: every type, every beam, every floor, the lot.
+    171 of them did that to Test17, and the report afterwards said the run was rolled back so
+    nothing it made is there -- which is true and is no help at all.
+
+    Whatever the plan asked for and whatever Revit made of it, a column that comes out flat is
+    dropped to a stated minimum here and reported by name. A column 300 mm tall is a thing to
+    go and fix. An import that refused to finish is not.
+    """
+    height = column_height_mm(inst)
+    if height is None or height > 1.0:
+        return
+    p = inst.get_Parameter(BuiltInParameter.FAMILY_BASE_LEVEL_OFFSET_PARAM)
+    if p is None or p.IsReadOnly:
+        note("bad", "column %s would have no height and its base offset cannot be set"
+                    % (action.get("mark") or action.get("id")))
+        return
+    wanted = max(abs(action.get("base_offset_mm") or 0.0), MIN_COLUMN_HEIGHT_MM)
+    p.Set(p.AsDouble() - mm(wanted - height))
+    note("fixed", "column %s came out %.0f mm tall, which Revit refuses; its base was dropped "
+                  "to make it %.0f mm so the rest of the import could finish. Check the floor "
+                  "heights for this one."
+                  % ((action.get("mark") or action.get("id")), height, wanted))
+
+
 def set_level_offset(inst, value_mm):
     """How far a point-hosted instance sits above or below the level it is on.
 
@@ -597,10 +658,23 @@ def main():
                     continue
                 inst = doc.Create.NewFamilyInstance(point(action["point"]), symbol, level,
                                                     Structure.StructuralType.Column)
+                # The base offset goes on FIRST. A column on the lowest plan has nothing under
+                # it, so the plan gives it its own level as its top and hangs it below on an
+                # offset -- and asking Revit to put the top level on the base level while the
+                # offsets still read zero is asking for a column of no height, which is a thing
+                # it is entitled to refuse or to fix in its own way. Stated in the order that
+                # never asks for one. Through set_bip_length, because a parameter that will not
+                # take a value says so, and the raw Set that was here did not.
+                set_bip_length(inst, BuiltInParameter.FAMILY_BASE_LEVEL_OFFSET_PARAM,
+                               action.get("base_offset_mm", 0.0))
                 if top is not None:
-                    inst.get_Parameter(BuiltInParameter.FAMILY_TOP_LEVEL_PARAM).Set(top.Id)
-                    inst.get_Parameter(BuiltInParameter.FAMILY_TOP_LEVEL_OFFSET_PARAM).Set(mm(action.get("top_offset_mm", 0.0)))
-                inst.get_Parameter(BuiltInParameter.FAMILY_BASE_LEVEL_OFFSET_PARAM).Set(mm(action.get("base_offset_mm", 0.0)))
+                    set_bip_id(inst, BuiltInParameter.FAMILY_TOP_LEVEL_PARAM, top.Id)
+                    set_bip_length(inst, BuiltInParameter.FAMILY_TOP_LEVEL_OFFSET_PARAM,
+                                   action.get("top_offset_mm", 0.0))
+                    # Again: moving the top level can move the base offset with it.
+                    set_bip_length(inst, BuiltInParameter.FAMILY_BASE_LEVEL_OFFSET_PARAM,
+                                   action.get("base_offset_mm", 0.0))
+                ensure_standing(inst, action)
                 rotation = action.get("rotation_deg") or 0.0
                 if abs(rotation) > 1e-6:
                     from Autodesk.Revit.DB import ElementTransformUtils

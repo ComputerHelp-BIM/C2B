@@ -215,6 +215,110 @@ def _loop(points) -> list[list[float]] | None:
     return _clean_ring([[round(p.x, 2), round(p.y, 2)] for p in points])
 
 
+def _boundary(outer: list[list[float]],
+              holes: list[list[list[float]]]) -> tuple[list[list[list[float]]] | None, list[str]]:
+    """Rings Revit will accept as one boundary, and what had to change to get there.
+
+    :func:`_clean_ring` takes out the vertices that are not corners. Three things it cannot
+    see, and Revit refuses all three with the same sentence about curve loops that "cannot
+    compose a valid boundary":
+
+    * an outline that crosses itself, which a panel closed the long way round a re-entrant
+      corner does;
+    * an opening that is not inside the outline it is supposed to be cut from;
+    * two openings that overlap, which two tags read off one shaft will produce.
+
+    109 of Test17's panels were refused for these -- the same dozen shapes, once per typical
+    floor, so one bad outline costs eight slabs. Nothing in the message says which of the three
+    it was, or which vertex, so it is not something a drafter can act on.
+
+    shapely already knows this problem, so the rings are handed to it as a polygon and taken
+    back as whatever it can make valid: an outline that crosses itself comes back as two
+    pieces and the larger one is the panel, an opening that is not inside stops being one.
+    What changed comes back with it, because a panel quietly built to a different shape is
+    worse than one that was refused.
+    """
+    from shapely.geometry import Polygon
+    from shapely.validation import make_valid
+
+    notes: list[str] = []
+    try:
+        whole = Polygon(outer, holes)
+        if whole.is_valid:
+            return [outer, *holes], notes
+        # Which of the three it was, because "invalid" sends a drafter to look at everything.
+        crossed = not Polygon(outer).is_valid
+        repaired = make_valid(whole)
+        parts = [g for g in (getattr(repaired, "geoms", None) or [repaired])
+                 if g.geom_type == "Polygon" and not g.is_empty]
+    except Exception as ex:                      # a ring shapely cannot read at all
+        return None, [f"the outline could not be read as a shape ({type(ex).__name__})"]
+
+    parts.sort(key=lambda g: g.area, reverse=True)
+    if not parts or parts[0].area <= _COLLINEAR_TOL_MM ** 2:
+        return None, ["the outline crosses itself and encloses no area once that is undone"]
+    best = parts[0]
+    if crossed:
+        notes.append("the outline crossed itself; the largest piece of it was built")
+
+    rings = [_clean_ring([list(c) for c in best.exterior.coords[:-1]])]
+    if rings[0] is None:
+        return None, [*notes, "nothing enclosing an area was left"]
+    for interior in best.interiors:
+        ring = _clean_ring([list(c) for c in interior.coords[:-1]])
+        if ring is not None:
+            rings.append(ring)
+    cut = len(rings) - 1
+    if cut != len(holes):
+        drawn = f"{len(holes)} opening{'s' if len(holes) != 1 else ''} {'were' if len(holes) != 1 else 'was'} drawn"
+        notes.append(f"{drawn} and {cut} cut: one that is not wholly inside the outline, or two "
+                     "that overlap, cannot be cut on their own")
+    return rings, notes
+
+
+def _sole_ring(ring, what: str, diag, **where) -> list[list[float]] | None:
+    """One ring, made valid. A footing or a cut-out has no openings but can still cross itself."""
+    if ring is None:
+        return None
+    loops, repairs = _boundary(ring, [])
+    for repair in repairs:
+        diag.warning("REVIT_OUTLINE_REPAIRED", f"{what}: {repair}.", **where)
+    return loops[0] if loops else None
+
+
+def audit_heights(plan: RevitPlan, diag: DiagnosticsCollector, minimum_mm: float) -> int:
+    """Every member that spans two levels, measured the way Revit will measure it.
+
+    One column Revit computes as having no height is an ERROR and not a warning, so it refuses
+    the whole transaction: every type, every beam, every floor, the lot. 171 of them did that
+    to a Test17 run, and the report afterwards could only say that nothing the run made was
+    there. Whatever put them there, the plan is not handed over holding one.
+
+    Returns how many it had to correct, so the caller can say so.
+    """
+    elevation = {lv.id: lv.elevation_mm for lv in plan.levels}
+    name = {lv.id: lv.name for lv in plan.levels}
+    fixed = 0
+    for a in plan.actions:
+        if a.kind not in ("column", "pile", "wall") or a.top_level_id is None:
+            continue
+        base, top = elevation.get(a.level_id), elevation.get(a.top_level_id)
+        if base is None or top is None:
+            continue
+        height = (top + a.top_offset_mm) - (base + a.base_offset_mm)
+        if height > 1.0:
+            continue
+        a.base_offset_mm = (top + a.top_offset_mm) - base - abs(minimum_mm)
+        fixed += 1
+        diag.error("REVIT_NO_HEIGHT",
+                   f"{a.kind.title()} {a.mark or a.id} came out {height:.0f} mm tall between "
+                   f"{name.get(a.level_id, a.level_id)} and {name.get(a.top_level_id, a.top_level_id)}. "
+                   f"Revit refuses that outright and one of them stops the whole import, so it is "
+                   f"built {abs(minimum_mm):.0f} mm tall instead. Check the floor heights.",
+                   floor_id=getattr(a, "floor_id", None), element_id=a.id)
+    return fixed
+
+
 def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsCollector | None = None) -> RevitPlan:
     """Model + mapping -> an ordered build plan.
 
@@ -406,7 +510,17 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
                              "the near-collinear vertices are removed; it is skipped",
                              floor_id=p.floor_id, element_id=p.id)
                 continue
-            loops = [outer] + [h for h in (_loop(h) for h in p.holes) if h is not None]
+            holes = [h for h in (_loop(h) for h in p.holes) if h is not None]
+            loops, repairs = _boundary(outer, holes)
+            if loops is None:
+                diag.warning("REVIT_BAD_OUTLINE", f"Slab panel {p.mark} ({p.id}) has an outline Revit "
+                             f"will not close: {'; '.join(repairs)}. It is skipped.",
+                             floor_id=p.floor_id, element_id=p.id)
+                continue
+            for repair in repairs:
+                diag.warning("REVIT_OUTLINE_REPAIRED", f"Slab panel {p.mark} ({p.id}): {repair}. "
+                             "It is built, but not quite as it was drawn.",
+                             floor_id=p.floor_id, element_id=p.id)
             for lid in levels_for(p.floor_id):
                 plan.actions.append(RevitAction(
                     id=f"{p.id}@{lid}", kind="floor", category="Floors", type_name=_fmt(rule.type_name, thk=thk),
@@ -427,7 +541,8 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
                 continue          # drawn on the plan; the engineer models the step in Revit
             if x.kind in ("raft", "pilecap", "pit"):
                 rule = mapping.raft
-                outline = _loop(x.outline)
+                outline = _sole_ring(_loop(x.outline), f"{x.kind} {x.mark}", diag,
+                                     floor_id=x.floor_id, element_id=x.id)
                 if outline is None:
                     diag.warning("REVIT_NO_OUTLINE", f"{x.kind} {x.mark} has no usable outline; it is skipped",
                                  floor_id=x.floor_id, element_id=x.id)
@@ -499,12 +614,17 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
             if lid is None:
                 continue
             top = level_above.get(lid)
-            outline = _loop(o.outline)
+            outline = _sole_ring(_loop(o.outline), f"cut-out {o.label}", diag, floor_id=o.floor_id)
             if outline is None:
                 continue
             plan.actions.append(RevitAction(
                 id=o.id, kind="shaft", category="Shaft Openings", level_id=lid, top_level_id=top,
                 loops=[outline], mark=o.label, comment="cut-out through the floor"))
+
+    # Last, over the finished plan: every per-element guard above works on the elevations it
+    # was given, and this measures what actually came out of them. A plan is not handed over
+    # holding a member Revit will refuse.
+    audit_heights(plan, diag, mapping.column_min_height_mm)
 
     plan.diagnostics = diag.items
     plan.recount()

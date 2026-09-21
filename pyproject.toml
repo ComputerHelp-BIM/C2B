@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "c2b"
-version = "0.28.0"
+version = "0.29.0"
 description = "C2B (CAD to BIM): extract structural elements from client DXF drawings into a canonical JSON schema, an Excel review workbook, a review DXF and a diagnostics report."
 readme = "README.md"
 requires-python = ">=3.11"

@@ -97,6 +97,9 @@ CODES: dict[str, str] = {
     "REVIT_DEPTH_ASSUMED": "The drawing never sized this member, so the default set in the window was used",
     "REVIT_NO_OUTLINE": "Outline has no corners Revit can close a boundary with, so it is not built",
     "REVIT_LEVELS_NOT_APART": "Two levels are at the same height, so a column between them would have none",
+    "REVIT_NO_HEIGHT": "A column Revit would measure as flat; one of them refuses the whole import, so it was given a minimum height",
+    "REVIT_BAD_OUTLINE": "Outline crosses itself or encloses nothing once that is undone, so Revit cannot close it",
+    "REVIT_OUTLINE_REPAIRED": "Outline or an opening in it had to be made valid, so the slab is built but not quite as drawn",
 }
 
 
