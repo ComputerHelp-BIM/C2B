@@ -50,6 +50,73 @@ class ParamCheck(BaseModel):
         return self.bound or self.builtin
 
 
+class PickerLevel(BaseModel):
+    """One level on the build picker: what the plan holds for it, and how much of it."""
+
+    id: str
+    name: str
+    elevation_mm: float = 0.0
+    counts: dict[str, int] = Field(default_factory=dict)
+    total: int = 0
+
+
+class PickerKind(BaseModel):
+    """One kind of member on the build picker, across every level."""
+
+    kind: str
+    label: str
+    total: int = 0
+
+
+class RevitPicker(BaseModel):
+    """What the window inside Revit offers to build, counted here rather than in there.
+
+    The pyRevit script cannot import C2B -- it runs in Revit's own engine against the plan
+    file alone -- so anything it would otherwise have to work out for itself is worked out
+    here, where it can be tested. It renders these rows and builds the actions whose level and
+    kind are both ticked. That is the whole of the rule.
+    """
+
+    levels: list[PickerLevel] = Field(default_factory=list)
+    kinds: list[PickerKind] = Field(default_factory=list)
+    #: Actions belonging to no level -- the grids -- which a level tick cannot govern.
+    off_level: int = 0
+    total: int = 0
+
+
+#: What each kind of action is called on the picker. A drafter ticks "Slabs", not "floor".
+KIND_LABELS = {"grid": "Grids", "column": "Columns", "beam": "Beams", "floor": "Slabs",
+               "wall": "Walls", "footing": "Footings", "pcc": "PCC under footings",
+               "pile": "Piles", "shaft": "Shaft openings"}
+
+
+def build_picker(plan: RevitPlan) -> RevitPicker:
+    """Count the plan by level and by kind, in the order the window shows them.
+
+    Levels read downwards, top storey first, the way a drafter reads a stack -- and the same
+    way the storey editor lists them, because they are the same storeys.
+    """
+    by_level: dict[str, dict[str, int]] = {}
+    by_kind: dict[str, int] = {}
+    off_level = 0
+    for a in plan.actions:
+        by_kind[a.kind] = by_kind.get(a.kind, 0) + 1
+        if a.level_id:
+            by_level.setdefault(a.level_id, {})
+            by_level[a.level_id][a.kind] = by_level[a.level_id].get(a.kind, 0) + 1
+        else:
+            off_level += 1
+    picker = RevitPicker(off_level=off_level, total=len(plan.actions))
+    for lv in sorted(plan.levels, key=lambda x: x.elevation_mm, reverse=True):
+        counts = by_level.get(lv.id, {})
+        picker.levels.append(PickerLevel(id=lv.id, name=lv.name, elevation_mm=lv.elevation_mm,
+                                         counts=counts, total=sum(counts.values())))
+    for kind, total in sorted(by_kind.items(), key=lambda kv: -kv[1]):
+        picker.kinds.append(PickerKind(kind=kind, label=KIND_LABELS.get(kind, kind.title() + "s"),
+                                       total=total))
+    return picker
+
+
 class TemplateCheck(BaseModel):
     """What a plan asks of a Revit template, answered before Revit is opened."""
 
@@ -68,6 +135,18 @@ class TemplateCheck(BaseModel):
     @property
     def unbound_params(self) -> list[str]:
         return [p.name for p in self.params if not p.survives]
+
+    def marks_lost(self, mark_params: list[str]) -> bool:
+        """Would every mark this run writes vanish into a parameter nothing carries?
+
+        Revit's built-in ``Mark`` used to be the safety net: it is on every element whatever a
+        template binds, so a mark was never wholly lost. C2B does not write it any more -- it
+        is meant to be unique within a category and a structural mark is not -- and with the
+        net gone, a template that does not bind ``CH-ScheduleMark`` loses every mark in the
+        model, silently, in a way no count or level name shows.
+        """
+        wanted = {n for n in mark_params}
+        return bool(wanted) and not any(p.survives for p in self.params if p.name in wanted)
 
     def summary(self) -> dict[str, int]:
         return {"types_needed": len(self.types),
@@ -131,6 +210,7 @@ class RevitPlan(BaseModel):
     comment_param: str | None = None
     grid_name_clash: str = "rename_existing"                 # what to do when the project already has that grid
     template_check: TemplateCheck | None = None              # what the Revit template does and does not carry
+    picker: RevitPicker | None = None                        # what the window inside Revit offers to build
     levels: list[RevitLevel] = Field(default_factory=list)
     actions: list[RevitAction] = Field(default_factory=list)
     diagnostics: list[Diagnostic] = Field(default_factory=list)
@@ -736,6 +816,8 @@ def build_plan(np_: NormalizedProject, mapping: RevitMapping, diag: DiagnosticsC
     # was given, and this measures what actually came out of them. A plan is not handed over
     # holding a member Revit will refuse.
     audit_heights(plan, diag, mapping.column_min_height_mm)
+
+    plan.picker = build_picker(plan)
 
     if squared.get("snapped"):
         diag.info("REVIT_EDGES_SQUARED",

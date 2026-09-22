@@ -291,6 +291,7 @@ def _write_revit_plan(np_, out: Path, stem: str, drawing: Path, progress: Progre
     should have to know where the template description lives: it is found, not asked for.
     """
     from ..export.revit_excel import write_revit_workbook
+    from ..export.revit_picker import write_picker_window
     from ..revit.mapping import RevitMapping
     from ..revit.plan import build_plan, check_against_template
     from ..revit.template import parse_shared_parameters, parse_template_md
@@ -315,6 +316,8 @@ def _write_revit_plan(np_, out: Path, stem: str, drawing: Path, progress: Progre
 
     json_path = out / f"{stem}.revit.json"
     json_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+    # The window the Revit script shows, themed here because there is no C2B over there.
+    write_picker_window(json_path)
     xlsx_path = write_revit_workbook(plan, out / f"{stem}.revit.xlsx")
 
     built = ", ".join(f"{n} {kind}s" for kind, n in sorted(plan.counts.items()) if kind != "levels" and n)
@@ -335,6 +338,10 @@ def _write_revit_plan(np_, out: Path, stem: str, drawing: Path, progress: Progre
             progress("bad", f"         {fam} is not in your Revit template - load it, or nothing using it can be built")
         for pc in [x for x in check.params if not x.survives]:
             progress("warn", f"         {pc.name}: {pc.advice}")
+        if check.marks_lost(plan.mark_params):
+            progress("bad", f"         your Revit template binds none of {', '.join(plan.mark_params)}, so "
+                            "every mark would be dropped. Revit's built-in Mark is not written any more, "
+                            "so there is nothing to fall back on - bind it as a project parameter first")
         if check.grid_clashes:
             progress("warn", f"         your Revit template already has grids {', '.join(check.grid_clashes[:10])} - "
                              "the template's will be renamed out of the way so the client's can be created")

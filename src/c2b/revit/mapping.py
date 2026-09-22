@@ -57,8 +57,10 @@ class RevitMapping(BaseModel):
 
     # -- where the mark and the C2B id are written --------------------------
     # Every name that exists on the element is written, and the run reports which ones took.
-    # R25_TEMPLATE binds the firm's own CH- names; "Mark" is Revit's built-in and is always
-    # there, so a mark is never lost even on a template that binds nothing.
+    # R25_TEMPLATE binds the firm's own CH- names. Revit's built-in "Mark" used to be written
+    # too, as a net: it is on every element whatever a template binds. It is not written any
+    # anymore, so there is no net, and a template that does not bind CH-ScheduleMark loses
+    # every mark in the model. TemplateCheck.marks_lost is what says so before Revit is opened.
     #: The firm's own shared parameters, and only those. Revit's built-in ``Mark`` is meant to
     #: be unique within a category, and a structural mark is not: a column stack carries one
     #: mark on every level it passes through, and a typical floor repeats its slab marks on

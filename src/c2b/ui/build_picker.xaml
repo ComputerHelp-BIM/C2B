@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  AnonGee . Build  -  what to create in Revit, out of everything the plan holds.
+
+  Markup lives in this file rather than in a Python string (brand guide 12.2). The theme is
+  spliced over the ANONGEE-THEME line at load time, generated from c2b/ui/theme.py.
+
+  This one is shown by the pyRevit script, which cannot import C2B: it runs inside Revit's own
+  engine against the plan file alone. So C2B writes this window out, themed, next to the plan,
+  and the script loads it from there. One theme, one brand, whichever side of the fence the
+  window opens on.
+
+  The root element carries literal values only (12.7.A). Every child of a DockPanel but the
+  last declares its Dock, because DockPanel.Dock defaults to Left without saying so.
+
+  Ticks only. No text to type, nothing to get wrong: a level either gets built or it does not,
+  and a kind of member either gets built or it does not. Nothing else is a question worth
+  asking somebody who has already decided all of it in C2B. The lists are filled from Python
+  with real CheckBox controls rather than bound to anything, because twenty rows is not a data
+  grid and a binding is one more thing between a tick and what it means.
+-->
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="AnonGee &#183; Build"
+        Width="900" Height="720" MinWidth="720" MinHeight="520"
+        Background="White"
+        UseLayoutRounding="True"
+        FontFamily="Segoe UI, Inter, Calibri, Arial"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="CanResize"
+        ShowInTaskbar="True">
+
+  <Window.Resources>
+    <!-- ANONGEE-THEME -->
+  </Window.Resources>
+
+  <DockPanel Margin="12,8" LastChildFill="True" Background="{StaticResource BrushPureWhite}">
+
+    <Border DockPanel.Dock="Top" Background="{StaticResource BrushCharcoalBlack}"
+            Padding="16,12" CornerRadius="5,5,0,0">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <StackPanel Grid.Column="0">
+          <TextBlock Style="{StaticResource TextH2OnDark}" Text="Build"/>
+          <TextBlock x:Name="HeaderSubtitle" Style="{StaticResource TextH3OnDark}" Margin="0,2,0,0"
+                     TextWrapping="Wrap" Text="What to create in this model."/>
+        </StackPanel>
+        <StackPanel Grid.Column="1" VerticalAlignment="Top" HorizontalAlignment="Right">
+          <TextBlock Style="{StaticResource TextCaption}" HorizontalAlignment="Right"
+                     Foreground="{StaticResource BrushSilverSteel}" Text="AnonGee &#183; CAD to BIM"/>
+          <TextBlock x:Name="VersionBadge" Style="{StaticResource TextBadge}" Margin="0,2,0,0"
+                     HorizontalAlignment="Right"
+                     Foreground="{StaticResource BrushSilverSteel}" Text="v0"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Rectangle DockPanel.Dock="Top" Height="3" Fill="{StaticResource BrushVividRed}"/>
+
+    <Border DockPanel.Dock="Bottom" Background="{StaticResource BrushOffWhite}"
+            BorderBrush="{StaticResource BrushLightBorder}" BorderThickness="0,1,0,0"
+            Padding="12,8">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <Border x:Name="StatusBadgeBorder" Grid.Column="0" Style="{StaticResource BadgeBorder}"
+                Background="{StaticResource BrushInfoBadgeBackground}">
+          <TextBlock x:Name="StatusBadge" Style="{StaticResource TextBadge}"
+                     Foreground="{StaticResource BrushInfoBadgeForeground}" Text="READY"/>
+        </Border>
+        <TextBlock x:Name="SelectionText" Grid.Column="1" Style="{StaticResource TextCaption}"
+                   Margin="10,0,8,0" VerticalAlignment="Center"
+                   TextTrimming="CharacterEllipsis" Text=""/>
+        <Button x:Name="BtnCancel" Grid.Column="2" Content="Cancel"
+                Style="{StaticResource ButtonGhost}" Width="100" IsCancel="True"/>
+        <Button x:Name="BtnBuild" Grid.Column="3" Content="Build these"
+                Style="{StaticResource ButtonPrimary}" Width="152" Margin="8,0,0,0" IsDefault="True"/>
+      </Grid>
+    </Border>
+
+    <TextBlock DockPanel.Dock="Top" Style="{StaticResource HelpText}" Margin="0,10,0,8"
+               Text="Only what is ticked on both sides is built. Untick a storey to leave it out of this run, or a kind of member to build the rest of them first."/>
+
+    <Grid Margin="0,0,0,10">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="12"/>
+        <ColumnDefinition Width="300"/>
+      </Grid.ColumnDefinitions>
+
+      <Border Grid.Column="0" Style="{StaticResource CardBorder}" Padding="0">
+        <DockPanel LastChildFill="True">
+          <Border DockPanel.Dock="Top" Background="{StaticResource BrushTableHeaderBackground}"
+                  CornerRadius="7,7,0,0" Padding="12,7">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <TextBlock Grid.Column="0" Style="{StaticResource TextBadge}" VerticalAlignment="Center"
+                         Foreground="{StaticResource BrushPureWhite}" Text="STOREYS"/>
+              <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button x:Name="BtnLevelsAll" Content="All" Style="{StaticResource ButtonSmall}" Width="60"/>
+                <Button x:Name="BtnLevelsNone" Content="None" Style="{StaticResource ButtonSmall}"
+                        Width="68" Margin="6,0,0,0"/>
+              </StackPanel>
+            </Grid>
+          </Border>
+          <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                        Padding="12,8">
+            <StackPanel x:Name="LevelsHost"/>
+          </ScrollViewer>
+        </DockPanel>
+      </Border>
+
+      <Border Grid.Column="2" Style="{StaticResource CardBorder}" Padding="0">
+        <DockPanel LastChildFill="True">
+          <Border DockPanel.Dock="Top" Background="{StaticResource BrushTableHeaderBackground}"
+                  CornerRadius="7,7,0,0" Padding="12,7">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <TextBlock Grid.Column="0" Style="{StaticResource TextBadge}" VerticalAlignment="Center"
+                         Foreground="{StaticResource BrushPureWhite}" Text="MEMBERS"/>
+              <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button x:Name="BtnKindsAll" Content="All" Style="{StaticResource ButtonSmall}" Width="60"/>
+                <Button x:Name="BtnKindsNone" Content="None" Style="{StaticResource ButtonSmall}"
+                        Width="68" Margin="6,0,0,0"/>
+              </StackPanel>
+            </Grid>
+          </Border>
+          <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                        Padding="12,8">
+            <StackPanel x:Name="KindsHost"/>
+          </ScrollViewer>
+        </DockPanel>
+      </Border>
+    </Grid>
+
+  </DockPanel>
+</Window>

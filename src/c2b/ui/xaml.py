@@ -747,6 +747,47 @@ def _datagrid() -> str:
       </Setter.Value>
     </Setter>
   </Style>
+  <!-- The same tick with its label beside it, for a list somebody reads down rather than a
+       table somebody edits. The whole row is the target, label included. -->
+  <Style x:Key="RowCheckBox" TargetType="CheckBox">
+    <Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="FontFamily" Value="{{StaticResource FontSans}}"/>
+    <Setter Property="FontSize" Value="{{StaticResource FontSizeBody}}"/>
+    <Setter Property="Foreground" Value="{{StaticResource BrushCharcoalBlack}}"/>
+    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="CheckBox">
+          <Border Background="Transparent" Padding="0,5">
+            <DockPanel LastChildFill="True">
+              <Border x:Name="Box" DockPanel.Dock="Left"
+                      Width="{t.CHECKBOX_SIZE}" Height="{t.CHECKBOX_SIZE}" CornerRadius="{t.RADIUS_SM}"
+                      VerticalAlignment="Center" Margin="0,0,10,0"
+                      BorderBrush="{{StaticResource BrushLightBorder}}" BorderThickness="1"
+                      Background="{{StaticResource BrushPureWhite}}">
+                <Viewbox x:Name="CheckMark" Margin="3" Visibility="Collapsed">
+                  <Path Data="M0,3.5 L3.5,7 L9,0" Stroke="{{StaticResource BrushPureWhite}}"
+                        StrokeThickness="1.8" StrokeLineJoin="Round"
+                        StrokeStartLineCap="Round" StrokeEndLineCap="Round" Fill="Transparent"/>
+                </Viewbox>
+              </Border>
+              <ContentPresenter VerticalAlignment="Center"/>
+            </DockPanel>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsChecked" Value="True">
+              <Setter TargetName="CheckMark" Property="Visibility" Value="Visible"/>
+              <Setter TargetName="Box" Property="Background" Value="{{StaticResource BrushVividRed}}"/>
+              <Setter TargetName="Box" Property="BorderBrush" Value="{{StaticResource BrushVividRed}}"/>
+            </Trigger>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Box" Property="BorderBrush" Value="{{StaticResource BrushVividRed}}"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
   <Style x:Key="GridColumnHeader" TargetType="DataGridColumnHeader">
     <Setter Property="Background" Value="{{StaticResource BrushCharcoalBlack}}"/>
     <Setter Property="Foreground" Value="{{StaticResource BrushPureWhite}}"/>

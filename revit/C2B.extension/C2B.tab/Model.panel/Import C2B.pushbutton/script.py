@@ -577,6 +577,143 @@ def check_what_was_built(plan, symbols, floor_types, wall_types, levels_by_id, m
 
 
 # ---------------------------------------------------------------------- run
+# ------------------------------------------------------------------- the picker
+class BuildPicker(forms.WPFWindow):
+    """Which storeys and which kinds of member. Ticks only, and a count beside each.
+
+    The markup is written next to the plan by C2B, themed from the same tokens as every other
+    window in the suite -- there is no C2B on this side of the fence to generate it here, and a
+    second copy of the palette living in the extension is how two surfaces drift apart.
+
+    The rows are real CheckBox controls built here rather than an ItemsSource bound to
+    anything. Twenty rows is not a data grid, and a binding is one more thing between a tick
+    and what it means.
+    """
+
+    def __init__(self, xaml_path, picker, title):
+        forms.WPFWindow.__init__(self, xaml_path)
+        self.chosen = None
+        self._levels = []
+        self._kinds = []
+        self.VersionBadge.Text = picker.get("generator", "")
+        self.HeaderSubtitle.Text = title
+        for row in picker.get("levels", []):
+            self._levels.append(self._row(self.LevelsHost, row["id"], row["name"], row["total"],
+                                          describe(row.get("counts", {}))))
+        for row in picker.get("kinds", []):
+            self._kinds.append(self._row(self.KindsHost, row["kind"], row["label"], row["total"], ""))
+        self.BtnBuild.Click += self.on_build
+        self.BtnCancel.Click += self.on_cancel
+        self.BtnLevelsAll.Click += lambda s, e: self._set(self._levels, True)
+        self.BtnLevelsNone.Click += lambda s, e: self._set(self._levels, False)
+        self.BtnKindsAll.Click += lambda s, e: self._set(self._kinds, True)
+        self.BtnKindsNone.Click += lambda s, e: self._set(self._kinds, False)
+        self.say()
+
+    def _row(self, host, key, label, count, detail):
+        """A tick, a name, and the count it stands for, lined up down the right."""
+        from System.Windows import (GridLength, GridUnitType, TextTrimming, Thickness,
+                                    VerticalAlignment)
+        from System.Windows.Controls import CheckBox, ColumnDefinition, Grid, TextBlock
+
+        grid = Grid()
+        for width in (None, 78.0):
+            column = ColumnDefinition()
+            column.Width = (GridLength(1, GridUnitType.Star) if width is None
+                            else GridLength(width, GridUnitType.Pixel))
+            grid.ColumnDefinitions.Add(column)
+        name = TextBlock()
+        name.Text = label if not detail else "%s    %s" % (label, detail)
+        name.TextTrimming = TextTrimming.CharacterEllipsis
+        name.VerticalAlignment = VerticalAlignment.Center
+        Grid.SetColumn(name, 0)
+        grid.Children.Add(name)
+        number = TextBlock()
+        number.Text = "{:,}".format(count)
+        number.Style = self.Resources["GridNumber"]
+        number.Margin = Thickness(8, 0, 0, 0)
+        Grid.SetColumn(number, 1)
+        grid.Children.Add(number)
+
+        box = CheckBox()
+        box.Style = self.Resources["RowCheckBox"]
+        box.Content = grid
+        box.IsChecked = count > 0
+        box.IsEnabled = count > 0
+        box.Click += self.on_tick
+        host.Children.Add(box)
+        return (key, box, count)
+
+    def _set(self, rows, ticked):
+        for _key, box, count in rows:
+            if count:
+                box.IsChecked = ticked
+        self.say()
+
+    def on_tick(self, sender, args):
+        self.say()
+
+    def picked(self):
+        levels = set(k for k, box, _n in self._levels if box.IsChecked)
+        kinds = set(k for k, box, _n in self._kinds if box.IsChecked)
+        return levels, kinds
+
+    def say(self):
+        """What is about to be built, in the words of what was ticked."""
+        levels, kinds = self.picked()
+        self.SelectionText.Text = (
+            "%d of %d storeys, %d of %d kinds of member" %
+            (len(levels), len(self._levels), len(kinds), len(self._kinds)))
+        self.BtnBuild.IsEnabled = bool(levels and kinds) or bool(kinds and not self._levels)
+
+    def on_build(self, sender, args):
+        self.chosen = self.picked()
+        self.Close()
+
+    def on_cancel(self, sender, args):
+        self.chosen = None
+        self.Close()
+
+
+def describe(counts):
+    """"161 columns, 362 beams" -- the biggest few, so a row stays one line."""
+    parts = sorted(counts.items(), key=lambda kv: -kv[1])[:3]
+    return ", ".join("%d %s" % (n, kind + ("" if n == 1 else "s")) for kind, n in parts)
+
+
+def choose_what_to_build(plan, plan_path):
+    """The build window, or the plain list when it cannot be shown.
+
+    Returns ``(levels, kinds)``, or None when the run was called off. Only what is ticked on
+    both sides is built -- but every LEVEL is still created, because a member on a ticked
+    storey is measured from the level under it.
+    """
+    picker = plan.get("picker") or {}
+    if not picker.get("kinds"):
+        return (set(lv["id"] for lv in plan.get("levels", [])),
+                set(a.get("kind") for a in plan.get("actions", [])))
+    picker = dict(picker, generator=plan.get("generator", ""))
+    xaml_path = plan_path.replace(".revit.json", ".revit.xaml")
+    title = "%s  %s" % (os.path.basename(plan_path).replace(".revit.json", ""),
+                        describe(plan.get("counts", {})))
+    if os.path.isfile(xaml_path):
+        try:
+            window = BuildPicker(xaml_path, picker, title)
+            window.ShowDialog()
+            return window.chosen
+        except Exception as ex:
+            note("warn", "the build window would not open (%s), so the plain list was used "
+                         "instead" % type(ex).__name__)
+    wanted = forms.SelectFromList.show(
+        [("%s  (%d)" % (r["label"], r["total"])) for r in picker["kinds"]],
+        title="C2B: what to build", multiselect=True, button_name="Build these")
+    if not wanted:
+        return None
+    labels = dict(("%s  (%d)" % (r["label"], r["total"]), r["kind"]) for r in picker["kinds"])
+    return (set(lv["id"] for lv in picker.get("levels", [])),
+            set(labels[w] for w in wanted if w in labels))
+
+
 def pick_plan():
     """The build plan, opening where the last one was picked so nobody hunts for the folder."""
     config = script.get_config()
@@ -607,6 +744,22 @@ def main():
                        "Build this in the current model?" % (os.path.basename(path), summary, unit_name),
                        title="C2B", ok=False, yes=True, no=True):
         return
+
+    chosen = choose_what_to_build(plan, path)
+    if chosen is None:
+        return
+    wanted_levels, wanted_kinds = chosen
+    everything = plan.get("actions", [])
+    # Only what was ticked on BOTH sides. An action belonging to no level -- a grid -- is
+    # governed by its kind alone, because there is no storey to leave it out of.
+    plan["actions"] = [a for a in everything
+                       if a.get("kind") in wanted_kinds
+                       and (not a.get("level_id") or a.get("level_id") in wanted_levels)]
+    left_out = len(everything) - len(plan["actions"])
+    if left_out:
+        note("skip", "%d of %d elements were left out of this run because their storey or their "
+                     "kind was unticked. Every level is still created: a member on a storey you "
+                     "did tick is measured from the level under it." % (left_out, len(everything)))
 
     levels_by_id = {}
     existing_grids = dict((g.Name, g) for g in all_of(Grid))

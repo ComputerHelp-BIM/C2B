@@ -401,6 +401,7 @@ def revit_plan(
 ) -> None:
     """Utility 5, step 1: turn the model into a Revit build plan and a workbook of what will be created."""
     from .export.revit_excel import write_revit_workbook
+    from .export.revit_picker import write_picker_window
     from .normalize.model import NormalizedProject
     from .revit.mapping import RevitMapping
     from .revit.plan import build_plan, check_against_template
@@ -425,6 +426,8 @@ def revit_plan(
         shared = parse_shared_parameters(shared_params) if shared_params else None
         plan.template_check = check_against_template(plan, rm, digest, shared)
     (out / f"{stem}.revit.json").write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+    # The window the Revit script shows, themed here because there is no C2B over there.
+    write_picker_window(out / f"{stem}.revit.json")
     write_revit_workbook(plan, out / f"{stem}.revit.xlsx")
     errors = [d for d in plan.diagnostics if d.severity == "ERROR"]
     for kind, n in sorted(plan.counts.items()):
@@ -438,6 +441,12 @@ def revit_plan(
             typer.secho(f"  family not in the template: {fam} - load it, or nothing using it can be built", fg=typer.colors.RED)
         for pc in [x for x in c.params if not x.survives]:
             typer.secho(f"  {pc.name}: {pc.advice}", fg=typer.colors.YELLOW)
+        if c.marks_lost(plan.mark_params):
+            typer.secho(f"  NO MARKS: this template binds none of {', '.join(plan.mark_params)}, so every "
+                        "mark C2B writes is dropped. Revit's built-in Mark is not written any more -- it "
+                        "must be unique within a category and a structural mark is not -- so there is "
+                        "nothing to fall back on. Bind it as a project parameter before importing.",
+                        fg=typer.colors.RED)
         if c.grid_clashes:
             typer.secho(f"  the template already has grids {', '.join(c.grid_clashes[:10])}; "
                         "its own will be renamed so the client's can be created", fg=typer.colors.YELLOW)
